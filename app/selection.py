@@ -58,13 +58,45 @@ def _fmt_time(sec: float) -> str:
     return f'{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}' if sec >= 3600 else f'{sec // 60:02d}:{sec % 60:02d}'
 
 
-def _title_from_text(text: str, limit: int = 70) -> str:
+# Palavras que não podem encerrar um título (artigos, preposições, conjunções, auxiliares; português e inglês).
+DANGLING_WORDS = DANGLING_END | {
+    'a', 'an', 'the', 'of', 'to', 'in', 'on', 'at', 'for', 'with', 'from', 'by', 'about', 'into', 'over', 'under',
+    'behind', 'near', 'and', 'or', 'but', 'so', 'that', 'this', 'these', 'those', 'is', 'are', 'was', 'were', 'be',
+    'been', 'we', 'i', 'you', 'it', 'he', 'she', 'they', 'my', 'our', 'your', 'their', 'his', 'her', 'its', 'as',
+    'than', 'if', 'then', 'not', 'no', 'do', 'does', 'did', 'have', 'has', 'had', 'will', 'would', 'can', 'could',
+    'ao', 'aos', 'à', 'às', 'pelo', 'pela', 'pelos', 'pelas', 'numa', 'num', 'sobre', 'entre', 'até', 'já', 'nos',
+    'nas', 'me', 'te', 'lhe', 'meu', 'minha', 'seu', 'sua', 'foi', 'era', 'são', 'está', 'estão', 'tem', 'tinha', 'vai'}
+_CLAUSE_BREAK_RE = re.compile(r'[,;:]\s|\s[—–-]\s')
+_CONJUNCTION_BREAK_RE = re.compile(
+    r'\s(?=(?:and|but|so|because|which|where|when|while|although|though|whereas|until|unless|'
+    r'e|mas|porque|que|quando|onde|enquanto|embora|pois|porém|ou)\b)', re.IGNORECASE)
+MIN_TITLE_CHARS = 20
+
+
+def _trim_dangling(text: str, minimum_words: int = 3) -> str:
+    words = text.split()
+    while len(words) > minimum_words and words[-1].lower().strip(',;:.') in DANGLING_WORDS:
+        words.pop()
+    return ' '.join(words).rstrip(' ,;:—–-')
+
+
+def _title_from_text(text: str, limit: int = 80) -> str:
+    """Título = primeira frase. Se for longa, corta numa fronteira natural (vírgula, travessão ou conjunção),
+    sem reticências; só sem nenhuma fronteira cai para palavra inteira + "…", nunca terminando em artigo,
+    preposição ou conjunção."""
     text = re.sub(r'\s+', ' ', text or '').strip()
     first = re.split(r'(?<=[.!?…])\s', text, maxsplit=1)[0]
     if len(first) <= limit:
         return first.rstrip(' ,;:')
-    cut = first[:limit].rsplit(' ', 1)[0].rstrip(' ,;:')
-    return cut + '…'
+    window = first[:limit + 1]
+    starts = [m.start() for m in _CLAUSE_BREAK_RE.finditer(window)] + \
+        [m.start() for m in _CONJUNCTION_BREAK_RE.finditer(window)]
+    for cut in sorted(set(starts), reverse=True):
+        candidate = _trim_dangling(first[:cut])
+        if len(candidate) >= MIN_TITLE_CHARS and len(candidate.split()) >= 3:
+            return candidate
+    cut = window.rsplit(' ', 1)[0] if first[limit] != ' ' else window.rstrip()
+    return _trim_dangling(cut) + '…'
 
 
 # --------------------------------------------------------------------------- unidades de fala

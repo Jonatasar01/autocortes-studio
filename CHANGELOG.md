@@ -2,6 +2,12 @@
 
 - FilmCraft: etapa opcional **Remover pausas longas** (`transcript.set` + `transcript.removePauses`), com legendas
   recriadas da transcrição cortada e validação estrutural da linha do tempo. Ver `FILMCRAFT-PROTOTIPO.md`.
+- Corrigido: o **gancho** (frase no topo, primeiros 3 s) saía cortado nas bordas do vídeo porque o cabeçalho ASS usa
+  `WrapStyle: 2` (sem quebra automática). O evento do gancho agora liga a quebra do libass (`\q0`), corta em palavra
+  inteira e divide palavras gigantes. Regressão testada com render real (FFmpeg/libass) em 9:16, 16:9 e 1:1.
+- Corrigido: **títulos** truncados com "…" no meio da frase. O limite subiu de 70 para 80 caracteres e frases longas
+  são cortadas numa fronteira natural (vírgula, travessão ou conjunção), sem reticências; só sem fronteira cai para
+  palavra inteira com "…", nunca terminando em artigo, preposição ou conjunção.
 
 ## 2.4.0 — 2026-10-23
 

@@ -164,12 +164,32 @@ def _hook_style(width: int, height: int, font_name: str) -> str:
             f'{round(width * 0.07)},{round(height * 0.11)},1')
 
 
+HOOK_MAX_CHARS = 90
+HOOK_MAX_WORD = 22  # o libass não quebra uma palavra ao meio: pedaços maiores estourariam a largura do quadro
+
+
+def _hook_text(text: str) -> str:
+    """Gancho limpo, com no máximo ``HOOK_MAX_CHARS`` caracteres, cortado em palavra inteira (com "…")."""
+    words: list[str] = []
+    for word in clean_text(text).split():
+        while len(word) > HOOK_MAX_WORD:
+            words.append(word[:HOOK_MAX_WORD])
+            word = word[HOOK_MAX_WORD:]
+        words.append(word)
+    out = ' '.join(words)
+    if len(out) <= HOOK_MAX_CHARS:
+        return out
+    return out[:HOOK_MAX_CHARS].rsplit(' ', 1)[0].rstrip(' ,;:') + '…'
+
+
 def _hook_event(hook_text: str | None, clip_len: float | None) -> list[str]:
-    text = clean_text(hook_text or '')
+    text = _hook_text(hook_text or '')
     if not text:
         return []
     end = HOOK_SECONDS if clip_len is None else min(HOOK_SECONDS, max(0.5, clip_len))
-    return [f'Dialogue: 1,{_ass_time(0)},{_ass_time(end)},Hook,,0,0,0,,{{\\fad(150,250)}}{text[:90]}']
+    # O cabeçalho usa WrapStyle 2 (sem quebra automática, bom para as legendas de 3 palavras). O gancho é uma
+    # frase longa, então \q0 liga a quebra inteligente dentro das margens do estilo Hook.
+    return [f'Dialogue: 1,{_ass_time(0)},{_ass_time(end)},Hook,,0,0,0,,{{\\q0\\fad(150,250)}}{text}']
 
 
 def to_ass(cues: list[dict], width: int, height: int, font_name: str = 'Arial', *,
