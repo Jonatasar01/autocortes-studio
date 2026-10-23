@@ -1,0 +1,27 @@
+[project]
+name = "autocortes-studio-local"
+version = "2.4.0"
+description = "Editor local de cortes de vídeo com transcrição e automação"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+ai = [
+  "faster-whisper>=1.1,<2",
+  # faster-whisper 1.2.x usa metadata_errors, removido no PyAV 19.
+  "av>=11,<19",
+  "opencv-python-headless>=4.8,<6",
+  "numpy>=1.24",
+]
+music = ["requests>=2.31,<3"]
+links = ["yt-dlp[default]>=2026.1.1"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "httpx>=0.27,<1"]
+
+[tool.uv]
+package = false

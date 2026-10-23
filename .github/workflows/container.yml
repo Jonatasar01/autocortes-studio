@@ -1,0 +1,23 @@
+name: Container smoke test
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  container:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - run: docker compose up --build --wait --wait-timeout 180
+      - name: Verify media and AI dependencies
+        run: >-
+          docker compose exec -T autocortes python -c
+          "import cv2, faster_whisper; from app.media import ffmpeg_capabilities;
+          c=ffmpeg_capabilities(); print(c);
+          assert all(c[k] for k in ('ffmpeg','ffprobe','libass','libx264'))"
+      - name: Verify host access
+        run: curl --fail http://127.0.0.1:8002/api/health
+      - name: Logs
+        if: always()
+        run: docker compose logs --no-color
+      - name: Stop
+        if: always()
+        run: docker compose down

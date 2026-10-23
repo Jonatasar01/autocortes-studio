@@ -1,0 +1,3 @@
+Classificadores Haar de detecção de rosto do OpenCV (repositório opencv/opencv, ramo 4.x,
+data/haarcascades). Licença Intel incluída no cabeçalho de cada arquivo XML. Usados pelo
+enquadramento "Seguir rosto" (app/reframe.py). O OpenCV 5 não distribui mais esses arquivos.

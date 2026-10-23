@@ -1,0 +1,36 @@
+name: Tests
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  pytest:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        python: ['3.10', '3.12']
+    runs-on: ${{ matrix.os }}
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: FFmpeg on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: FFmpeg on Windows
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --yes --no-progress
+      - run: python -m pip install uv==0.13.5
+      - run: uv sync --locked --all-extras --python ${{ matrix.python }}
+      - name: Require real media dependencies
+        run: uv run --no-sync python -c "from app.media import ffmpeg_capabilities; c=ffmpeg_capabilities(); print(c); assert all(c[k] for k in ('ffmpeg','ffprobe','libass','libx264'))"
+      - run: uv run --no-sync python -m pytest -q -ra --junitxml=test-results.xml
+        env:
+          OLLAMA_ENABLED: '0'
+          AUTOCORTES_FFMPEG_THREADS: '2'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.python }}
+          path: test-results.xml

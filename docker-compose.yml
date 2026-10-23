@@ -1,0 +1,27 @@
+services:
+  autocortes:
+    build: .
+    ports:
+      - "127.0.0.1:${AUTOCORTES_PORT:-8002}:8000"
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 90s
+    environment:
+      WHISPER_MODEL: "${WHISPER_MODEL:-small}"
+      WHISPER_DEVICE: cpu
+      WHISPER_LANGUAGE: "${WHISPER_LANGUAGE:-pt}"
+      AUTOCORTES_FFMPEG_THREADS: "${AUTOCORTES_FFMPEG_THREADS:-2}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    volumes:
+      - state:/state
+      - models:/models
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  state:
+  models:
