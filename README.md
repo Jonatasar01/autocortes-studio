@@ -16,7 +16,7 @@ para a internet.
 
 ## Requisitos
 
-- Python **3.10+**
+- Python **3.12** (aceita 3.10 a 3.12; versões mais novas, como 3.15, ainda não instalam as dependências). O `iniciar_windows.bat` já procura o 3.12 (`py -3.12`); instale com `py install 3.12` se faltar.
 - **FFmpeg** com `ffmpeg` e `ffprobe` no PATH (com libass para legendas e libx264). O diagnóstico no topo da interface
   mostra o que foi encontrado.
 

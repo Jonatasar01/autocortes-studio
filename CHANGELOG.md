@@ -8,6 +8,7 @@
 - Corrigido: **títulos** truncados com "…" no meio da frase. O limite subiu de 70 para 80 caracteres e frases longas
   são cortadas numa fronteira natural (vírgula, travessão ou conjunção), sem reticências; só sem fronteira cai para
   palavra inteira com "…", nunca terminando em artigo, preposição ou conjunção.
+- Windows: `iniciar_windows.bat` agora prefere o **Python 3.12** (`py -3.12`) e aceita 3.10 a 3.12. Antes ele usava `py -3` (a versão mais nova), e com o Python 3.15 a instalação das dependências falhava (o `pyyaml` não tem pacote pronto). Se não houver versão suportada, ou se a `.venv` existente for de outra versão, mostra a versão encontrada e como instalar o 3.12 (`py install 3.12`), sem apagar nada. O arquivo passou a usar só CRLF e ASCII. Testado em `tests/test_windows_launcher.py`.
 
 ## 2.4.0 — 2026-10-23
 
