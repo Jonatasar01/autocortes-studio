@@ -72,6 +72,7 @@ def import_url(url, form):
     # Só campos validados seguem para a tarefa; consentimentos são snapshots explícitos.
     clean = {k: str(v).lower() if isinstance(v, bool) else v for k, v in opts.items() if v is not None}
     clean['recognize_music_opt_in'] = clean.pop('recognize_music')
+    clean['editing_mode'] = str(form.get('editing_mode', 'automatic')).strip().lower()
     params = {'url': url, 'form': clean, 'automation_snapshot': autopilot.snapshot(opts['autopilot']),
               'curation_snapshot': copy.deepcopy(settings.load()['curation'])}
     # O run_id muda a cada snapshot; deduplicação de URL ativa é independente dele.
