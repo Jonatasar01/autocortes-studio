@@ -1,3 +1,8 @@
+## Não lançado
+
+- FilmCraft: etapa opcional **Remover pausas longas** (`transcript.set` + `transcript.removePauses`), com legendas
+  recriadas da transcrição cortada e validação estrutural da linha do tempo. Ver `FILMCRAFT-PROTOTIPO.md`.
+
 ## 2.4.0 — 2026-10-23
 
 - Central de automação com disponibilidade de IA, perfis e fila persistente.

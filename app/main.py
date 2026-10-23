@@ -120,12 +120,18 @@ def project_bundle(project_id: str):
 class AdvancedRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     acknowledge_rights: bool = False
+    # Opcional: remove pausas longas pelas palavras da transcrição (transcript.set + removePauses no FilmCraft).
+    remove_pauses: bool = False
+    pause_min_seconds: float = Field(default=0.7, ge=0.3, le=5, allow_inf_nan=False)
+    pause_keep_seconds: float = Field(default=0.25, ge=0, le=1, allow_inf_nan=False)
 
 
 @app.post('/api/projects/{project_id}/advanced')
 def advanced_export(project_id: str, options: AdvancedRequest):
     from .advanced import request
-    return request(project_id, options.acknowledge_rights)
+    pause = ({'min_seconds': options.pause_min_seconds, 'keep_seconds': options.pause_keep_seconds}
+             if options.remove_pauses else None)
+    return request(project_id, options.acknowledge_rights, pause)
 
 
 @app.get('/api/projects/{project_id}/advanced/{job_id}/{kind}')

@@ -622,13 +622,14 @@ function renderAdvanced(p) {
   $('#createAdvanced').disabled=(p.jobs||[]).some(j=>['queued','running','cancelling'].includes(j.status));
   $('#advancedResults').innerHTML=jobs.slice(0,3).map(j=>j.status==='done'
     ? `<div class="row-gap"><a class="text-link" href="/api/projects/${p.id}/advanced/${j.id}/project" download>Projeto .fcproj ↓</a><a class="text-link" href="/api/projects/${p.id}/advanced/${j.id}/render" download>Vídeo da montagem ↓</a><a class="text-link" href="/api/projects/${p.id}/advanced/${j.id}/subtitles" download>SRT ↓</a></div>`
+      + (j.result?.pause_removal ? `<p class="hint">Pausas removidas: ${esc(j.result.pause_removal.removed)} (${esc(j.result.pause_removal.seconds)} s). Duração: ${esc(j.result.pause_removal.duration_before)} s → ${esc(j.result.pause_removal.duration_after)} s.</p>` : '')
     : `<p class="hint">${esc(j.error||j.message||j.status)}</p>`).join('');
 }
 $('#createAdvanced').onclick=async()=>{
   if(!state.id) return;
   $('#createAdvanced').disabled=true;
   try {
-    await api(`/api/projects/${state.id}/advanced`,{method:'POST',json:{acknowledge_rights:$('#ackRights').checked}});
+    await api(`/api/projects/${state.id}/advanced`,{method:'POST',json:{acknowledge_rights:$('#ackRights').checked,remove_pauses:$('#advPauses').checked}});
     notify('Montagem FilmCraft na fila.'); schedule(200); refreshAutomation();
   } catch(e) {notify(e.message,true); $('#createAdvanced').disabled=false;}
 };

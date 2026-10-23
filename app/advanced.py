@@ -2,9 +2,16 @@
 from . import service, storage
 from .errors import AppError, Cancelled
 from .integrations.filmcraft import FilmCraftBridge, BridgeError
+from .integrations.filmcraft.bridge import normalize_pause_options, transcript_payload
 
 
-def request(project_id, acknowledge=False):
+def request(project_id, acknowledge=False, pause_removal=None):
+    """``pause_removal``: ``None`` desliga; um dict (``min_seconds``/``keep_seconds``) liga a remoção de
+    pausas pelas palavras da transcrição (transcript.set + transcript.removePauses no FilmCraft)."""
+    try:
+        pause = normalize_pause_options(pause_removal)
+    except BridgeError as exc:
+        raise AppError(str(exc), 400, 'bad_pause_options') from None
     p = storage.read_project(project_id)
     if p.get('status') != 'ready':
         raise AppError('Aguarde a análise do vídeo.', 409, 'not_ready')
@@ -16,7 +23,16 @@ def request(project_id, acknowledge=False):
     if not bridge.binary or not bridge.binary.is_file():
         raise AppError('FilmCraft não instalado. Configure FILMCRAFT_CLI para usar a montagem editável.',
                        400, 'filmcraft_missing')
-    manifest = bridge.decision_from_project(project_id)
+    manifest = bridge.decision_from_project(project_id, pause_removal=pause)
+    if pause:
+        # Falha cedo e com mensagem clara, antes de enfileirar, se algum corte não tem palavras com tempo.
+        try:
+            if not all(c.get('words') for c in manifest['clips']):
+                raise BridgeError('sem palavras')
+            transcript_payload(manifest['clips'], manifest.get('transcript_language'))
+        except BridgeError:
+            raise AppError('Remover pausas exige a transcrição por palavra em todos os cortes. '
+                           'Reprocesse o vídeo com a transcrição local ou desligue esta opção.', 409, 'no_words') from None
     if acknowledge:
         import time
         with storage.edit_project(project_id) as current:
@@ -31,12 +47,15 @@ def run(ctx):
     ctx.progress(0.1)
     target = storage.project_dir(ctx.project_id)/'advanced'/ctx.id
     try:
-        FilmCraftBridge(cancel_event=ctx.cancel_event, timeout=1800).build(ctx.params['manifest'], target)
+        built = FilmCraftBridge(cancel_event=ctx.cancel_event, timeout=1800).build(ctx.params['manifest'], target)
     except BridgeError as exc:
         if ctx.cancel_event.is_set():
             raise Cancelled() from None
         raise AppError(str(exc), 422, 'filmcraft_failed') from None
-    return {'project_file': 'timeline.fcproj', 'render_file': 'render.mp4', 'subtitle_file': 'captions.srt'}
+    result = {'project_file': 'timeline.fcproj', 'render_file': 'render.mp4', 'subtitle_file': 'captions.srt'}
+    if built.get('pause_removal'):
+        result['pause_removal'] = built['pause_removal']
+    return result
 
 
 def artifact(project_id, job_id, kind):

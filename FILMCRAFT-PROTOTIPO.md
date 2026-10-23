@@ -55,6 +55,35 @@ O resultado da suíte Python final e os logs ficam em `evidencias/filmcraft/`. O
 
 Suíte completa executada nesta entrega: **164 testes e 35 subtestes aprovados em 160,24 s**, em Windows/Python 3.12.14. Inclui três casos de recuperação de backup e onze casos do adaptador. Os renders FilmCraft descritos acima foram executados adicionalmente, fora dos testes unitários.
 
+## Etapa opcional: remover pausas pelas palavras da transcrição
+
+Desligada por padrão. No painel "Montagem no FilmCraft" marque **Remover pausas longas**, ou envie
+`{"remove_pauses": true, "pause_min_seconds": 0.7, "pause_keep_seconds": 0.25}` para
+`POST /api/projects/{id}/advanced`.
+
+Como funciona (`FilmCraftBridge.remove_pauses`, fase 2 do `build`):
+
+1. A montagem normal é criada e validada com posições exatas (nada muda aqui).
+2. As palavras de cada corte (tempo da fonte, vindas de `word_timestamps` do faster-whisper) são enviadas com
+   `transcript.set` em ticks exatos (`ms × 254.016.000`).
+3. `transcript.removePauses` apaga, em *ripple*, as pausas maiores que `pause_min_seconds`, mantendo
+   `pause_keep_seconds` de silêncio de cada lado (o silêncio mantido nos dois lados deve ser menor que a pausa mínima).
+4. `transcript.createCaptions` + `captions.export` recriam o SRT a partir da transcrição **já cortada**. O SRT
+   importado dos títulos não é usado nesse modo, pois ficaria fora de sincronia.
+5. Como as posições exatas mudam, a validação passa a ser estrutural: sem lacunas nem sobreposições, cada trecho restante
+   vem de um corte original e na ordem da fonte, vídeo e áudio idênticos, duração removida igual à relatada pelo
+   FilmCraft (±1 quadro) e legendas dentro da duração. O render final é conferido contra a nova duração.
+
+Requisitos e limites:
+
+- Exige transcrição local **por palavra** em todos os cortes; senão a API responde `409 no_words` antes de enfileirar.
+- O Whisper costuma **omitir hesitações** ("um", "uh"); esta etapa remove *silêncio*, não vícios de fala
+  (`transcript.removeFillers` não é usado).
+- O resultado da tarefa inclui `pause_removal` (`removed`, `seconds`, `duration_before`, `duration_after`).
+- Testes: `tests/test_filmcraft_pauses.py` (sem FilmCraft nem FFmpeg reais). Em 23/10/2026 o `build` completo também
+  foi executado com o `filmcraft-cli` 0.12.0 real, com FFprobe/FFmpeg simulados a partir do `probe` do FilmCraft;
+  uma execução com FFmpeg real continua pendente.
+
 ## Limites explícitos
 
 - É um protótipo da etapa P1, não a integração completa do roadmap. A interface da imagem, timeline web, botão de abrir FilmCraft e conciliação de edições externas não foram implementados.
