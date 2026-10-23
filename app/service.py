@@ -175,8 +175,12 @@ class Upload:
         self.extension = Path(self.name).suffix.lower()
         if self.extension not in media.ALLOWED_EXTENSIONS:
             raise AppError('Selecione um vídeo válido: MP4, MOV, MKV, WEBM, AVI ou M4V.', 400, 'bad_extension')
+        self.editing_mode = str(form.get('editing_mode', 'automatic')).strip().lower()
+        if self.editing_mode not in ('manual', 'automatic'):
+            raise AppError('Modo de edição inválido.', 400, 'bad_editing_mode')
         self.options = validate_options(form)
-        self.automation_snapshot = autopilot.snapshot(self.options['autopilot'])
+        self.automation_snapshot = (None if self.editing_mode == 'manual'
+                                    else autopilot.snapshot(self.options['autopilot']))
         self.curation_snapshot = copy.deepcopy(settings.load()['curation'])
         self.provenance = None
         self.origin = origin
@@ -221,10 +225,24 @@ class Upload:
                        'clips': [], 'transcript': [], **options,
                        'autopilot': self.automation_snapshot, 'curation_profile': self.curation_snapshot,
                        'provenance': self.provenance}
-            if self.options['recognize_music']:
+            if self.editing_mode == 'manual':
+                project.update({
+                    'status': 'ready', 'editing_mode': 'manual', 'ready_at': time.time(),
+                    'selection': {'mode': 'manual', 'reason': 'Os cortes serão definidos pelo usuário.'},
+                    'transcription': {'state': 'not_requested', 'message': 'Transcrição não solicitada.'},
+                    'transcript_status': 'Transcrição não solicitada.',
+                    'music_review': {'status': 'not_requested', 'message': 'Reconhecimento musical não executado.'},
+                    'rights': rights.rights_review(
+                        options['source_rights'], options['external_audio'], options['license_notes'],
+                        info['audio'], options['graphics_rights'], options['third_party_footage'],
+                        options['monetization']),
+                })
+            if self.options['recognize_music'] and self.editing_mode != 'manual':
                 project['music_consent'] = {'granted_at': time.time(), 'provider': 'ACRCloud',
                                             'scope': f'até {config.ACRCLOUD_MAX_SAMPLES} amostras de 12 s de áudio'}
             storage.write_project(self.project_id, project)
+            if self.editing_mode == 'manual':
+                return {'id': self.project_id, 'status': 'ready', 'warnings': warnings}
             job, _ = _jobs().submit(self.project_id, 'analysis', {}, dedupe_key=f'analysis:{self.project_id}')
             with storage.edit_project(self.project_id) as p:
                 p['analysis_job'] = job['id']
@@ -322,6 +340,78 @@ def edit_clip(project_id: str, clip_id: int, start: float, end: float, title: st
             clip['revision'] = int(clip.get('revision') or 1) + 1
             clip['edited_manually'] = True
         return dict(clip)
+
+
+
+def create_manual_clip(project_id: str, start: float, end: float, title: str) -> dict:
+    """Cria um corte a partir da seleção do usuário, sem depender de IA ou transcrição."""
+    title = _clean_text(title, 120)
+    if not title:
+        raise AppError('Informe um título.', 400, 'bad_input')
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (start, end)):
+        raise AppError('Tempos inválidos.', 400, 'bad_input')
+    with storage.edit_project(project_id) as p:
+        _require_ready(p)
+        duration = p['media']['duration']
+        if start < 0 or end <= start + 0.99 or end > duration + 0.02 or end - start > config.MAX_CLIP_SECONDS:
+            raise AppError('Seleção fora do vídeo (mínimo 1 s, máximo permitido por corte).', 400, 'bad_range')
+        clips = p.setdefault('clips', [])
+        next_id = max((int(c['id']) for c in clips), default=0) + 1
+        next_id = max(next_id, int(p.get('next_manual_clip_id') or 1))
+        p['next_manual_clip_id'] = next_id + 1
+        clip = {'id': next_id, 'start': round(start, 3), 'end': round(min(end, duration), 3),
+                'title': title, 'description': 'Corte criado manualmente.',
+                'score': None, 'selection_mode': 'manual', 'edited_manually': True,
+                'revision': 1, 'rank': len(clips) + 1, 'exports': [], 'reasons': []}
+        clip['exports'] = {}
+        clips.append(clip)
+        return dict(clip)
+
+
+def delete_manual_clip(project_id: str, clip_id: int) -> dict:
+    """Exclui a seleção, preservando arquivos já exportados como histórico no disco."""
+    with storage.edit_project(project_id) as p:
+        _require_ready(p)
+        _find_clip(p, clip_id)
+        if manager is not None:
+            active = manager.for_project(project_id, active_only=True)
+            if any(j.get('params', {}).get('clip_id') == clip_id for j in active):
+                raise AppError('Há uma tarefa usando este corte. Aguarde ou cancele a tarefa.', 409, 'clip_busy')
+        p['clips'] = [c for c in p['clips'] if c['id'] != clip_id]
+        for i, clip in enumerate(p['clips'], 1):
+            clip['rank'] = i
+        return {'deleted': clip_id}
+
+
+def split_manual_clip(project_id: str, clip_id: int, at: float) -> dict:
+    """Divide um corte em dois, atomicamente, sem abandonar edições anteriores."""
+    if not math.isfinite(at):
+        raise AppError('Posição inválida.', 400, 'bad_input')
+    with storage.edit_project(project_id) as p:
+        _require_ready(p)
+        if manager is not None and any(j.get('params', {}).get('clip_id') == clip_id
+                                       for j in manager.for_project(project_id, active_only=True)):
+            raise AppError('Há uma tarefa usando este corte.', 409, 'clip_busy')
+        original = _find_clip(p, clip_id)
+        if at - original['start'] < 1 or original['end'] - at < 1:
+            raise AppError('A divisão exige ao menos 1 segundo de cada lado.', 400, 'bad_range')
+        next_id = max(max((int(c['id']) for c in p['clips']), default=0) + 1,
+                      int(p.get('next_manual_clip_id') or 1))
+        p['next_manual_clip_id'] = next_id + 1
+        new_clip = {'id': next_id, 'start': round(at, 3), 'end': original['end'],
+                    'title': original['title'] + ' — parte 2', 'description': 'Dividido manualmente.',
+                    'score': None, 'selection_mode': 'manual', 'edited_manually': True,
+                    'revision': 1, 'exports': {}, 'reasons': []}
+        original['end'] = round(at, 3)
+        original['revision'] = int(original.get('revision') or 1) + 1
+        original['edited_manually'] = True
+        original['score'] = None
+        original['selection_mode'] = 'manual'
+        index = p['clips'].index(original)
+        p['clips'].insert(index + 1, new_clip)
+        for i, clip in enumerate(p['clips'], 1):
+            clip['rank'] = i
+        return {'first': dict(original), 'second': dict(new_clip)}
 
 
 def request_export(project_id: str, clip_id: int, options: dict) -> dict:
