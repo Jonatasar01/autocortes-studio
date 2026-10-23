@@ -64,12 +64,17 @@ async def unexpected_error(_request: Request, exc: Exception):
 
 @app.get('/', response_class=HTMLResponse)
 def home():
+    return (config.STATIC_DIR / 'studio.html').read_text(encoding='utf-8')
+
+
+@app.get('/classic', response_class=HTMLResponse)
+def classic_editor():
     return (config.STATIC_DIR / 'index.html').read_text(encoding='utf-8')
 
 
 @app.get('/static/{name}')
 def static(name: str):
-    if name not in {'styles.css', 'app.js', 'favicon.svg'}:
+    if name not in {'styles.css', 'app.js', 'favicon.svg', 'studio.css', 'studio.js'}:
         raise AppError('Arquivo não encontrado.', 404, 'not_found')
     return FileResponse(config.STATIC_DIR / name)
 
@@ -220,6 +225,33 @@ class ClipEdit(BaseModel):
     start: float = Field(ge=0, allow_inf_nan=False)
     end: float = Field(gt=0, allow_inf_nan=False)
     title: str = Field(min_length=1, max_length=120)
+
+
+class ManualClipRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    start: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+    title: str = Field(min_length=1, max_length=120)
+
+
+class SplitClipRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    at: float = Field(ge=0, allow_inf_nan=False)
+
+
+@app.post('/api/projects/{project_id}/clips')
+def create_clip(project_id: str, clip: ManualClipRequest):
+    return service.create_manual_clip(project_id, clip.start, clip.end, clip.title)
+
+
+@app.delete('/api/projects/{project_id}/clips/{clip_id}')
+def delete_clip(project_id: str, clip_id: int):
+    return service.delete_manual_clip(project_id, clip_id)
+
+
+@app.post('/api/projects/{project_id}/clips/{clip_id}/split')
+def split_clip(project_id: str, clip_id: int, body: SplitClipRequest):
+    return service.split_manual_clip(project_id, clip_id, body.at)
 
 
 @app.patch('/api/projects/{project_id}/clips/{clip_id}')
