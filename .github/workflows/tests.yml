@@ -1,5 +1,15 @@
 name: Tests
-on: [push, pull_request, workflow_dispatch]
+on:
+  # Push só no branch principal: em branches com PR o evento pull_request já
+  # cobre o código, e rodar os dois duplicava todos os jobs (e o consumo de minutos).
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  # Um novo push no mesmo PR/branch cancela a execução anterior ainda em andamento.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   pytest:
     strategy:
@@ -7,12 +17,13 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-latest]
         python: ['3.10', '3.12']
+    timeout-minutes: 40
     runs-on: ${{ matrix.os }}
     env:
       UV_PYTHON: ${{ matrix.python }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       - name: FFmpeg on Linux
@@ -29,7 +40,7 @@ jobs:
         env:
           OLLAMA_ENABLED: '0'
           AUTOCORTES_FFMPEG_THREADS: '2'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: test-results-${{ matrix.os }}-${{ matrix.python }}

@@ -1,5 +1,16 @@
 ## Não lançado
 
+- Corrigido: **cancelar uma exportação no Windows** só parava quando a renderização terminava. O FFmpeg instalado por
+  Chocolatey/Scoop é um "shim" que executa o `ffmpeg.exe` real como filho, e o cancelamento encerrava só o shim. Agora
+  a árvore inteira é encerrada (`taskkill /T` no Windows, grupo de processos no Linux/macOS) e o término não depende
+  mais do fim do pipe de progresso. Teste determinístico em `tests/test_process_control.py`.
+- Corrigido: no Studio, a **linha do tempo** não posicionava régua, quadros e cortes, porque a política de segurança
+  (CSP `style-src 'self'`) bloqueia atributos `style` em HTML gerado. As posições agora são aplicadas pelo CSSOM.
+- Studio: botão de **cancelar exportação** com barra de progresso, zoom que encaixa o vídeo inteiro, atalhos N/S/Delete,
+  arrastar e soltar vídeo, editor primeiro no celular, estados de carregamento/erro/sucesso e ação única de exportar.
+- CI: o `push` roda só no `master` (o `pull_request` cobre os branches com PR), execuções antigas do mesmo PR são
+  canceladas e cada job tem tempo limite.
+
 - FilmCraft: etapa opcional **Remover pausas longas** (`transcript.set` + `transcript.removePauses`), com legendas
   recriadas da transcrição cortada e validação estrutural da linha do tempo. Ver `FILMCRAFT-PROTOTIPO.md`.
 - Corrigido: o **gancho** (frase no topo, primeiros 3 s) saía cortado nas bordas do vídeo porque o cabeçalho ASS usa

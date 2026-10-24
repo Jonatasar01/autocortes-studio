@@ -63,6 +63,41 @@ def _popen_kwargs() -> dict:
     return {}
 
 
+def _tree_popen_kwargs() -> dict:
+    """Processos longos ficam em um grupo próprio para que o cancelamento alcance os filhos."""
+    if os.name == 'nt':
+        return _popen_kwargs()
+    return {'start_new_session': True}
+
+
+def _kill_tree(proc: subprocess.Popen, *, force: bool = False) -> None:
+    """Encerra o processo e todos os descendentes.
+
+    O FFmpeg instalado por Chocolatey/Scoop no Windows é um "shim" que executa o
+    ffmpeg.exe real como filho; encerrar só o shim deixa a renderização rodando e
+    segurando o pipe de progresso. No Windows usa-se taskkill /T (a árvore precisa
+    ser percorrida enquanto o pai ainda existe); no POSIX, o grupo de processos.
+    """
+    if os.name == 'nt':
+        try:
+            subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=10,
+                           creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        except (OSError, subprocess.SubprocessError):
+            pass
+        if proc.poll() is None:  # taskkill indisponível ou falhou: ao menos o processo direto
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        return
+    import signal
+    try:
+        os.killpg(proc.pid, signal.SIGKILL if force else signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 def run(args: list[str], timeout: float = 120, cwd: Path | None = None) -> subprocess.CompletedProcess:
     """Execução curta e síncrona (ffprobe, verificações)."""
     return subprocess.run(args, cwd=str(cwd) if cwd else None, stdout=subprocess.PIPE,
@@ -223,29 +258,44 @@ def run_ffmpeg(args: list[str], *, duration: float, cwd: Path | None = None,
         raise Cancelled()
     proc = subprocess.Popen(cmd, cwd=str(cwd) if cwd else None, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
-                            **_popen_kwargs())
+                            **_tree_popen_kwargs())
     tail: collections.deque[str] = collections.deque(maxlen=60)
-    def read_stderr():
-        for line in proc.stderr:
-            tail.append(line.rstrip())
 
-    reader = threading.Thread(target=read_stderr, daemon=True)
-    reader.start()
+    def read_stderr():
+        try:
+            for line in proc.stderr:
+                tail.append(line.rstrip())
+        except (OSError, ValueError):
+            pass
+
+    def read_progress():
+        try:
+            for line in proc.stdout:
+                key, _, value = line.strip().partition('=')
+                if key in ('out_time_us', 'out_time_ms') and on_progress and duration > 0 \
+                        and stopped['reason'] is None:
+                    try:
+                        seconds = int(value) / 1_000_000
+                    except ValueError:
+                        continue
+                    on_progress(max(0.0, min(1.0, seconds / duration)), '')
+        except (OSError, ValueError):
+            pass
 
     def stop():
-        if proc.poll() is not None:
-            return
-        try:
-            proc.terminate()
-        except ProcessLookupError:
-            return
+        # Sempre sinaliza a árvore inteira: mesmo que o processo direto já tenha
+        # saído, um neto (ex.: ffmpeg.exe atrás de um shim) pode seguir vivo.
+        _kill_tree(proc)
         try:
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
-            # Se o processo não atendeu ao encerramento, interrompe a árvore de
-            # trabalho imediatamente para liberar pipes e arquivos temporários.
-            proc.kill()
-            proc.wait(timeout=3)
+            # Não atendeu ao encerramento: interrompe imediatamente para liberar
+            # pipes e arquivos temporários.
+            _kill_tree(proc, force=True)
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
 
     # Um vigia garante cancelamento/timeout mesmo se o FFmpeg parar de emitir progresso.
     stopped = {'reason': None}
@@ -267,28 +317,30 @@ def run_ffmpeg(args: list[str], *, duration: float, cwd: Path | None = None,
             else:
                 time.sleep(0.10)
 
+    readers = [threading.Thread(target=read_stderr, daemon=True),
+               threading.Thread(target=read_progress, daemon=True)]
+    for reader in readers:
+        reader.start()
     guard = threading.Thread(target=watchdog, daemon=True)
     guard.start()
     try:
-        for line in proc.stdout:
-            key, _, value = line.strip().partition('=')
-            if key in ('out_time_us', 'out_time_ms') and on_progress and duration > 0:
-                try:
-                    seconds = int(value) / 1_000_000
-                except ValueError:
-                    continue
-                on_progress(max(0.0, min(1.0, seconds / duration)), '')
+        # O fim do processo (e não o fim do pipe) define o término: um descendente
+        # que herde o pipe não pode prender a tarefa depois do cancelamento.
         proc.wait()
     finally:
-        if proc.poll() is None:
+        if proc.poll() is None:  # interrupção inesperada da thread principal
             stop()
-        guard.join(timeout=4)
-        reader.join(timeout=3)
-        for stream in (proc.stdout, proc.stderr):  # evita vazamento de descritores em uso contínuo
-            try:
-                stream.close()
-            except (OSError, ValueError):
-                pass
+        guard.join(timeout=6)
+        for reader in readers:
+            reader.join(timeout=3)
+        # Fecha os pipes só quando os leitores terminaram: fechar um arquivo em
+        # leitura por outra thread pode bloquear. Evita vazamento de descritores.
+        if not any(reader.is_alive() for reader in readers):
+            for stream in (proc.stdout, proc.stderr):
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass
     stderr = '\n'.join(tail)
     if stopped['reason'] == 'cancel':
         raise Cancelled()
@@ -619,6 +671,16 @@ def validate_output(path: Path, *, expected_duration: float, expected_size: tupl
             'size_bytes': path.stat().st_size}
 
 
+def _remove_work_dir(work: Path) -> None:
+    """Remove a pasta temporária. No Windows, um processo recém-encerrado pode manter
+    o arquivo parcial bloqueado por alguns instantes; tenta novamente antes de desistir."""
+    for attempt in range(10):
+        shutil.rmtree(work, ignore_errors=True)
+        if not work.exists():
+            return
+        time.sleep(0.1 * (attempt + 1))
+
+
 def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start: float, end: float, *,
                 fmt: str = '9:16', framing: str = 'fit', ass_text: str | None = None, srt_text: str | None = None,
                 normalize_audio: bool = False, on_progress: ProgressFn | None = None,
@@ -712,7 +774,7 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                               if keep else None),
                 'warnings': warnings + report['warnings'], 'validation': report}
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        _remove_work_dir(work)
         try:
             work.parent.rmdir()  # remove a pasta .tmp se estiver vazia
         except OSError:

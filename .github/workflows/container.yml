@@ -1,10 +1,21 @@
 name: Container smoke test
-on: [push, pull_request, workflow_dispatch]
+on:
+  # Push só no branch principal: em branches com PR o evento pull_request já
+  # cobre o código, e rodar os dois duplicava todos os jobs (e o consumo de minutos).
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  # Um novo push no mesmo PR/branch cancela a execução anterior ainda em andamento.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   container:
+    timeout-minutes: 20
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: docker compose config --quiet
       - run: docker compose up --build --wait --wait-timeout 180
       - name: Verify media and AI dependencies

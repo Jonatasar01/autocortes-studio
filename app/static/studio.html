@@ -1,7 +1,226 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AutoCortes Studio — Editor</title><link rel="icon" href="/static/favicon.svg"><link rel="stylesheet" href="/static/studio.css"></head>
-<body><header class="top"><div class="brand"><span class="brandmark">✂</span><span>AutoCortes <b>Studio</b><small>EDITOR LOCAL</small></span></div><div class="topactions"><span id="status" role="status">Editor pronto</span><button id="openSettings" class="ghost">Projetos</button><button id="exportTop" class="primary">Exportar corte</button></div></header>
-<div class="shell"><nav class="rail" aria-label="Navegação"><button class="nav active" data-view="editor">▣ <span>Editor</span></button><button class="nav" data-view="media">▤ <span>Mídia</span></button><button class="nav" data-view="cuts">✂ <span>Cortes</span></button><button class="nav" data-view="automation">◇ <span>Automação</span></button><button class="nav" data-view="rights">◎ <span>Direitos</span></button><a class="nav classic" href="/classic">↗ <span>Editor clássico</span></a><div class="navfooter">AutoCortes 2.4</div></nav>
-<aside class="library"><div class="sidebarhead"><strong>Biblioteca</strong><button id="newProject" class="iconbutton" title="Importar vídeo">＋</button></div><div id="importPanel"><form id="uploadForm"><label for="sourceMode">Origem</label><select id="sourceMode"><option value="file">Arquivo local</option><option value="link">YouTube / Shorts</option></select><div id="fileWrap"><label class="drop" for="file"><span>＋</span><b>Importar vídeo</b><small>MP4, MOV, MKV, WEBM...</small></label><input id="file" type="file" accept="video/*,.mkv,.mov,.avi,.m4v" hidden><div id="filename" class="tiny">Nenhum arquivo selecionado</div></div><div id="urlWrap" hidden><label for="videoUrl">Link público autorizado</label><input id="videoUrl" type="url" placeholder="https://www.youtube.com/watch?v=..."></div><label>Modo de edição</label><select id="mode"><option value="manual">Manual — escolher trechos</option><option value="automatic">Automático — sugerir cortes</option></select><label>Direitos do vídeo</label><select id="sourceRights"><option value="unknown">Não verificado</option><option value="owned">Sou o autor</option><option value="licensed">Tenho licença</option><option value="third_party">Material de terceiros</option></select><label class="minirow"><input id="thirdParty" type="checkbox"> Contém trechos de terceiros</label><details><summary>Outras declarações</summary><label>Áudio de terceiros</label><select id="audioRights"><option value="unknown">Não verificado</option><option value="no">Não</option><option value="yes">Sim</option></select><label>Imagens e marcas</label><select id="graphicsRights"><option value="unknown">Não verificado</option><option value="none">Não há</option><option value="owned">Minhas</option><option value="licensed">Licenciadas</option><option value="third_party">De terceiros</option></select><label>Monetização</label><select id="monetization"><option value="unknown">Não decidido</option><option value="yes">Sim</option><option value="no">Não</option></select><label>Notas da licença</label><textarea id="licenseNotes" rows="2"></textarea></details><div id="automaticOptions" hidden><label>Duração pretendida</label><input id="target" type="number" value="35" min="10" max="90"><label>Número de sugestões</label><input id="desired" type="number" value="5" min="1" max="15"></div><button id="importButton" class="primary full" type="submit">Abrir no editor</button><div id="uploadProgress" hidden><progress id="uploadBar" value="0" max="100"></progress><span id="uploadPercent">0%</span></div></form></div><div class="sectioncap">PROJETOS RECENTES <button id="refresh" class="textbutton">Atualizar</button></div><div id="projects" class="projects"></div></aside>
-<main class="workspace"><section class="editortop"><div class="projectlabel"><small>PROJETO ATUAL</small><h1 id="projectName">Novo projeto</h1><span id="projectMeta">Importe um vídeo para começar</span></div><div class="quick"><button id="add" class="primary">＋ Criar corte</button><button id="split" class="ghost">Dividir</button><button id="remove" class="ghost danger">Excluir</button></div></section><section class="stage"><div class="preview"><div class="videobox"><video id="video" playsinline preload="metadata"></video><div id="noVideo">Importe um vídeo ou abra um projeto recente</div></div><div class="playercontrols"><span id="currentTime">00:00.0</span><input aria-label="Posição do vídeo" id="seek" type="range" min="0" max="1000" value="0"><span id="duration">00:00.0</span><button id="back" title="Voltar 1 segundo">↶</button><button id="play" class="play" title="Reproduzir/pausar">▶</button><button id="forward" title="Avançar 1 segundo">↷</button><button id="markIn">Marcar I</button><button id="markOut">Marcar O</button></div></div><aside class="inspector"><div class="inspecthead"><strong>Propriedades</strong><span>DO CORTE</span></div><div id="noSelection" class="hint">Selecione ou crie um corte na linha do tempo.</div><div id="properties" hidden><label for="clipTitle">Nome</label><input id="clipTitle" maxlength="120"><div class="cols"><label>Início (s)<input id="start" type="number" step=".01" min="0"></label><label>Fim (s)<input id="end" type="number" step=".01" min="0"></label></div><label>Formato de saída</label><div class="formats" id="formats"><button class="active" data-format="9:16">9:16</button><button data-format="16:9">16:9</button><button data-format="1:1">1:1</button><button data-format="original">Original</button></div><label>Enquadramento</label><select id="framing"><option value="blur">Fundo desfocado</option><option value="fit">Quadro inteiro</option><option value="track">Seguir rosto (se disponível)</option></select><div class="checks"><label><input id="subtitles" type="checkbox" checked> Legendas</label><label><input id="normalize" type="checkbox"> Normalizar áudio</label><label><input id="hook" type="checkbox"> Gancho</label></div><button id="save" class="primary full">Salvar alterações</button><button id="export" class="ghost full">Exportar MP4</button></div><div id="jobStatus" class="hint" role="status"></div><div id="downloads"></div></aside></section>
-<section class="timelinepanel"><div class="timelinebar"><strong>Linha do tempo</strong><div class="toolgroup"><button id="zoomOut">−</button><label for="zoom">Zoom</label><input id="zoom" type="range" min="1" max="8" value="2"><button id="zoomIn">＋</button></div><span class="hint">I / O · Espaço · ← / →</span></div><div class="timelineScroll" id="timelineScroll"><div id="timelineCanvas" class="timelineCanvas"><div id="ruler" class="ruler"></div><div class="track"><span class="tracklabel">VÍDEO</span><div id="frames" class="frames"></div></div><div class="track"><span class="tracklabel">ÁUDIO</span><div id="wave" class="wave"></div></div><div class="track cutsTrack"><span class="tracklabel">CORTES</span><div id="clipSegments" class="segments"></div></div><div id="playhead" class="playhead"></div></div></div><div class="timelinefooter"><span id="rangeLabel">Selecione um intervalo usando I e O.</span><button id="previewClip" class="ghost">▶ Reproduzir corte</button></div></section><section class="cutlist"><header><h2>Cortes do projeto</h2><span id="count">0 cortes</span></header><div id="cutCards" class="cutCards"></div></section><details class="advanced"><summary>Automação, histórico e direitos autorais</summary><div id="rightsDetails"></div><div id="automationDetails"></div><a href="/classic">Abrir editor clássico com todas as opções de IA, narração e FilmCraft →</a></details></main></div>
-<div id="toast" class="toast" role="alert" hidden></div><script src="/static/studio.js"></script></body></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AutoCortes Studio — Editor</title>
+  <link rel="icon" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/studio.css">
+</head>
+<body>
+<a class="skip" href="#workspace">Pular para o editor</a>
+
+<header class="top">
+  <div class="brand">
+    <span class="brandmark" aria-hidden="true">✂</span>
+    <span>AutoCortes <b>Studio</b><small>EDITOR LOCAL</small></span>
+  </div>
+  <div class="topactions">
+    <span id="status" class="status" role="status" data-tone="idle">Editor pronto</span>
+    <button id="exportTop" class="primary" disabled>Exportar corte</button>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="rail" aria-label="Navegação">
+    <button class="nav active" data-view="editor" aria-current="true"><span class="ico" aria-hidden="true">▣</span><span class="lbl">Editor</span></button>
+    <button class="nav" data-view="media"><span class="ico" aria-hidden="true">▤</span><span class="lbl">Biblioteca</span></button>
+    <button class="nav" data-view="cuts"><span class="ico" aria-hidden="true">✂</span><span class="lbl">Cortes</span></button>
+    <button class="nav" data-view="automation"><span class="ico" aria-hidden="true">◇</span><span class="lbl">Automação</span></button>
+    <button class="nav" data-view="rights"><span class="ico" aria-hidden="true">◎</span><span class="lbl">Direitos</span></button>
+    <a class="nav classic" href="/classic" title="Todas as opções de IA, narração e FilmCraft"><span class="ico" aria-hidden="true">↗</span><span class="lbl">Editor clássico</span></a>
+    <div class="navfooter">AutoCortes 2.4</div>
+  </nav>
+
+  <aside class="library" id="library" aria-label="Biblioteca">
+    <div class="sidebarhead">
+      <h2>Biblioteca</h2>
+      <button id="newProject" class="iconbutton" title="Importar vídeo" aria-label="Importar vídeo">＋</button>
+    </div>
+    <form id="uploadForm" novalidate>
+      <div class="segmented" role="radiogroup" aria-label="Origem do vídeo">
+        <label><input type="radio" name="sourceMode" value="file" checked><span>Arquivo</span></label>
+        <label><input type="radio" name="sourceMode" value="link"><span>Link</span></label>
+      </div>
+      <div id="fileWrap">
+        <label class="drop" for="file" id="dropZone">
+          <span class="dropicon" aria-hidden="true">＋</span>
+          <b>Escolher ou soltar vídeo</b>
+          <small>MP4, MOV, MKV, WEBM, AVI</small>
+        </label>
+        <input id="file" type="file" accept="video/*,.mkv,.mov,.avi,.m4v" class="visually-hidden">
+        <div id="filename" class="tiny" aria-live="polite">Nenhum arquivo selecionado</div>
+      </div>
+      <div id="urlWrap" hidden>
+        <label for="videoUrl">Link público autorizado</label>
+        <input id="videoUrl" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…">
+      </div>
+
+      <label for="mode">Modo de edição</label>
+      <select id="mode">
+        <option value="manual">Manual — eu escolho</option>
+        <option value="automatic">Automático — sugestões</option>
+      </select>
+      <div id="automaticOptions" class="cols" hidden>
+        <label>Duração (s)<input id="target" type="number" value="35" min="10" max="90"></label>
+        <label>Sugestões<input id="desired" type="number" value="5" min="1" max="15"></label>
+      </div>
+
+      <label for="sourceRights">Direitos do vídeo</label>
+      <select id="sourceRights">
+        <option value="unknown">Não verificado</option>
+        <option value="owned">Sou o autor</option>
+        <option value="licensed">Tenho licença</option>
+        <option value="third_party">Material de terceiros</option>
+      </select>
+      <label class="minirow"><input id="thirdParty" type="checkbox"> Contém trechos de terceiros</label>
+      <details>
+        <summary>Outras declarações de direitos</summary>
+        <label for="audioRights">Áudio de terceiros</label>
+        <select id="audioRights"><option value="unknown">Não verificado</option><option value="no">Não</option><option value="yes">Sim</option></select>
+        <label for="graphicsRights">Imagens e marcas</label>
+        <select id="graphicsRights"><option value="unknown">Não verificado</option><option value="none">Não há</option><option value="owned">Minhas</option><option value="licensed">Licenciadas</option><option value="third_party">De terceiros</option></select>
+        <label for="monetization">Monetização</label>
+        <select id="monetization"><option value="unknown">Não decidido</option><option value="yes">Sim</option><option value="no">Não</option></select>
+        <label for="licenseNotes">Notas da licença</label>
+        <textarea id="licenseNotes" rows="2"></textarea>
+      </details>
+
+      <button id="importButton" class="primary full" type="submit">Abrir no editor</button>
+      <div id="uploadProgress" class="uploadprogress" hidden>
+        <progress id="uploadBar" value="0" max="100"></progress><span id="uploadPercent">0%</span>
+      </div>
+    </form>
+
+    <div class="sectioncap">
+      <h3>Projetos recentes</h3>
+      <button id="refresh" class="textbutton">Atualizar</button>
+    </div>
+    <div id="projects" class="projects" aria-live="polite"></div>
+  </aside>
+
+  <main class="workspace" id="workspace" tabindex="-1">
+    <section class="editortop">
+      <div class="projectlabel">
+        <small>PROJETO ATUAL</small>
+        <h1 id="projectName">Nenhum projeto aberto</h1>
+        <span id="projectMeta">Importe um vídeo ou abra um projeto da biblioteca</span>
+      </div>
+      <div class="quick" role="toolbar" aria-label="Ações do corte">
+        <button id="add" class="primary" disabled title="Criar corte com a seleção I/O (N)">＋ Criar corte</button>
+        <button id="split" class="ghost" disabled title="Dividir no cursor (S)">Dividir</button>
+        <button id="remove" class="ghost danger" disabled title="Excluir corte (Delete)">Excluir</button>
+      </div>
+    </section>
+
+    <section class="stage">
+      <div class="preview">
+        <div class="videobox">
+          <video id="video" playsinline preload="metadata"></video>
+          <div id="noVideo" class="novideo">
+            <span aria-hidden="true">▶</span>
+            <p>Importe um vídeo ou abra um projeto recente</p>
+          </div>
+        </div>
+        <div class="playercontrols">
+          <div class="transport">
+            <button id="back" class="icon" title="Voltar 1 s (←)" aria-label="Voltar 1 segundo" disabled>↶</button>
+            <button id="play" class="play" title="Reproduzir/pausar (Espaço)" aria-label="Reproduzir" disabled>▶</button>
+            <button id="forward" class="icon" title="Avançar 1 s (→)" aria-label="Avançar 1 segundo" disabled>↷</button>
+          </div>
+          <span id="currentTime" class="tc">00:00.0</span>
+          <input id="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Posição do vídeo" disabled>
+          <span id="duration" class="tc">00:00.0</span>
+          <div class="marks">
+            <button id="markIn" class="ghost" title="Marcar entrada (I)" disabled>Entrada <kbd>I</kbd></button>
+            <button id="markOut" class="ghost" title="Marcar saída (O)" disabled>Saída <kbd>O</kbd></button>
+          </div>
+        </div>
+      </div>
+
+      <aside class="inspector" aria-label="Propriedades do corte">
+        <div class="inspecthead"><h2>Propriedades</h2><span>DO CORTE</span></div>
+        <div id="noSelection" class="empty">Selecione ou crie um corte na linha do tempo.</div>
+        <form id="properties" hidden novalidate>
+          <label for="clipTitle">Nome</label>
+          <input id="clipTitle" maxlength="120" autocomplete="off">
+          <div class="cols">
+            <label>Início (s)<input id="start" type="number" step=".01" min="0"></label>
+            <label>Fim (s)<input id="end" type="number" step=".01" min="0"></label>
+          </div>
+          <div id="clipInfo" class="clipinfo"></div>
+          <span class="label" id="formatsLabel">Formato de saída</span>
+          <div class="formats" id="formats" role="group" aria-labelledby="formatsLabel">
+            <button type="button" class="active" aria-pressed="true" data-format="9:16">9:16</button>
+            <button type="button" aria-pressed="false" data-format="16:9">16:9</button>
+            <button type="button" aria-pressed="false" data-format="1:1">1:1</button>
+            <button type="button" aria-pressed="false" data-format="original">Original</button>
+          </div>
+          <label for="framing">Enquadramento</label>
+          <select id="framing">
+            <option value="blur">Fundo desfocado</option>
+            <option value="fit">Quadro inteiro</option>
+            <option value="track">Seguir rosto (se disponível)</option>
+          </select>
+          <div class="checks">
+            <label><input id="subtitles" type="checkbox" checked> Legendas</label>
+            <label><input id="normalize" type="checkbox"> Normalizar áudio</label>
+            <label title="Usa o título como texto de gancho no início"><input id="hook" type="checkbox"> Gancho</label>
+          </div>
+          <button id="save" class="ghost full" type="submit">Salvar alterações</button>
+        </form>
+        <div id="exportPanel" class="exportpanel" hidden>
+          <div class="exporthead"><span id="jobStatus" role="status"></span><button id="cancelExport" class="textbutton danger" type="button" hidden>Cancelar</button></div>
+          <progress id="exportBar" value="0" max="100" hidden></progress>
+          <div id="downloads"></div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="timelinepanel" aria-label="Linha do tempo">
+      <div class="timelinebar">
+        <h2>Linha do tempo</h2>
+        <div class="toolgroup">
+          <button id="zoomOut" class="icon" aria-label="Diminuir zoom">−</button>
+          <label for="zoom">Zoom</label>
+          <input id="zoom" type="range" min="1" max="8" value="1">
+          <button id="zoomIn" class="icon" aria-label="Aumentar zoom">＋</button>
+        </div>
+        <span class="shortcuts" aria-hidden="true"><kbd>Espaço</kbd> reproduzir · <kbd>I</kbd>/<kbd>O</kbd> marcar · <kbd>N</kbd> criar · <kbd>S</kbd> dividir</span>
+      </div>
+      <div class="timelineScroll" id="timelineScroll">
+        <div id="timelineCanvas" class="timelineCanvas">
+          <div id="ruler" class="ruler"></div>
+          <div class="track"><span class="tracklabel">VÍDEO</span><div id="frames" class="frames"></div></div>
+          <div class="track"><span class="tracklabel">ÁUDIO</span><div id="wave" class="wave"></div></div>
+          <div class="track cutsTrack"><span class="tracklabel">CORTES</span><div id="selectionBand" class="selectionband" hidden></div><div id="clipSegments" class="segments"></div></div>
+          <div id="playhead" class="playhead"></div>
+        </div>
+      </div>
+      <div class="timelinefooter">
+        <span id="rangeLabel">Marque a entrada (I) e a saída (O) para criar um corte.</span>
+        <button id="previewClip" class="ghost" disabled>▶ Reproduzir corte</button>
+      </div>
+    </section>
+
+    <section class="cutlist" id="cutlist" aria-label="Cortes do projeto">
+      <header><h2>Cortes do projeto</h2><span id="count">0 cortes</span></header>
+      <div id="cutCards" class="cutCards"></div>
+    </section>
+
+    <details class="advanced" id="advanced">
+      <summary>Automação, histórico e direitos autorais</summary>
+      <div class="advancedgrid">
+        <div><h3>Direitos autorais</h3><div id="rightsDetails" class="hint">Abra um projeto para ver a revisão de direitos.</div></div>
+        <div><h3>Automação</h3><div id="automationDetails" class="hint">Carregando…</div></div>
+      </div>
+      <a href="/classic">Abrir o editor clássico com todas as opções de IA, narração e FilmCraft →</a>
+    </details>
+  </main>
+</div>
+
+<div id="toast" class="toast" hidden><span id="toastText"></span><button id="toastClose" class="textbutton" aria-label="Fechar aviso">✕</button></div>
+<script src="/static/studio.js"></script>
+</body>
+</html>
