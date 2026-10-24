@@ -155,6 +155,30 @@ class ExportTests(unittest.TestCase):
         report = media.validate_output(self.src, expected_duration=3, expected_size=(1080, 1920), expect_audio=True)
         self.assertFalse(report['valid'])
 
+    def test_cancel_before_launch_does_not_spawn_ffmpeg(self):
+        from unittest import mock
+        event = threading.Event()
+        event.set()
+        with mock.patch.object(media.subprocess, 'Popen') as spawn:
+            with self.assertRaises(Cancelled):
+                media.run_ffmpeg(['-f', 'lavfi', '-i', 'color=s=32x32:d=2',
+                                  '-f', 'null', '-'], duration=2, cancel_event=event)
+            spawn.assert_not_called()
+
+    def test_cancel_during_execution(self):
+        src = make_video(self.dir / 'cancel_rapido.mp4', duration=3)
+        event = threading.Event()
+        timer = threading.Timer(0.15, event.set)
+        timer.start()
+        started = time.monotonic()
+        try:
+            with self.assertRaises(Cancelled):
+                media.run_ffmpeg(['-re', '-i', str(src), '-f', 'null', '-'],
+                                 duration=3, cancel_event=event)
+        finally:
+            timer.cancel()
+        self.assertLess(time.monotonic() - started, 3.0)
+
     def test_cancel_kills_ffmpeg_and_leaves_no_file(self):
         big = make_video(self.dir / 'grande.mp4', size='1920x1080', duration=40, fps=30)
         info = media.probe_media(big)
