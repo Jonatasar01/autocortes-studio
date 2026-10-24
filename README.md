@@ -219,6 +219,27 @@ Dependências: FFmpeg com libass e as bibliotecas de `requirements-ai.txt` (fast
 para seguir rosto). Sem faster-whisper, os vídeos saem sem legenda e com aviso. O modelo segue
 `WHISPER_MODEL` (padrão `small`) e `WHISPER_LANGUAGE` (padrão `pt`).
 
+### Masterização final (`app/batch/mastering.py`)
+
+Une um corte já pronto no tempo, uma música de fundo (opcional) e uma legenda `.ass` em uma
+única codificação de vídeo, em 1080×1920:
+
+```python
+from app.batch.mastering import AudioVisualMastering, console_progress
+
+AudioVisualMastering().render_final_clip(
+    'output/001_corte_single_speaker.mp4', 'musicas/lofi.mp3',
+    'output/001_corte_single_speaker.ass', 'final/001.mp4', on_progress=console_progress)
+```
+
+- Voz: `acompressor` → `loudnorm` (alvo -14 LUFS, LRA 11, pico -1 dBTP). O áudio é medido
+  antes (leitura rápida só do áudio) para o `loudnorm` aplicar ganho linear e acertar o alvo.
+- Música: `volume=0.05`, repetida em loop se for mais curta; `amix` termina junto com a voz.
+- Vídeo: escala e recorte para 1080×1920 e legenda com o filtro `ass`.
+- Erros levantam `MasteringError` com o final do log do FFmpeg; a saída é validada antes de
+  ser gravada no destino.
+- Se o arquivo já tem a legenda embutida (saída padrão do lote), passe `None` como legenda.
+
 ## Configuração
 
 | Variável | Padrão | Função |
