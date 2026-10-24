@@ -195,8 +195,9 @@ O CSV aceita `,` ou `;` como separador (veja `cortes.exemplo.csv`):
 Para cada linha, numa pasta temporária removida ao fim da iteração:
 
 1. **Corte bruto** (`app/batch/slicer.py`): `ffmpeg -ss … -to … -i origem -c copy`, sem recodificar.
-   Os tempos do original são preservados (`-copyts`), então a margem até o quadro-chave anterior é
-   descartada com precisão de quadro na renderização.
+   O quadro do início pedido é localizado no temporário pela impressão digital (MD5 de uma
+   miniatura), então a sobra até o quadro-chave anterior é descartada com precisão de quadro em
+   qualquer versão do FFmpeg.
 2. **Legenda** (`app/batch/captions.py`): faster-whisper transcreve só o áudio do trecho; blocos de
    3 a 5 palavras (`--palavras`), em `.ass` amarelo, grosso, com contorno preto, no centro da tela.
 3. **Layout 9:16, 1080×1920** (`app/batch/layouts.py`), com a legenda embutida no mesmo passo:

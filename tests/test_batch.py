@@ -117,9 +117,12 @@ class LayoutTests(unittest.TestCase):
             layouts.build('mosaico')
 
 
-def frame_md5(path: Path, at: float) -> str:
-    return subprocess.run(['ffmpeg', '-loglevel', 'error', '-ss', f'{at:.6f}', '-i', str(path), '-frames:v', '1',
-                           '-f', 'md5', '-'], capture_output=True, text=True, check=True).stdout.strip()
+def frames_from(path: Path, at: float, count: int) -> list[str]:
+    """MD5 de ``count`` quadros decodificados em sequência a partir de ``at`` (como a renderização lê)."""
+    out = subprocess.run(['ffmpeg', '-loglevel', 'error', '-ss', f'{at:.6f}', '-i', str(path), '-map', '0:v:0',
+                          '-frames:v', str(count), '-f', 'framemd5', '-'], capture_output=True, text=True,
+                         check=True).stdout
+    return [line.rsplit(',', 1)[-1].strip() for line in out.splitlines() if line and not line.startswith('#')]
 
 
 @unittest.skipUnless(HAS_FFMPEG, 'FFmpeg ausente')
@@ -132,10 +135,14 @@ class BatchMediaTests(unittest.TestCase):
                                 extra=['-g', '200', '-keyint_min', '200', '-sc_threshold', '0'])
 
     def test_slice_is_frame_exact(self):
-        sliced = slice_copy(self.source, 10.4, 15.0, self.dir / 'temp.mp4')
-        self.assertGreater(sliced.offset, 2)  # copiou desde o quadro-chave em 8 s
-        for t in (10.4, 12.0, 14.8):
-            self.assertEqual(frame_md5(sliced.path, sliced.offset + t - 10.4), frame_md5(self.source, t))
+        # Início longe do quadro-chave (8 s) e logo depois dele; os quadros lidos a partir de
+        # offset no temporário precisam ser exatamente os do original a partir do início pedido.
+        for start, end in ((10.4, 15.0), (8.04, 9.6), (0.0, 2.0)):
+            with self.subTest(start=start):
+                sliced = slice_copy(self.source, start, end, self.dir / 'temp.mp4')
+                count = int((end - start) * 25) - 2
+                self.assertEqual(frames_from(sliced.path, sliced.offset, count),
+                                 frames_from(self.source, start, count))
 
     def test_each_layout_renders_vertical_and_cleans_temp(self):
         out = self.dir / 'output'
