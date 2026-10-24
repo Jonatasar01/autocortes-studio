@@ -16,19 +16,23 @@ para a internet.
 
 ## Nova interface Studio — edição manual e automática
 
-Esta branch introduz uma nova interface em `http://127.0.0.1:8000/`, com player,
-linha do tempo, propriedades do corte e biblioteca de projetos. A interface anterior
-continua disponível em `http://127.0.0.1:8000/classic`.
+A interface fica em `http://127.0.0.1:8000/`, com player, linha do tempo, propriedades
+do corte e biblioteca de projetos. O editor clássico foi removido; `/classic` redireciona
+para o Studio.
 
 - **Modo manual:** importa e valida o vídeo sem executar transcrição, seleção ou IA.
   Posicione o vídeo e use **Marcar I**, **Marcar O** e **Criar corte** para escolher
   exatamente o trecho. Depois ajuste os tempos, divida e exporte normalmente.
 - **Modo automático:** mantém o fluxo existente de transcrição e sugestão de cortes.
   Os trechos podem ser revisados manualmente antes da exportação.
-- **Acesso a recursos avançados:** narração, controles de legendas e FilmCraft
-  continuam no editor clássico enquanto a nova interface é aperfeiçoada.
-- **Limite atual:** a faixa de vídeo é uma representação temporal, ainda sem
-  miniaturas reais; não há waveform do áudio ou montagem multifaixa implementadas.
+- **Excluir projeto:** pelo ícone de lixeira em *Projetos recentes* ou no cartão de mídia.
+  Apaga o vídeo importado, os cortes e as exportações guardadas no projeto (cópias na pasta
+  de saída ficam). Se algum arquivo estiver em uso, nada é apagado e o app avisa.
+- **Sem interface por enquanto:** narração por IA, configurações de curadoria/IA, FilmCraft,
+  piloto automático e reconhecimento de música continuam disponíveis pela API
+  (`/api/...`), mas não têm tela no Studio.
+- **Limite atual:** a faixa de vídeo mostra miniaturas reais; não há waveform do áudio
+  nem montagem multifaixa.
 - **Privacidade:** o servidor continua projetado para `127.0.0.1`. Não exponha
   diretamente a aplicação na internet sem autenticação, revisão de segurança
   e infraestrutura adequada para vídeo.

@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import tempfile
 import threading
@@ -137,12 +138,40 @@ def list_projects() -> list[dict]:
     return sorted(items, key=lambda x: x.get('created_at') or 0, reverse=True)
 
 
+TRASH_PREFIX = '.excluindo-'
+
+
 def delete_project_dir(project_id: str) -> None:
+    """Exclui o projeto de forma atômica: ou some inteiro, ou fica intacto.
+
+    A pasta é renomeada antes de ser apagada. No Windows, um arquivo aberto (vídeo em
+    reprodução, exportação lida por outro programa) impede a renomeação; nesse caso nada
+    é alterado e o usuário recebe uma mensagem clara, em vez de um projeto pela metade.
+    """
     folder = project_dir(project_id)
+    trash = folder.with_name(f'{TRASH_PREFIX}{project_id}-{secrets.token_hex(4)}')
     with lock_for(project_id):
-        shutil.rmtree(folder, ignore_errors=True)
+        for attempt in range(8):
+            try:
+                folder.rename(trash)
+                break
+            except PermissionError:
+                if attempt == 7:
+                    raise AppError('Algum arquivo do projeto está em uso (vídeo aberto em outro programa?). '
+                                   'Feche-o e tente excluir de novo.', 409, 'in_use') from None
+                time.sleep(0.15 * (attempt + 1))
     with _registry:
         _locks.pop(project_id, None)
+    _remove_tree(trash)
+
+
+def _remove_tree(path: Path) -> None:
+    # O restante (se algo ainda estiver travado) é removido na próxima inicialização.
+    for attempt in range(5):
+        shutil.rmtree(path, ignore_errors=True)
+        if not path.exists():
+            return
+        time.sleep(0.1 * (attempt + 1))
 
 
 def free_bytes(path: Path | None = None) -> int:
@@ -161,6 +190,10 @@ def cleanup_stale_files(max_age_seconds: int = 3600) -> int:
     removed = 0
     now = time.time()
     for folder in data_dir().iterdir():
+        if folder.is_dir() and folder.name.startswith(TRASH_PREFIX):
+            shutil.rmtree(folder, ignore_errors=True)  # exclusão interrompida
+            removed += 1
+            continue
         if not (folder.is_dir() and valid_id(folder.name)):
             continue
         for tmp in [folder / 'clips' / '.tmp', folder / 'work']:

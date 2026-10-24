@@ -230,6 +230,13 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px co
 .projectitem small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .projectitem:hover { background: var(--surface); }
 .projectitem.selected { background: var(--surface); border-color: var(--border); }
+.projectrowitem { position: relative; }
+.projectrowitem .projectitem { padding-right: 34px; }
+.projdel { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); opacity: 0; color: var(--text-3); }
+.projectrowitem:hover .projdel, .projdel:focus-visible { opacity: 1; }
+.projdel:hover:not(:disabled), #deleteProject:hover:not(:disabled) { color: var(--danger); background: var(--danger-soft); }
+#deleteProject { margin-left: auto; color: var(--text-3); }
+@media (hover: none) { .projdel { opacity: 1; } }
 .dot { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--text-3); vertical-align: 1px; }
 .dot[data-status=ready] { background: var(--success); }
 .dot[data-status=queued], .dot[data-status=analyzing] { background: var(--warning); }

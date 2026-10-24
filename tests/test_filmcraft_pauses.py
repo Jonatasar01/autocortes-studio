@@ -375,9 +375,3 @@ def test_job_result_exposes_the_pause_summary(tmp_path, monkeypatch):
     assert advanced.run(ctx)['pause_removal'] == report['pause_removal']
     monkeypatch.setattr(FilmCraftBridge, 'build', lambda self, manifest, target: {'valid': True})
     assert 'pause_removal' not in advanced.run(ctx)
-
-
-def test_static_ui_sends_the_option():
-    static = Path(config.STATIC_DIR)
-    assert 'id="advPauses"' in (static / 'index.html').read_text(encoding='utf-8')
-    assert 'remove_pauses' in (static / 'app.js').read_text(encoding='utf-8')

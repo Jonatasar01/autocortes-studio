@@ -12,7 +12,7 @@ from urllib.parse import unquote
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
@@ -67,16 +67,18 @@ def home():
     return (config.STATIC_DIR / 'studio.html').read_text(encoding='utf-8')
 
 
-@app.get('/classic', response_class=HTMLResponse)
+@app.get('/classic')
 def classic_editor():
-    return (config.STATIC_DIR / 'index.html').read_text(encoding='utf-8')
+    # O editor clássico foi removido; links antigos abrem o Studio.
+    return RedirectResponse('/', status_code=307)
 
 
 @app.get('/static/{name}')
 def static(name: str):
-    if name not in {'styles.css', 'app.js', 'favicon.svg', 'studio.css', 'studio.js'}:
+    if name not in {'favicon.svg', 'studio.css', 'studio.js'}:
         raise AppError('Arquivo não encontrado.', 404, 'not_found')
-    return FileResponse(config.STATIC_DIR / name)
+    # Revalida a cada carga (ETag): depois de uma atualização o navegador não fica com JS/CSS antigos.
+    return FileResponse(config.STATIC_DIR / name, headers={'Cache-Control': 'no-cache'})
 
 
 @app.get('/api/health')
