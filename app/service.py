@@ -10,12 +10,13 @@ import math
 import os
 import re
 import shutil
+import tempfile
 import time
 import unicodedata
 from pathlib import Path
 from typing import Iterable
 
-from . import (autopilot, config, curation, downloads, media, music, narration, pipeline, publish, reframe, rights, settings,
+from . import (autopilot, config, curation, direction, downloads, media, music, narration, pipeline, publish, reframe, rights, settings,
                storage, subtitles, transcription, watcher)
 from .errors import AppError
 from .jobs import Handler, JobManager
@@ -414,6 +415,96 @@ def split_manual_clip(project_id: str, clip_id: int, at: float) -> dict:
         return {'first': dict(original), 'second': dict(new_clip)}
 
 
+# --------------------------------------------------------------------------- plano de edição
+
+def _plan_cache(project_id: str, clip: dict) -> Path:
+    return storage.project_dir(project_id) / 'direction' / f"clip_{int(clip['id']):02d}.json"
+
+
+def _analysis_for(project_id: str, p: dict, clip: dict) -> dict:
+    """Análise do corte, em cache por (início, fim, revisão): não refaz a leitura do áudio à toa."""
+    key = f"{clip['start']:.3f}:{clip['end']:.3f}:{clip.get('revision', 1)}:{len(p.get('transcript') or [])}"
+    cache = _plan_cache(project_id, clip)
+    with contextlib.suppress(OSError, ValueError, KeyError):
+        data = json.loads(cache.read_text(encoding='utf-8'))
+        if data['key'] == key:
+            return data['analysis']
+    work = Path(tempfile.mkdtemp(prefix='autocortes-direcao-'))
+    try:
+        source = storage.project_dir(project_id) / p['filename']
+        wav = direction.extract_clip_audio(source, p['media'], clip['start'], clip['end'], work / 'trecho.wav')
+        analysis = direction.analyze(p.get('transcript') or [], clip['start'], clip['end'],
+                                     scenes=p.get('scenes') or [], wav_path=wav)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps({'key': key, 'analysis': analysis}, ensure_ascii=False), encoding='utf-8')
+    return analysis
+
+
+def _plans_stale(clip: dict) -> bool:
+    meta = clip.get('edit_plans_meta') or {}
+    return bool(clip.get('edit_plans')) and (abs(meta.get('start', -1) - clip['start']) > 0.01 or
+                                              abs(meta.get('end', -1) - clip['end']) > 0.01)
+
+
+def _plans_view(clip: dict) -> dict:
+    plans = clip.get('edit_plans') or {}
+    return {'plans': {name: {**plan, 'summary': direction.describe(plan)} for name, plan in plans.items()},
+            'selected': clip.get('edit_plan_selected'), 'stale': _plans_stale(clip)}
+
+
+PLAN_VARIANTS = {'dinamico': 'impacto', 'equilibrado': 'equilibrado', 'cinematografico': 'cinematografico'}
+
+
+def create_edit_plans(project_id: str, clip_id: int, options: dict) -> dict:
+    """Analisa o corte e gera um plano (ou as três versões). Não renderiza nada."""
+    style = options.get('style') or 'auto'
+    if style != 'auto' and style not in direction.STYLES:
+        raise AppError('Estilo de edição inválido.', 400, 'bad_style')
+    p = storage.read_project(project_id)
+    _require_ready(p)
+    clip = _find_clip(p, clip_id)
+    analysis = _analysis_for(project_id, p, clip)
+    intensity = float(options.get('intensity', 0.6))
+    toggles = {k: bool(v) for k, v in (options.get('options') or {}).items() if k in direction.DEFAULT_OPTIONS}
+    if options.get('variants'):
+        plans = {name: direction.build_plan(analysis, st, intensity, toggles) for name, st in PLAN_VARIANTS.items()}
+        recommended, why = direction.choose_style(analysis)
+        selected = next((n for n, st in PLAN_VARIANTS.items() if st == recommended), 'equilibrado')
+        plans[selected]['reason'] = 'Versão recomendada. ' + why
+    else:
+        plans = {'principal': direction.build_plan(analysis, style, intensity, toggles)}
+        selected = 'principal'
+    with storage.edit_project(project_id) as p:
+        clip = _find_clip(p, clip_id)
+        clip['edit_plans'] = plans
+        clip['edit_plan_selected'] = selected
+        clip['edit_plans_meta'] = {'start': clip['start'], 'end': clip['end'], 'created_at': time.time()}
+        return _plans_view(clip)
+
+
+def get_edit_plans(project_id: str, clip_id: int) -> dict:
+    return _plans_view(_find_clip(storage.read_project(project_id), clip_id))
+
+
+def update_edit_plan(project_id: str, clip_id: int, name: str, changes: dict) -> dict:
+    """Liga/desliga ações e escolhe a versão usada na exportação."""
+    with storage.edit_project(project_id) as p:
+        clip = _find_clip(p, clip_id)
+        plan = (clip.get('edit_plans') or {}).get(name)
+        if plan is None:
+            raise AppError('Plano de edição não encontrado. Gere o plano novamente.', 404, 'not_found')
+        for act in plan['actions']:
+            value = (changes.get('actions') or {}).get(str(act['id']))
+            if value is not None:
+                act['enabled'] = bool(value)
+        if changes.get('selected'):
+            clip['edit_plan_selected'] = name
+        plan['version'] = int(plan.get('version', 1)) + 1
+        return _plans_view(clip)
+
+
 def request_export(project_id: str, clip_id: int, options: dict) -> dict:
     fmt = options.get('format') or ('9:16' if options.get('portrait', True) else '16:9')
     if fmt not in media.FORMATS:
@@ -447,6 +538,20 @@ def request_export(project_id: str, clip_id: int, options: dict) -> dict:
                 'granted_at': time.time(), 'provider': 'OpenAI', 'clip_id': clip_id,
                 'scope': 'síntese de voz', 'model': config.OPENAI_TTS_MODEL,
                 'source': 'piloto automático (Configurações)' if options.get('autopilot') else 'pedido na interface'})
+        plan_name = options.get('edit_plan')
+        plan = None
+        if plan_name:
+            plan = (clip.get('edit_plans') or {}).get(plan_name)
+            if plan is None:
+                raise AppError('Plano de edição não encontrado. Gere o plano novamente.', 404, 'not_found')
+            if _plans_stale(clip):
+                raise AppError('Os tempos do corte mudaram depois que o plano foi gerado. Gere o plano de novo.',
+                               409, 'plan_stale')
+            # O plano decide enquadramento, estilo de legenda, tratamento de áudio e pausas.
+            options = {**options, 'framing': plan['settings']['framing'],
+                       'subtitle_style': plan['settings']['subtitle_style'],
+                       'normalize_audio': plan['settings']['normalize_audio'], 'shorten_pauses': False}
+            framing = options['framing']
         subtitle_style = options.get('subtitle_style') or 'classica'
         if subtitle_style not in subtitles.SUBTITLE_STYLES:
             raise AppError('Estilo de legenda inválido.', 400, 'bad_input')
@@ -470,6 +575,9 @@ def request_export(project_id: str, clip_id: int, options: dict) -> dict:
                                        if options.get('autopilot') else None),
                   'start': clip['start'], 'end': clip['end'], 'title': clip['title'],
                   'revision': clip.get('revision', 1)}
+        if plan is not None:
+            params['edit_plan'] = copy.deepcopy(plan)
+            params['edit_plan_name'] = plan_name
         if use_narration:
             params['narration_script'] = copy.deepcopy(clip['narration'])
     key = 'export:' + project_id + ':' + hashlib.sha256(

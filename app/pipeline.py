@@ -10,7 +10,7 @@ import logging
 import shutil
 import time
 
-from . import (curation, media, music, narration, publish, reframe, rights, selection, settings, storage,
+from . import (curation, direction, media, music, narration, publish, reframe, rights, selection, settings, storage,
                subtitles, transcription)
 from .errors import AppError, Cancelled
 from .jobs import JobContext
@@ -187,6 +187,12 @@ def run_export(ctx: JobContext) -> dict:
             keep = media.snap_intervals(keep, media.output_fps(info) or info.get('fps') or 30)
         else:
             warnings.append('Nenhuma pausa longa encontrada neste trecho; exportado sem encurtar.')
+    plan = prm.get('edit_plan')
+    if plan and not placed:
+        # O plano de edição define as pausas removidas (cada uma com justificativa no projeto).
+        keep = direction.keep_intervals(plan, end - start)
+        if keep:
+            keep = media.snap_intervals(keep, media.output_fps(info) or info.get('fps') or 30)
     width, height = media.target_size(prm['format'], info)
     out_len = sum(b - a for a, b in keep) if keep else end - start
     hook_text = prm.get('hook_text') if prm.get('hook') else None
@@ -212,6 +218,11 @@ def run_export(ctx: JobContext) -> dict:
             srt_text = subtitles.to_srt(cues)
             if prm.get('subtitle_style') == 'dinamica' and not narration_source:
                 lines = subtitles.build_word_lines(p['transcript'], start, end)
+                if plan:
+                    marked = direction.emphasis_starts(plan)
+                    for line in lines:
+                        for w in line:
+                            w['emph'] = round(w['start'], 2) in marked
                 if keep:
                     lines = [[{**w, 'start': round(media.remap_time(w['start'], keep), 3),
                                'end': round(media.remap_time(w['end'], keep), 3)} for w in line] for line in lines]
@@ -241,6 +252,12 @@ def run_export(ctx: JobContext) -> dict:
                              scenes=p.get('scenes') or [], cancel_event=ctx.cancel_event)
         if not track['ok']:
             warnings.append(track['message'])
+    post = audio_extra = ''
+    if plan:
+        remap = (lambda t: media.remap_time(t, keep)) if keep else (lambda t: t)
+        post = direction.video_post_filters(plan, (width, height), media.output_fps(info) or info.get('fps') or 30,
+                                            out_len, remap)
+        audio_extra = '' if placed else direction.audio_filters(plan, out_len)
     ctx.stage('renderizando', 'Renderizando o corte')
     result = media.export_clip(folder / p['filename'], info, folder / 'clips', f"clip_{int(prm['clip_id']):02d}",
                                start, end, fmt=prm['format'], framing=prm['framing'], ass_text=ass_text,
@@ -248,8 +265,13 @@ def run_export(ctx: JobContext) -> dict:
                                on_progress=(ctx.span(0.25, 1.0) if placed else (lambda f, m='': ctx.progress(f))),
                                cancel_event=ctx.cancel_event, narration=placed, keep=keep,
                                original_volume=max(0, min(100, int(prm.get('original_volume', 100)))) / 100,
-                               track=track)
+                               track=track, post=post, audio_extra=audio_extra)
     result['warnings'] = warnings + result['warnings']
+    if plan:
+        # Registro do plano usado: torna a exportação reproduzível.
+        result['edit_plan'] = {'name': prm.get('edit_plan_name'), 'style': plan['style'],
+                               'intensity': plan['intensity'], 'settings': plan['settings'],
+                               'actions': [a for a in plan['actions'] if a.get('enabled', True)]}
     record = {**result, 'created_at': time.time(), 'job_id': ctx.id, 'title': prm.get('title'),
               'revision': prm.get('revision')}
     if placed:

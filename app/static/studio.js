@@ -590,6 +590,7 @@ function render() {
   if (c && !state.drag) syncFields(c);
   selectionLabel();
   renderRights(p);
+  renderPlans();
   renderTimeline();
   updateControls();
 }
@@ -1061,6 +1062,107 @@ for (const b of document.querySelectorAll('[data-format]')) {
   };
 }
 
+// ------------------------------------------------------------------ estilo de edição (plano)
+
+const PLAN_LABELS = {dinamico: 'Dinâmica', equilibrado: 'Equilibrada', cinematografico: 'Cinematográfica'};
+const planStale = (c) => {
+  const m = c?.edit_plans_meta;
+  return !!m && (Math.abs(m.start - c.start) > 0.01 || Math.abs(m.end - c.end) > 0.01);
+};
+function planSummary(plan) {
+  const on = plan.actions.filter((a) => a.enabled !== false);
+  const removed = on.filter((a) => a.type === 'cut_pause').reduce((t, a) => t + a.end - a.start, 0);
+  const zooms = on.filter((a) => a.type === 'zoom' || a.type === 'push').length;
+  const highlights = on.filter((a) => a.type === 'highlight').length;
+  return plan.style_label + ' · ' + zooms + ' zoom(s) · ' + highlights + ' destaque(s) · ' +
+    removed.toFixed(1) + ' s de pausas removidos · duração final ' + fmt(plan.analysis.duration - removed);
+}
+function selectedPlanName() {
+  const c = current();
+  const plans = c?.edit_plans || {};
+  return c?.edit_plan_selected in plans ? c.edit_plan_selected : Object.keys(plans)[0];
+}
+function renderPlans() {
+  const c = current();
+  const plans = c?.edit_plans || {};
+  const names = Object.keys(plans);
+  $('planResult').hidden = !names.length;
+  if (!names.length) return;
+  const name = selectedPlanName(), plan = plans[name];
+  $('planVersions').innerHTML = names.length > 1 ? names.map((n) =>
+    '<button type="button" data-plan="' + escape(n) + '" aria-pressed="' + (n === name) + '">' +
+    escape(PLAN_LABELS[n] || plans[n].style_label) + '</button>').join('') : '';
+  const a = plan.analysis || {};
+  $('planReason').textContent = plan.reason + (a.content_type ? ' Conteúdo: ' + a.content_type +
+    ' (confiança ' + a.confidence + ')' + (a.evidence?.length ? ' — ' + a.evidence.join(', ') : '') + '.' : '');
+  $('planSummary').textContent = planSummary(plan);
+  $('planLimits').hidden = !a.limitations?.length;
+  $('planLimits').textContent = (a.limitations || []).join(' ');
+  $('planActions').innerHTML = plan.actions.map((act) =>
+    '<li><label><input type="checkbox" data-act="' + act.id + '"' + (act.enabled !== false ? ' checked' : '') + '>' +
+    '<span class="t">' + fmt(act.start) + '</span><b>' + escape(act.label) + '</b><small>' + escape(act.reason) +
+    '</small></label></li>').join('') || '<li class="hint">Nenhuma ação: o trecho não pede efeitos neste estilo.</li>';
+  $('planStale').hidden = !planStale(c);
+}
+
+async function planEdit(variants) {
+  const c = current();
+  if (!c || !isReady()) return;
+  const btn = $(variants ? 'variantsBtn' : 'planBtn');
+  const options = {};
+  for (const box of document.querySelectorAll('[data-opt]')) options[box.dataset.opt] = box.checked;
+  btn.setAttribute('aria-busy', 'true');
+  btn.disabled = true;
+  setStatus('Analisando o trecho…', 'busy');
+  try {
+    if (state.dirty && !await save({silent: true})) return;
+    await api('/api/projects/' + state.project.id + '/clips/' + c.id + '/plans', 'POST', {
+      style: $('editStyle').value, intensity: Number($('editIntensity').value) / 100, variants, options,
+    });
+    $('usePlan').checked = true;
+    await refresh();
+    setStatus('Plano de edição pronto', 'ok');
+    toast(variants ? 'Três versões planejadas. Compare e escolha uma.' : 'Plano de edição pronto.');
+  } catch (e) {
+    setStatus('Falha ao planejar', 'error');
+    toast(e.message, true);
+  } finally {
+    btn.removeAttribute('aria-busy');
+    btn.disabled = false;
+  }
+}
+async function patchPlan(body) {
+  const c = current();
+  try {
+    await api('/api/projects/' + state.project.id + '/clips/' + c.id + '/plans/' + selectedPlanName(), 'PATCH', body);
+    await refresh();
+  } catch (e) { toast(e.message, true); }
+}
+$('planBtn').onclick = () => planEdit(false);
+$('variantsBtn').onclick = () => planEdit(true);
+$('editIntensity').oninput = () => {
+  $('intensityOut').textContent = $('editIntensity').value + '%';
+  setFill($('editIntensity'));
+};
+$('planVersions').onclick = async (e) => {
+  const b = e.target.closest('[data-plan]');
+  if (!b) return;
+  const c = current();
+  try {
+    await api('/api/projects/' + state.project.id + '/clips/' + c.id + '/plans/' + b.dataset.plan, 'PATCH',
+      {selected: true});
+    await refresh();
+  } catch (err) { toast(err.message, true); }
+};
+$('planActions').onchange = (e) => {
+  const box = e.target.closest('[data-act]');
+  if (box) patchPlan({actions: {[box.dataset.act]: box.checked}});
+};
+const exportPlanName = () => {
+  const c = current();
+  return $('usePlan').checked && c?.edit_plans && !planStale(c) ? selectedPlanName() || null : null;
+};
+
 // ------------------------------------------------------------------ exportação
 
 function hideExport() {
@@ -1098,6 +1200,7 @@ async function exportClip() {
     const j = await api('/api/projects/' + pid + '/clips/' + cid + '/export', 'POST', {
       format, framing: $('framing').value, subtitles: $('subtitles').checked,
       normalize_audio: $('normalize').checked, hook: $('hook').checked, acknowledge_rights: rights,
+      edit_plan: exportPlanName(),
     });
     state.exportJob = j.id;
     await monitorJob(j.id, pid, cid, format);
@@ -1167,6 +1270,7 @@ $('refresh').onclick = loadProjects;
 readLabel();
 setFill($('zoom'));
 setFill($('seek'));
+setFill($('editIntensity'));
 hideExport();
 loadProjects();
 updateControls();

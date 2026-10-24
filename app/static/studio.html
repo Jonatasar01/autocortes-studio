@@ -272,7 +272,48 @@
             </div>
 
             <div role="tabpanel" id="panelEffects" aria-labelledby="tabEffects" hidden>
-              <span class="eyebrow">Enquadramento</span>
+              <section class="stylebox" aria-labelledby="styleTitle">
+                <span class="eyebrow" id="styleTitle">Estilo de edição</span>
+                <div class="cols">
+                  <label class="field" for="editStyle">Preset
+                    <select id="editStyle">
+                      <option value="auto">Inteligente (analisa o trecho)</option>
+                      <option value="impacto">Impacto dinâmico</option>
+                      <option value="equilibrado">Equilibrado</option>
+                      <option value="cinematografico">Cinematográfico</option>
+                      <option value="podcast">Podcast premium</option>
+                    </select>
+                  </label>
+                  <label class="field" for="editIntensity">Intensidade <output id="intensityOut">60%</output>
+                    <input id="editIntensity" type="range" min="0" max="100" step="10" value="60">
+                  </label>
+                </div>
+                <details class="more">
+                  <summary>Opções avançadas</summary>
+                  <div class="checkgrid">
+                    <label class="check"><input type="checkbox" data-opt="zoom" checked><span>Zoom automático</span></label>
+                    <label class="check"><input type="checkbox" data-opt="dynamic_subtitles" checked><span>Legendas dinâmicas</span></label>
+                    <label class="check"><input type="checkbox" data-opt="audio" checked><span>Tratamento de áudio</span></label>
+                    <label class="check"><input type="checkbox" data-opt="denoise"><span>Reduzir ruído</span></label>
+                    <label class="check"><input type="checkbox" data-opt="remove_pauses" checked><span>Remover pausas</span></label>
+                    <label class="check"><input type="checkbox" data-opt="reframe" checked><span>Reenquadramento</span></label>
+                  </div>
+                </details>
+                <div class="planbtns">
+                  <button id="planBtn" type="button" class="btn">Planejar edição</button>
+                  <button id="variantsBtn" type="button" class="btn ghost" title="Dinâmica, equilibrada e cinematográfica">Gerar 3 versões</button>
+                </div>
+                <div id="planResult" class="planresult" hidden>
+                  <div id="planVersions" class="planversions" role="group" aria-label="Versões"></div>
+                  <p id="planReason" class="hint"></p>
+                  <p id="planSummary" class="plansummary"></p>
+                  <p id="planLimits" class="hint warn" hidden></p>
+                  <ol id="planActions" class="planactions"></ol>
+                  <label class="check"><input id="usePlan" type="checkbox" checked><span>Usar este plano na exportação</span></label>
+                  <p id="planStale" class="hint warn" hidden>Os tempos do corte mudaram: gere o plano de novo.</p>
+                </div>
+              </section>
+              <span class="eyebrow spaced">Enquadramento</span>
               <label class="field" for="framing">Como encaixar no formato de saída</label>
               <select id="framing">
                 <option value="blur">Fundo desfocado</option>
