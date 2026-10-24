@@ -11,5 +11,6 @@ uv sync --locked --extra ai --extra links
 if errorlevel 1 exit /b 1
 if "%PORT%"=="" set PORT=8000
 echo Abra http://127.0.0.1:%PORT%
-uv run --no-sync python -m uvicorn app.main:app --host 127.0.0.1 --port %PORT%
+if "%AUTOCORTES_PORT%"=="" set AUTOCORTES_PORT=%PORT%
+uv run --no-sync python -m app
 exit /b %errorlevel%

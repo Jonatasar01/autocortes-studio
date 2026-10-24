@@ -571,7 +571,8 @@ def report(project_id: str) -> dict:
 def health() -> dict:
     caps = media.ffmpeg_capabilities()
     free = storage.free_bytes()
-    return {'ok': caps['ffmpeg'] and caps['ffprobe'], 'version': config.VERSION, 'mode': 'local', 'bind': '127.0.0.1',
+    return {'ok': caps['ffmpeg'] and caps['ffprobe'], 'version': config.VERSION, 'mode': 'rede' if config.is_exposed() else 'local',
+            'bind': config.HOST, 'auth': bool(config.PASSWORD),
             'ffmpeg': caps, 'transcription': transcription.available(),
             'whisper_model': config.WHISPER_MODEL if transcription.available() else None,
             'ollama_enabled': config.OLLAMA_ENABLED, 'music_provider_configured': music.is_configured(),

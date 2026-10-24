@@ -36,8 +36,54 @@ a detecção de duplicatas e a contabilização de resultados do piloto automát
 python -m venv .venv
 .venv\Scripts\activate            # Windows  (Linux/macOS: source .venv/bin/activate)
 pip install -r requirements.txt
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m app                     # ou: python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+## Acesso por IP (outros aparelhos)
+
+Por padrão o app só abre no próprio computador (`127.0.0.1`). Para usar no celular ou em outro PC:
+
+**Rede local (mesmo Wi-Fi)** — defina o endereço e uma senha antes de iniciar:
+
+```bat
+:: Windows (no cmd, na pasta do projeto)
+set AUTOCORTES_HOST=0.0.0.0
+set AUTOCORTES_PASSWORD=uma-senha-forte
+iniciar_windows.bat
+```
+
+```bash
+# Linux/macOS
+AUTOCORTES_HOST=0.0.0.0 AUTOCORTES_PASSWORD=uma-senha-forte ./iniciar_linux_mac.sh
+```
+
+O terminal mostra o endereço, por exemplo `http://192.168.0.15:8000`. Abra no outro aparelho; o navegador pede
+usuário e senha (o usuário pode ser qualquer um). No Windows, permita o Python no Firewall quando ele perguntar
+(rede **Privada**). Variáveis úteis:
+
+| Variável | Para que serve |
+| --- | --- |
+| `AUTOCORTES_HOST` | `127.0.0.1` (padrão, só este PC) ou `0.0.0.0` (todas as interfaces) |
+| `AUTOCORTES_PORT` | Porta (padrão `8000`) |
+| `AUTOCORTES_PASSWORD` | Senha de acesso. **Obrigatória** quando o host não é local: sem ela o app não inicia |
+| `AUTOCORTES_ALLOWED_HOSTS` | Nomes/IPs extras aceitos no endereço (ex.: `meupc.local,cortes.exemplo.com`). Os IPs do PC já entram sozinhos |
+| `AUTOCORTES_AUTH_MAX_FAILURES` / `AUTOCORTES_AUTH_LOCKOUT_SECONDS` | Após 10 senhas erradas, o IP fica bloqueado por 5 min |
+
+**Docker:** `AUTOCORTES_BIND=0.0.0.0 AUTOCORTES_PASSWORD=... AUTOCORTES_ALLOWED_HOSTS=192.168.0.15 docker compose up`.
+No Docker a recusa sem senha não se aplica, então não esqueça a senha.
+
+**Internet (VPS ou fora de casa)** — não abra a porta 8000 direto no roteador. A senha viaja em HTTP Basic e,
+sem HTTPS, pode ser lida no caminho. Use uma destas opções:
+
+- **Tailscale/ZeroTier** (mais simples e seguro): o celular entra numa rede privada com o PC; use o IP do Tailscale
+  com o modo de rede local acima. Nada fica público.
+- **Proxy reverso com HTTPS** (Caddy, Nginx ou Cloudflare Tunnel) na frente do app, com o app em `127.0.0.1`,
+  `AUTOCORTES_PASSWORD` definida e `AUTOCORTES_ALLOWED_HOSTS=seu.dominio`. Ex. com Caddy:
+  `seu.dominio { reverse_proxy 127.0.0.1:8000 }`.
+
+Riscos de expor: quem tem a senha pode enviar vídeos, ocupar o disco/CPU, baixar os cortes e apagar projetos.
+O app não dá acesso a outras pastas do PC (as pastas de automação só mudam por variável de ambiente), mas use uma
+senha longa e única.
 
 ## Uso
 
@@ -179,7 +225,8 @@ corrompido) e exercitam exportação, validação, fila, cancelamento, recupera�
 
 ## Segurança e privacidade
 
-- Use apenas em `127.0.0.1`. **Não** rode com `--host 0.0.0.0`: não há autenticação nem TLS para acesso remoto.
+- O padrão é `127.0.0.1`. Para outros aparelhos use `AUTOCORTES_HOST` + `AUTOCORTES_PASSWORD` (veja "Acesso por IP");
+  na internet, sempre com HTTPS ou VPN. Não rode `uvicorn --host 0.0.0.0` sem senha.
 - A interface bloqueia requisições de outros sites (Host, Origin e cabeçalho anti-CSRF) e usa CSP restritiva.
 - Os cortes exportados não carregam metadados do original (ex.: localização GPS).
 - Segredos só por variáveis de ambiente; não aparecem em respostas, relatórios ou logs.

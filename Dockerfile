@@ -31,7 +31,7 @@ COPY app ./app
 USER autocortes
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=3 \
-    CMD python -c "import json, urllib.request; r=json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=10)); assert r['ok']"
+    CMD python -c "import base64, json, os, urllib.request as u; q=u.Request('http://127.0.0.1:8000/api/health'); p=os.getenv('AUTOCORTES_PASSWORD'); p and q.add_header('Authorization', 'Basic ' + base64.b64encode(b':' + p.encode()).decode()); assert json.load(u.urlopen(q, timeout=10))['ok']"
 # Um único processo é necessário para a fila SQLite e os locks locais.
-# A porta do host fica limitada a loopback pelo Compose.
+# A porta do host fica limitada a loopback pelo Compose (AUTOCORTES_BIND muda isso; exige senha).
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
