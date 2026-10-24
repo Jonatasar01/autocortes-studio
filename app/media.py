@@ -210,12 +210,17 @@ def run_ffmpeg(args: list[str], *, duration: float, cwd: Path | None = None,
                on_progress: ProgressFn | None = None, cancel_event: threading.Event | None = None,
                timeout: float | None = None) -> str:
     """Executa o FFmpeg com progresso real (-progress) e cancelamento. Retorna o stderr final."""
+    # Evita iniciar um processo custoso quando o pedido já foi cancelado.
+    if cancel_event is not None and cancel_event.is_set():
+        raise Cancelled()
     cmd = _priority_prefix() + [require_binary('ffmpeg'), '-hide_banner', '-nostdin', '-y',
                                 '-progress', 'pipe:1', '-nostats']
     if config.FFMPEG_THREADS:
         cmd += ['-threads', str(config.FFMPEG_THREADS)]
     cmd += args
     deadline = time.monotonic() + (timeout or max(600.0, duration * 40))
+    if cancel_event is not None and cancel_event.is_set():
+        raise Cancelled()
     proc = subprocess.Popen(cmd, cwd=str(cwd) if cwd else None, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
                             **_popen_kwargs())
@@ -228,12 +233,19 @@ def run_ffmpeg(args: list[str], *, duration: float, cwd: Path | None = None,
     reader.start()
 
     def stop():
-        proc.terminate()
+        if proc.poll() is not None:
+            return
         try:
-            proc.wait(timeout=5)
+            proc.terminate()
+        except ProcessLookupError:
+            return
+        try:
+            proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
+            # Se o processo não atendeu ao encerramento, interrompe a árvore de
+            # trabalho imediatamente para liberar pipes e arquivos temporários.
             proc.kill()
-            proc.wait()
+            proc.wait(timeout=3)
 
     # Um vigia garante cancelamento/timeout mesmo se o FFmpeg parar de emitir progresso.
     stopped = {'reason': None}
@@ -248,7 +260,12 @@ def run_ffmpeg(args: list[str], *, duration: float, cwd: Path | None = None,
                 stopped['reason'] = 'timeout'
                 stop()
                 return
-            time.sleep(0.25)
+            # Espera no próprio evento: a solicitação de cancelamento acorda o
+            # vigia imediatamente, sem aguardar a próxima rodada de polling.
+            if cancel_event is not None:
+                cancel_event.wait(0.10)
+            else:
+                time.sleep(0.10)
 
     guard = threading.Thread(target=watchdog, daemon=True)
     guard.start()
@@ -265,8 +282,8 @@ def run_ffmpeg(args: list[str], *, duration: float, cwd: Path | None = None,
     finally:
         if proc.poll() is None:
             stop()
-        guard.join(timeout=6)
-        reader.join(timeout=5)
+        guard.join(timeout=4)
+        reader.join(timeout=3)
         for stream in (proc.stdout, proc.stderr):  # evita vazamento de descritores em uso contínuo
             try:
                 stream.close()
@@ -609,6 +626,8 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                 original_volume: float = 1.0, keep: list[tuple[float, float]] | None = None,
                 track: dict | None = None) -> dict:
     """Renderiza em pasta temporária, valida e só então publica com renomeação atômica."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise Cancelled()
     if fmt not in FORMATS:
         raise AppError('Formato de exportação inválido.', 400, 'bad_format')
     if framing not in FRAMINGS:
@@ -636,6 +655,8 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
         render = 'render.mp4'
 
         def attempt(subs: str | None):
+            if cancel_event is not None and cancel_event.is_set():
+                raise Cancelled()
             args, size = build_export_args(source, media, start, duration, fmt, framing, subs,
                                            normalize_audio, render, narration, original_volume, keep, track)
             run_ffmpeg(args, duration=out_duration, cwd=work, cancel_event=cancel_event,
