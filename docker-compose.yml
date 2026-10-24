@@ -2,7 +2,8 @@ services:
   autocortes:
     build: .
     ports:
-      - "127.0.0.1:${AUTOCORTES_PORT:-8002}:8000"
+      # Rede local: AUTOCORTES_BIND=0.0.0.0 + AUTOCORTES_PASSWORD + AUTOCORTES_ALLOWED_HOSTS=<IP do PC>
+      - "${AUTOCORTES_BIND:-127.0.0.1}:${AUTOCORTES_PORT:-8002}:8000"
     init: true
     restart: unless-stopped
     stop_grace_period: 90s
@@ -13,6 +14,8 @@ services:
       AUTOCORTES_FFMPEG_THREADS: "${AUTOCORTES_FFMPEG_THREADS:-2}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      AUTOCORTES_PASSWORD: "${AUTOCORTES_PASSWORD:-}"
+      AUTOCORTES_ALLOWED_HOSTS: "${AUTOCORTES_ALLOWED_HOSTS:-}"
     volumes:
       - state:/state
       - models:/models

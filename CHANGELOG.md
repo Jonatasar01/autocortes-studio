@@ -1,5 +1,8 @@
 ## Não lançado
 
+- **Acesso por IP**: `python -m app` com `AUTOCORTES_HOST`/`AUTOCORTES_PORT`; senha opcional `AUTOCORTES_PASSWORD`
+  (HTTP Basic, bloqueio após falhas), obrigatória quando o host não é local. Os IPs do PC entram nos hosts aceitos.
+  Iniciadores e Docker Compose passam a aceitar essas variáveis. Ver "Acesso por IP" no README.
 - FilmCraft: etapa opcional **Remover pausas longas** (`transcript.set` + `transcript.removePauses`), com legendas
   recriadas da transcrição cortada e validação estrutural da linha do tempo. Ver `FILMCRAFT-PROTOTIPO.md`.
 - Corrigido: o **gancho** (frase no topo, primeiros 3 s) saía cortado nas bordas do vídeo porque o cabeçalho ASS usa

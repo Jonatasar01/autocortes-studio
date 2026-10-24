@@ -5,10 +5,16 @@
   impede que páginas de terceiros abertas no navegador enviem uploads/exportações (CSRF).
 - Limite de corpo verificado antes da leitura (Content-Length).
 - Cabeçalhos de segurança (CSP restritiva, nosniff, sem iframe, sem referrer).
+- Senha opcional (``AUTOCORTES_PASSWORD``) via HTTP Basic, com bloqueio temporário após falhas seguidas.
+  O navegador pede a senha uma vez e a reenvia sozinho nas chamadas da interface.
 """
 from __future__ import annotations
 
+import base64
+import hmac
 import json
+import threading
+import time
 from urllib.parse import urlsplit
 
 from . import config
@@ -26,11 +32,46 @@ def _hostname(host: str) -> str:
     return host.split(':', 1)[0]
 
 
+def _password_ok(header: str, password: str) -> bool:
+    scheme, _, value = (header or '').partition(' ')
+    if scheme.lower() != 'basic':
+        return False
+    try:
+        decoded = base64.b64decode(value.strip(), validate=True).decode('utf-8')
+    except (ValueError, UnicodeDecodeError):
+        return False
+    given = decoded.partition(':')[2]  # o usuário é ignorado
+    return hmac.compare_digest(given.encode('utf-8'), password.encode('utf-8'))
+
+
 class LocalSecurityMiddleware:
-    def __init__(self, app, allowed_hosts: set[str] | None = None, max_body: int | None = None):
+    def __init__(self, app, allowed_hosts: set[str] | None = None, max_body: int | None = None,
+                 password: str | None = None):
         self.app = app
         self.allowed_hosts = allowed_hosts
         self.max_body = max_body
+        self.password_override = password
+        self._failures: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+
+    @property
+    def password(self) -> str:
+        return self.password_override if self.password_override is not None else config.PASSWORD
+
+    def _locked_out(self, client: str, now: float) -> bool:
+        with self._lock:
+            recent = [t for t in self._failures.get(client, []) if now - t < config.AUTH_LOCKOUT_SECONDS]
+            if recent:
+                self._failures[client] = recent
+            else:
+                self._failures.pop(client, None)
+            return len(recent) >= config.AUTH_MAX_FAILURES
+
+    def _register_failure(self, client: str, now: float) -> None:
+        with self._lock:
+            self._failures.setdefault(client, []).append(now)
+            if len(self._failures) > 10000:  # evita crescer sem limite
+                self._failures.clear()
 
     @property
     def hosts(self) -> set[str]:
@@ -40,20 +81,34 @@ class LocalSecurityMiddleware:
     def body_limit(self) -> int:
         return self.max_body if self.max_body is not None else config.MAX_UPLOAD_BYTES + 16 * 1024 ** 2
 
-    async def _reject(self, send, status: int, message: str) -> None:
-        body = json.dumps({'detail': message, 'code': 'blocked'}, ensure_ascii=False).encode('utf-8')
+    async def _reject(self, send, status: int, message: str, extra_headers=(), code: str = 'blocked') -> None:
+        body = json.dumps({'detail': message, 'code': code}, ensure_ascii=False).encode('utf-8')
         await send({'type': 'http.response.start', 'status': status,
                     'headers': [(b'content-type', b'application/json; charset=utf-8'),
                                 (b'content-length', str(len(body)).encode()),
-                                (b'x-content-type-options', b'nosniff')]})
+                                (b'x-content-type-options', b'nosniff'), (b'cache-control', b'no-store'),
+                                *extra_headers]})
         await send({'type': 'http.response.body', 'body': body})
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
         headers = {k.decode('latin-1').lower(): v.decode('latin-1') for k, v in scope.get('headers', [])}
-        if _hostname(headers.get('host', '')) not in self.hosts:
-            return await self._reject(send, 400, 'Host não permitido. Acesse por http://127.0.0.1:8000.')
+        if '*' not in self.hosts and _hostname(headers.get('host', '')) not in self.hosts:
+            return await self._reject(send, 400, 'Host não permitido. Acesse por http://127.0.0.1:8000 '
+                                      'ou inclua este endereço em AUTOCORTES_ALLOWED_HOSTS.')
+        if self.password:
+            client = (scope.get('client') or ('?', 0))[0]
+            now = time.monotonic()
+            if self._locked_out(client, now):
+                return await self._reject(send, 429, 'Muitas tentativas de senha. Aguarde alguns minutos.',
+                                          code='auth_locked')
+            if not _password_ok(headers.get('authorization', ''), self.password):
+                if headers.get('authorization'):
+                    self._register_failure(client, now)
+                return await self._reject(send, 401, 'Senha necessária.', code='auth_required',
+                                          extra_headers=[(b'www-authenticate',
+                                                          b'Basic realm="AutoCortes", charset="UTF-8"')])
         if scope['method'] not in SAFE_METHODS:
             origin = headers.get('origin')
             if origin is not None:
@@ -61,7 +116,10 @@ class LocalSecurityMiddleware:
                     parsed = urlsplit(origin)
                     valid_origin = (parsed.scheme in ('http', 'https') and not parsed.username
                                     and not parsed.password and not parsed.path and not parsed.query
-                                    and not parsed.fragment and _hostname(parsed.netloc) in self.hosts)
+                                    and not parsed.fragment
+                                    and (_hostname(parsed.netloc) in self.hosts
+                                         or ('*' in self.hosts and _hostname(parsed.netloc)
+                                             == _hostname(headers.get('host', '')))))
                     parsed.port  # rejeita portas malformadas
                 except ValueError:
                     valid_origin = False

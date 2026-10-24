@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Inicia o AutoCortes somente em 127.0.0.1 (não exposto na rede).
+# Inicia o AutoCortes em 127.0.0.1 (não exposto na rede).
+# Rede local: AUTOCORTES_HOST=0.0.0.0 AUTOCORTES_PASSWORD=sua-senha ./iniciar_linux_mac.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 PY=${PYTHON:-python3}
@@ -16,6 +17,7 @@ if [ ! -f .venv/.deps-ok ]; then
   .venv/bin/python -m pip install -r requirements.txt
   touch .venv/.deps-ok
 fi
-URL="http://127.0.0.1:${PORT:-8000}"
+export AUTOCORTES_PORT="${AUTOCORTES_PORT:-${PORT:-8000}}"
+URL="http://127.0.0.1:${AUTOCORTES_PORT}"
 ( sleep 2; (command -v xdg-open >/dev/null && xdg-open "$URL") || (command -v open >/dev/null && open "$URL") ) >/dev/null 2>&1 &
-exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT:-8000}"
+exec .venv/bin/python -m app

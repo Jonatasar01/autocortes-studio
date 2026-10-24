@@ -1,6 +1,7 @@
 @echo off
 setlocal
-rem Servidor exclusivamente local; reutiliza uma venv existente.
+rem Servidor local por padrao; reutiliza uma venv existente.
+rem Rede local: set AUTOCORTES_HOST=0.0.0.0 e set AUTOCORTES_PASSWORD=sua-senha antes de executar.
 rem Python: prefere o 3.12 (py -3.12). Aceita 3.10 a 3.12 (as versoes usadas pelo CI do projeto).
 rem Versoes mais novas, como 3.15, ainda nao tem pacotes prontos para todas as dependencias.
 cd /d "%~dp0"
@@ -28,8 +29,9 @@ where ffmpeg >nul 2>&1
 if errorlevel 1 echo AVISO: ffmpeg ausente no PATH.
 where ffprobe >nul 2>&1
 if errorlevel 1 echo AVISO: ffprobe ausente no PATH.
-if not "%AUTOCORTES_NO_BROWSER%"=="1" start "" http://127.0.0.1:8000
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+if "%AUTOCORTES_PORT%"=="" set AUTOCORTES_PORT=8000
+if not "%AUTOCORTES_NO_BROWSER%"=="1" start "" http://127.0.0.1:%AUTOCORTES_PORT%
+.venv\Scripts\python.exe -m app
 exit /b %errorlevel%
 :badvenv
 echo.
