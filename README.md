@@ -14,6 +14,31 @@ para a internet.
 > Leia `AUDITORIA.md` para o relatório completo da auditoria (falhas encontradas, correções e o que foi ou não verificado)
 > e `CHANGELOG.md` para as mudanças desta versão.
 
+## Nova interface Studio — edição manual e automática
+
+Esta branch introduz uma nova interface em `http://127.0.0.1:8000/`, com player,
+linha do tempo, propriedades do corte e biblioteca de projetos. A interface anterior
+continua disponível em `http://127.0.0.1:8000/classic`.
+
+- **Modo manual:** importa e valida o vídeo sem executar transcrição, seleção ou IA.
+  Posicione o vídeo e use **Marcar I**, **Marcar O** e **Criar corte** para escolher
+  exatamente o trecho. Depois ajuste os tempos, divida e exporte normalmente.
+- **Modo automático:** mantém o fluxo existente de transcrição e sugestão de cortes.
+  Os trechos podem ser revisados manualmente antes da exportação.
+- **Acesso a recursos avançados:** narração, controles de legendas e FilmCraft
+  continuam no editor clássico enquanto a nova interface é aperfeiçoada.
+- **Limite atual:** a faixa de vídeo é uma representação temporal, ainda sem
+  miniaturas reais; não há waveform do áudio ou montagem multifaixa implementadas.
+- **Privacidade:** o servidor continua projetado para `127.0.0.1`. Não exponha
+  diretamente a aplicação na internet sem autenticação, revisão de segurança
+  e infraestrutura adequada para vídeo.
+
+As edições e cortes são persistidos no projeto local. O player mostra o vídeo
+original; os efeitos de exportação são aplicados pelo FFmpeg, não necessariamente
+pré-visualizados em tempo real.
+
+---
+
 ## Requisitos
 
 - Python **3.12** (aceita 3.10 a 3.12; versões mais novas, como 3.15, ainda não instalam as dependências). O `iniciar_windows.bat` já procura o 3.12 (`py -3.12`); instale com `py install 3.12` se faltar.
