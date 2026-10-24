@@ -66,7 +66,7 @@ usuário e senha (o usuário pode ser qualquer um). No Windows, permita o Python
 | `AUTOCORTES_HOST` | `127.0.0.1` (padrão, só este PC) ou `0.0.0.0` (todas as interfaces) |
 | `AUTOCORTES_PORT` | Porta (padrão `8000`) |
 | `AUTOCORTES_PASSWORD` | Senha de acesso. **Obrigatória** quando o host não é local: sem ela o app não inicia |
-| `AUTOCORTES_ALLOWED_HOSTS` | Nomes/IPs extras aceitos no endereço (ex.: `meupc.local,cortes.exemplo.com`). Os IPs do PC já entram sozinhos |
+| `AUTOCORTES_ALLOWED_HOSTS` | Nomes/IPs extras aceitos no endereço (ex.: `meupc.local,cortes.exemplo.com`). Entrada iniciada por ponto aceita subdomínios (`.trycloudflare.com`). Os IPs do PC já entram sozinhos |
 | `AUTOCORTES_AUTH_MAX_FAILURES` / `AUTOCORTES_AUTH_LOCKOUT_SECONDS` | Após 10 senhas erradas, o IP fica bloqueado por 5 min |
 
 **Docker:** `AUTOCORTES_BIND=0.0.0.0 AUTOCORTES_PASSWORD=... AUTOCORTES_ALLOWED_HOSTS=192.168.0.15 docker compose up`.
@@ -84,6 +84,12 @@ sem HTTPS, pode ser lida no caminho. Use uma destas opções:
 Riscos de expor: quem tem a senha pode enviar vídeos, ocupar o disco/CPU, baixar os cortes e apagar projetos.
 O app não dá acesso a outras pastas do PC (as pastas de automação só mudam por variável de ambiente), mas use uma
 senha longa e única.
+
+## Acesso pela internet (Cloudflare Tunnel)
+
+O app não roda nos servidores da Cloudflare (Pages/Workers não executam FFmpeg nem guardam vídeos), mas pode ser
+publicado a partir do seu PC com `publicar_cloudflare_windows.bat`, sem abrir portas no roteador e sempre com senha.
+Passo a passo, endereço fixo no seu domínio e Cloudflare Access em [CLOUDFLARE.md](CLOUDFLARE.md).
 
 ## Uso
 

@@ -70,6 +70,32 @@ class PasswordTests(unittest.TestCase):
         self.assertEqual(self.call('POST', {**ok, 'origin': 'https://cortes.example.com'})[0], 200)
         self.assertEqual(self.call('POST', {**ok, 'origin': 'https://evil.example'})[0], 403)
 
+    def test_suffix_entry_allows_tunnel_subdomains_only(self):
+        self.mw.allowed_hosts = {'127.0.0.1', '.trycloudflare.com'}
+        ok = {'authorization': basic('segredo'), 'host': 'abc-def.trycloudflare.com', 'x-autocortes': '1'}
+        self.assertEqual(self.call('GET', ok)[0], 200)
+        self.assertEqual(self.call('POST', {**ok, 'origin': 'https://abc-def.trycloudflare.com'})[0], 200)
+        self.assertEqual(self.call('POST', {**ok, 'origin': 'https://evil.example'})[0], 403)
+        self.assertEqual(self.call('GET', {**ok, 'host': 'trycloudflare.com'})[0], 400)
+        self.assertEqual(self.call('GET', {**ok, 'host': 'eviltrycloudflare.com'})[0], 400)
+
+    def test_lockout_behind_tunnel_uses_real_visitor_ip(self):
+        with mock.patch.object(config, 'AUTH_MAX_FAILURES', 3):
+            for _ in range(3):
+                self.call(headers={'authorization': basic('x'), 'cf-connecting-ip': '203.0.113.5'}, client='127.0.0.1')
+            self.assertEqual(self.call(headers={'authorization': basic('segredo'), 'cf-connecting-ip': '203.0.113.5'},
+                                       client='127.0.0.1')[0], 429)
+            # o dono (outro IP, ou direto no PC) continua entrando
+            self.assertEqual(self.call(headers={'authorization': basic('segredo'), 'cf-connecting-ip': '198.51.100.7'},
+                                       client='127.0.0.1')[0], 200)
+            self.assertEqual(self.call(headers={'authorization': basic('segredo')}, client='127.0.0.1')[0], 200)
+
+    def test_forwarded_ip_header_is_ignored_from_other_devices(self):
+        with mock.patch.object(config, 'AUTH_MAX_FAILURES', 3):
+            for i in range(3):  # trocar o cabeçalho não escapa do bloqueio
+                self.call(headers={'authorization': basic('x'), 'cf-connecting-ip': f'10.0.0.{i}'})
+            self.assertEqual(self.call(headers={'authorization': basic('segredo')})[0], 429)
+
 
 class LauncherTests(unittest.TestCase):
     def run_main(self, **env):

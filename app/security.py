@@ -7,6 +7,9 @@
 - Cabeçalhos de segurança (CSP restritiva, nosniff, sem iframe, sem referrer).
 - Senha opcional (``AUTOCORTES_PASSWORD``) via HTTP Basic, com bloqueio temporário após falhas seguidas.
   O navegador pede a senha uma vez e a reenvia sozinho nas chamadas da interface.
+- Hosts aceitos podem incluir sufixos (``.trycloudflare.com``) para túneis com endereço sorteado.
+- Atrás do Cloudflare Tunnel toda conexão chega de 127.0.0.1; o bloqueio por falhas usa então o IP real
+  informado pelo ``cloudflared`` (``CF-Connecting-IP``), para um visitante não bloquear o dono.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ from urllib.parse import urlsplit
 from . import config
 
 SAFE_METHODS = {'GET', 'HEAD', 'OPTIONS'}
+LOOPBACK_CLIENTS = {'127.0.0.1', '::1'}
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
        "media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; "
        "frame-ancestors 'none'; form-action 'self'")
@@ -30,6 +34,22 @@ def _hostname(host: str) -> str:
     if host.startswith('['):
         return host[:host.find(']') + 1] if ']' in host else host
     return host.split(':', 1)[0]
+
+
+def _host_allowed(hostname: str, hosts: set[str]) -> bool:
+    """Host exato da lista ou subdomínio de uma entrada iniciada por ponto (ex.: ``.trycloudflare.com``)."""
+    if hostname in hosts:
+        return True
+    return any(h.startswith('.') and len(h) > 1 and hostname.endswith(h) and len(hostname) > len(h) for h in hosts)
+
+
+def _client_id(scope, headers: dict[str, str]) -> str:
+    client = (scope.get('client') or ('?', 0))[0]
+    forwarded = headers.get('cf-connecting-ip', '').strip()
+    # Só o cloudflared (rodando neste PC) chega por loopback; de outro aparelho o cabeçalho é ignorado.
+    if client in LOOPBACK_CLIENTS and forwarded:
+        return forwarded[:64]
+    return client
 
 
 def _password_ok(header: str, password: str) -> bool:
@@ -94,11 +114,11 @@ class LocalSecurityMiddleware:
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
         headers = {k.decode('latin-1').lower(): v.decode('latin-1') for k, v in scope.get('headers', [])}
-        if '*' not in self.hosts and _hostname(headers.get('host', '')) not in self.hosts:
+        if '*' not in self.hosts and not _host_allowed(_hostname(headers.get('host', '')), self.hosts):
             return await self._reject(send, 400, 'Host não permitido. Acesse por http://127.0.0.1:8000 '
                                       'ou inclua este endereço em AUTOCORTES_ALLOWED_HOSTS.')
         if self.password:
-            client = (scope.get('client') or ('?', 0))[0]
+            client = _client_id(scope, headers)
             now = time.monotonic()
             if self._locked_out(client, now):
                 return await self._reject(send, 429, 'Muitas tentativas de senha. Aguarde alguns minutos.',
@@ -117,7 +137,7 @@ class LocalSecurityMiddleware:
                     valid_origin = (parsed.scheme in ('http', 'https') and not parsed.username
                                     and not parsed.password and not parsed.path and not parsed.query
                                     and not parsed.fragment
-                                    and (_hostname(parsed.netloc) in self.hosts
+                                    and (_host_allowed(_hostname(parsed.netloc), self.hosts)
                                          or ('*' in self.hosts and _hostname(parsed.netloc)
                                              == _hostname(headers.get('host', '')))))
                     parsed.port  # rejeita portas malformadas
