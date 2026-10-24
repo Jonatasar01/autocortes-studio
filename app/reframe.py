@@ -53,7 +53,8 @@ def available() -> bool:
 
 def applicable(media: dict, out_size: tuple[int, int]) -> bool:
     """Só faz sentido quando a saída é mais estreita que o vídeo (ex.: 16:9 → 9:16 ou 1:1)."""
-    w, h = media.get('width') or 0, media.get('height') or 0
+    box = media.get('letterbox')
+    w, h = (box['w'], box['h']) if box else (media.get('width') or 0, media.get('height') or 0)
     if not w or not h:
         return False
     return out_size[0] / out_size[1] < (w / h) * 0.92
@@ -254,7 +255,8 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
     if not samples:
         return {'ok': False, 'shots': [], 'message': 'Nenhum quadro lido para seguir rosto; exportado com fundo desfocado.'}
 
-    w, h = media['width'], media['height']
+    box = media.get('letterbox')
+    w, h = (box['w'], box['h']) if box else (media['width'], media['height'])
     crop_frac = min(1.0, (h * out_size[0] / out_size[1]) / w)
     cuts = sorted({round(s - start, 3) for s in (scenes or []) if start < s < end} | set(histogram_cuts(samples)))
     bounds = [0.0]
@@ -266,7 +268,7 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
     shots: list[dict] = []
     for a, b in zip(bounds, bounds[1:]):
         part = [s for s in samples if a <= s['t'] < b]
-        targets = speaker_targets(part)
+        targets = _to_visible(speaker_targets(part), media, box)
         seen = sum(1 for _, x in targets if x is not None)
         if not targets or seen / len(targets) < MIN_FACE_COVERAGE:
             layout, points = 'fit', []
@@ -287,6 +289,15 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
     if fit_seconds >= 0.5:
         message += f' {fit_seconds:.0f} s sem rosto visível usam fundo desfocado.'
     return {'ok': True, 'shots': shots, 'crop_frac': round(crop_frac, 4), 'message': message}
+
+
+def _to_visible(targets: list[tuple[float, float | None]], media: dict,
+                box: dict | None) -> list[tuple[float, float | None]]:
+    """Centro horizontal do falante (fração do quadro inteiro) → fração da área sem faixas pretas."""
+    if not box:
+        return targets
+    W = media['width']
+    return [(t, None if x is None else min(1.0, max(0.0, (x * W - box['x']) / box['w']))) for t, x in targets]
 
 
 # --------------------------------------------------------------------------- FFmpeg

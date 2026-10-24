@@ -28,6 +28,7 @@ class Options:
     font: str = 'Arial Black'
     uppercase: bool = True
     face_tracking: str = 'auto'   # auto | sim | nao (só para single_speaker)
+    remove_bars: bool = True      # corta faixas pretas embutidas no original
 
 
 @dataclass
@@ -110,11 +111,19 @@ def process_row(row: CutRow, index: int, opts: Options, *, log: Log = print,
             else:
                 result.warnings.append('sem legendas: ' + status.get('message', 'nenhuma fala reconhecida.'))
 
+        letterbox = None
+        if opts.remove_bars:
+            letterbox = media.detect_letterbox(row.video, info, row.start, end, cancel_event=cancel_event)
+            if letterbox:
+                result.warnings.append(f"faixas pretas do original removidas (área útil "
+                                       f"{letterbox['w']}x{letterbox['h']}).")
+        clip_info = {**sliced.info, 'letterbox': letterbox} if letterbox else sliced.info
+
         track = None
         if row.layout == 'single_speaker' and opts.face_tracking != 'nao':
             if reframe.available():
                 log('  analisando rostos para o enquadramento')
-                track = reframe.plan(sliced.path, sliced.info, sliced.offset, sliced.offset + duration,
+                track = reframe.plan(sliced.path, clip_info, sliced.offset, sliced.offset + duration,
                                      (layouts.OUT_W, layouts.OUT_H), cancel_event=cancel_event)
                 if not track.get('ok'):
                     result.warnings.append('não foi possível seguir o rosto neste trecho; usado recorte central.')
@@ -126,7 +135,7 @@ def process_row(row: CutRow, index: int, opts: Options, *, log: Log = print,
         log(f'  renderizando 1080x1920 ({row.layout}{", com legenda" if subtitles_file else ""})')
 
         def render(subs: str | None) -> None:
-            graph = layouts.build(row.layout, subs, track)
+            graph = layouts.build(row.layout, subs, track, letterbox)
             media.run_ffmpeg(_render_args(sliced.path, sliced.offset, duration, graph, has_audio, 'final.mp4'),
                              duration=duration, cwd=work, cancel_event=cancel_event)
 

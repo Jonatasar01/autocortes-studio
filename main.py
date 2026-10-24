@@ -26,6 +26,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument('--fonte', default='Arial Black', help='fonte da legenda (ex.: "Montserrat ExtraBold")')
     p.add_argument('--sem-legenda', action='store_true', help='não transcreve nem embute legendas')
     p.add_argument('--minusculas', action='store_true', help='mantém a caixa original do texto da legenda')
+    p.add_argument('--manter-faixas', action='store_true',
+                   help='não remove as faixas pretas embutidas no vídeo original')
     p.add_argument('--rosto', choices=('auto', 'sim', 'nao'), default='auto',
                    help='rastrear rosto no single_speaker (auto = se o OpenCV estiver instalado)')
     return p.parse_args(argv)
@@ -38,7 +40,8 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, 'reconfigure'):
             stream.reconfigure(errors='replace')
     opts = Options(output_dir=args.saida.resolve(), captions=not args.sem_legenda, max_words=args.palavras,
-                   font=args.fonte, uppercase=not args.minusculas, face_tracking=args.rosto)
+                   font=args.fonte, uppercase=not args.minusculas, face_tracking=args.rosto,
+                   remove_bars=not args.manter_faixas)
     try:
         results, skipped = run_batch(args.csv, opts)
     except CsvError as exc:

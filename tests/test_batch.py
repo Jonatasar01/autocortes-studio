@@ -173,6 +173,32 @@ class BatchMediaTests(unittest.TestCase):
         self.assertEqual(len(created), 3)
         self.assertFalse(any(Path(p).exists() for p in created))
 
+    def test_letterbox_is_detected_and_removed(self):
+        # Quadro 16:9 com faixas pretas de 90 px embutidas (conteúdo 1280x540, como um filme 2.39:1).
+        boxed = make_video(self.dir / 'letterbox.mp4', size='1280x540', duration=12, fps=25,
+                           extra=['-vf', 'pad=1280:720:0:90:black'])
+        info = media.probe_media(boxed)
+        box = media.detect_letterbox(boxed, info, 2, 8)
+        self.assertEqual(box, {'w': 1280, 'h': 540, 'x': 0, 'y': 90})
+        self.assertIsNone(media.detect_letterbox(self.source, media.probe_media(self.source), 2, 8))
+        self.assertIn('crop=1280:540:0:90,', layouts.build('pip', letterbox=box))
+        graph, _ = media.build_filtergraph({**info, 'letterbox': box}, '9:16', 'blur', None)
+        self.assertTrue(graph.startswith(f"[0:{info['video_index']}]crop=1280:540:0:90,"))
+        original, _ = media.build_filtergraph({**info, 'letterbox': box}, 'original', 'blur', None)
+        self.assertNotIn('crop=1280:540', original)
+
+        out = self.dir / 'sem_faixas'
+        row = parse_csv(self._csv('letterbox.mp4,00:00:02,00:00:06,pip\n')).rows[0]
+        res = runner.process_row(row, 1, runner.Options(output_dir=out, captions=False, face_tracking='nao'),
+                                 log=lambda _m: None)
+        self.assertTrue(res.ok, res.message)
+        self.assertIn('faixas pretas', ' '.join(res.warnings))
+        # No PIP o fundo desfocado vem do conteúdo, não das faixas: o topo do quadro não é preto.
+        top = subprocess.run(['ffmpeg', '-loglevel', 'error', '-ss', '1', '-i', str(res.output), '-frames:v', '1',
+                              '-vf', 'crop=1080:120:0:0,signalstats,metadata=print:key=lavfi.signalstats.YAVG',
+                              '-f', 'null', '-'], capture_output=True, text=True).stderr
+        self.assertNotIn('YAVG=0.', top)
+
     def test_captions_are_burned_when_transcript_exists(self):
         opts = runner.Options(output_dir=self.dir / 'com_legenda', face_tracking='nao')
         row = parse_csv(self._csv('fonte.mp4,00:00:01,00:00:07,pip\n')).rows[0]
