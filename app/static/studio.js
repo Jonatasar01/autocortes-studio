@@ -115,9 +115,12 @@ function askConfirm({title, text, yes = 'Confirmar', danger = false}) {
   $('confirmYes').textContent = yes;
   $('confirmYes').classList.toggle('danger', danger);
   return new Promise((resolve) => {
-    dlg.onclose = () => resolve(dlg.returnValue === 'yes');
-    $('confirmYes').onclick = () => dlg.close('yes');
-    $('confirmNo').onclick = () => dlg.close('no');
+    // Os botões respondem direto; o evento close cobre Esc e clique fora do diálogo.
+    let answered = false;
+    const finish = (value) => { if (!answered) { answered = true; resolve(value); } };
+    $('confirmYes').onclick = () => { dlg.close('yes'); finish(true); };
+    $('confirmNo').onclick = () => { dlg.close('no'); finish(false); };
+    dlg.onclose = () => finish(dlg.returnValue === 'yes');
     dlg.returnValue = 'no';
     dlg.showModal();
     $('confirmNo').focus();
@@ -289,11 +292,13 @@ async function loadProjects() {
     const d = await api('/api/projects');
     $('projects').innerHTML = d.projects.map((p) => {
       const selected = p.id === state.project?.id;
-      return '<button class="projectitem' + (selected ? ' selected' : '') + '" data-id="' + escape(p.id) + '"' +
-        (selected ? ' aria-current="true"' : '') + '><strong>' + escape(p.name) + '</strong><small>' +
+      return '<div class="projectrowitem"><button class="projectitem' + (selected ? ' selected' : '') + '" data-id="' +
+        escape(p.id) + '"' + (selected ? ' aria-current="true"' : '') + '><strong>' + escape(p.name) + '</strong><small>' +
         '<span class="dot" data-status="' + escape(p.status) + '"></span>' + escape(PROJECT_STATUS[p.status] || p.status) +
         ' · ' + (p.duration ? fmt(p.duration) + ' · ' : '') + p.clips + (p.clips === 1 ? ' corte' : ' cortes') +
-        '</small></button>';
+        '</small></button><button class="iconbtn sm projdel" data-del="' + escape(p.id) + '" data-name="' +
+        escape(p.name) + '" title="Excluir projeto" aria-label="Excluir o projeto ' + escape(p.name) +
+        '"><svg class="ic"><use href="#i-trash"/></svg></button></div>';
     }).join('') || '<p class="empty">Nenhum projeto ainda. Importe um vídeo no painel de mídia.</p>';
   } catch (e) {
     $('projects').innerHTML = '<p class="empty error">Não foi possível carregar os projetos.</p>';
@@ -303,6 +308,8 @@ async function loadProjects() {
   }
 }
 $('projects').onclick = (e) => {
+  const del = e.target.closest('.projdel');
+  if (del) return deleteProject(del.dataset.del, del.dataset.name);
   const item = e.target.closest('.projectitem');
   if (!item) return;
   openProject(item.dataset.id).catch((err) => { setLoading(null); toast(err.message, true); });
@@ -478,6 +485,65 @@ async function openProject(id) {
     toast(p.error || 'O projeto não está pronto para edição.', true);
   }
 }
+
+// Volta o editor ao estado inicial (usado quando o projeto aberto é excluído).
+function closeProject() {
+  state.openVersion++;
+  state.stripToken++;  // interrompe a leitura das miniaturas
+  state.project = null;
+  state.selected = null;
+  state.stripKey = state.rulerKey = state.strip = null;
+  state.previewEnd = null;
+  setDirty(false);
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  setThumb(null);
+  setLoading(null);
+  hideExport();
+  $('noVideo').hidden = false;
+  $('mediaCard').hidden = true;
+  $('projectName').textContent = $('crumb').textContent = 'Nenhum projeto aberto';
+  $('projectMeta').textContent = 'Importe um vídeo ou abra um projeto recente';
+  document.title = 'AutoCortes Studio — Editor';
+  $('count').textContent = '0';
+  $('cutCards').replaceChildren();
+  $('properties').hidden = true;
+  $('noSelection').hidden = false;
+  for (const id of ['ruler', 'frames', 'wave', 'clipSegments']) $(id).replaceChildren();
+  $('timelineCanvas').style.width = '';
+  $('selectionBand').hidden = true;
+  $('currentTime').textContent = $('duration').textContent = fmt(0);
+  $('seek').value = 0;
+  setFill($('seek'));
+  selectionLabel();
+  history.replaceState({}, '', '/');
+  updateControls();
+}
+
+async function deleteProject(id, name) {
+  if (!id) return;
+  const ok = await askConfirm({
+    title: 'Excluir projeto', yes: 'Excluir projeto', danger: true,
+    text: 'O projeto “' + name + '” será apagado deste computador: o vídeo importado, os cortes e as exportações ' +
+      'guardadas nele. Cópias já salvas na pasta de saída não são apagadas. Esta ação não pode ser desfeita.',
+  });
+  if (!ok) return;
+  const wasOpen = state.project?.id === id;
+  // O vídeo em reprodução mantém o arquivo aberto e, no Windows, impediria a exclusão.
+  if (wasOpen) closeProject();
+  try {
+    await api('/api/projects/' + id, 'DELETE');
+    setStatus('Projeto excluído', 'ok');
+    toast('Projeto “' + name + '” excluído.');
+  } catch (e) {
+    toast(e.message, true);
+    if (wasOpen) openProject(id).catch(() => {});
+  } finally {
+    loadProjects();
+  }
+}
+$('deleteProject').onclick = () => { if (state.project) deleteProject(state.project.id, state.project.name); };
 
 async function refresh() {
   if (!state.project) return;

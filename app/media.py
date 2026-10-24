@@ -399,6 +399,80 @@ def _even(value: float) -> int:
     return max(2, int(round(value / 2.0)) * 2)
 
 
+# --------------------------------------------------------------------------- faixas pretas embutidas
+
+LETTERBOX_LIMIT = 24          # luminância máxima (0-255) considerada "barra preta"
+LETTERBOX_MIN_BAR = 0.015     # cada barra precisa ter pelo menos 1,5% da dimensão
+LETTERBOX_SYMMETRY = 0.02     # barras de cima/baixo (ou laterais) com diferença de até 2%
+
+
+def _cropdetect(source: Path, at: float, cancel_event: threading.Event | None) -> tuple[int, int, int, int] | None:
+    """Área com conteúdo (w, h, x, y) em ~1,5 s a partir de ``at``, segundo o cropdetect."""
+    try:
+        stderr = run_ffmpeg(['-loglevel', 'level+info', '-ss', f'{at:.3f}', '-i', str(source), '-t', '1.5',
+                             '-map', '0:v:0', '-an', '-sn', '-vf',
+                             f'fps=4,cropdetect=limit={LETTERBOX_LIMIT}:round=2:reset=0', '-f', 'null', '-'],
+                            duration=1.5, cancel_event=cancel_event, timeout=60)
+    except FFmpegError:
+        return None
+    found = re.findall(r'crop=(\d+):(\d+):(\d+):(\d+)', stderr)
+    return tuple(int(v) for v in found[-1]) if found else None
+
+
+def detect_letterbox(source: Path, media: dict, start: float, end: float, *,
+                     cancel_event: threading.Event | None = None) -> dict | None:
+    """Faixas pretas gravadas dentro do quadro (filme widescreen em 16:9, vídeo 4:3 em 16:9…).
+
+    Amostra o trecho e o vídeo inteiro e une as áreas com conteúdo, de modo que uma cena
+    escura não faça cortar imagem de verdade. Só aceita barras simétricas e consistentes;
+    em caso de dúvida devolve ``None`` (nada é cortado).
+    Retorna ``{'w', 'h', 'x', 'y'}`` em pixels do quadro exibido.
+    """
+    W, H = int(media['width']), int(media['height'])
+    duration = float(media['duration'])
+    span = max(0.1, end - start)
+    points = [start + span * (i + 0.5) / 6 for i in range(6)]
+    points += [duration * (i + 0.5) / 6 for i in range(6)]
+    boxes = []
+    for at in points:
+        box = _cropdetect(source, min(max(0.0, at), max(0.0, duration - 1.6)), cancel_event)
+        # Quadro quase todo preto (fade, cena noturna) não diz nada sobre as barras.
+        if box and box[0] >= W * 0.25 and box[1] >= H * 0.25:
+            boxes.append(box)
+    if len(boxes) < 3:
+        return None
+    x0 = min(b[2] for b in boxes)
+    y0 = min(b[3] for b in boxes)
+    x1 = max(b[2] + b[0] for b in boxes)
+    y1 = max(b[3] + b[1] for b in boxes)
+
+    def bars(a: int, b: int, size: int) -> tuple[int, int]:
+        if min(a, b) < size * LETTERBOX_MIN_BAR or abs(a - b) > size * LETTERBOX_SYMMETRY + 4:
+            return 0, size  # sem barra, ou assimétrica demais para ser letterbox
+        return a, size - a - b
+
+    x, w = bars(x0, W - x1, W)
+    y, h = bars(y0, H - y1, H)
+    if (w, h) == (W, H):
+        return None
+    x, y = x + (x % 2), y + (y % 2)
+    w, h = (w - (w % 2)), (h - (h % 2))
+    return {'w': w, 'h': h, 'x': x, 'y': y}
+
+
+def visible_size(media: dict) -> tuple[int, int]:
+    """Largura e altura do conteúdo útil (sem as faixas pretas, quando detectadas)."""
+    box = media.get('letterbox')
+    return (box['w'], box['h']) if box else (media['width'], media['height'])
+
+
+def source_label(media: dict) -> str:
+    """Rótulo de entrada do vídeo no filtergraph, já sem as faixas pretas."""
+    box = media.get('letterbox')
+    label = f"[0:{media['video_index']}]"
+    return label + (f"crop={box['w']}:{box['h']}:{box['x']}:{box['y']}," if box else '')
+
+
 def target_size(fmt: str, media: dict) -> tuple[int, int]:
     w, h = media['width'], media['height']
     if fmt == '9:16':
@@ -536,7 +610,8 @@ def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str |
                       keep: list[tuple[float, float]] | None = None,
                       track: dict | None = None) -> tuple[str, tuple[int, int]]:
     W, H = target_size(fmt, media)
-    src = f"[0:{media['video_index']}]"
+    # Formato original mantém o quadro como está; os demais descartam as faixas pretas embutidas.
+    src = f"[0:{media['video_index']}]" if fmt == 'original' else source_label(media)
     pre = f'fps={output_fps(media):g},' if output_fps(media) else ''
     if keep:
         fps = output_fps(media) or media.get('fps') or 30

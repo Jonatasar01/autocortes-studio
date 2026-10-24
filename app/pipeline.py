@@ -228,6 +228,12 @@ def run_export(ctx: JobContext) -> dict:
                 ass_text = subtitles.to_ass(cues, width, height, hook_text=hook_text, clip_len=out_len)
     if ass_text is None and hook_text:
         ass_text = subtitles.hook_only_ass(width, height, hook_text, clip_len=out_len)
+    if prm['format'] != 'original':
+        ctx.stage('enquadramento', 'Procurando faixas pretas no vídeo')
+        box = media.detect_letterbox(folder / p['filename'], info, start, end, cancel_event=ctx.cancel_event)
+        if box:
+            info = {**info, 'letterbox': box}
+            warnings.append(f"Faixas pretas do vídeo original removidas (área útil {box['w']}×{box['h']}).")
     track = None
     if prm['framing'] == 'track':
         ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')

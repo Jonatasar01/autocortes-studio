@@ -14,7 +14,7 @@ ai = [
   "faster-whisper>=1.1,<2",
   # faster-whisper 1.2.x usa metadata_errors, removido no PyAV 19.
   "av>=11,<19",
-  "opencv-python-headless>=4.8,<6",
+  "opencv-python-headless>=4.8,<5",  # o OpenCV 5 tirou o CascadeClassifier (detecção de rostos)
   "numpy>=1.24",
 ]
 music = ["requests>=2.31,<3"]

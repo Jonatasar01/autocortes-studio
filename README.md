@@ -16,19 +16,23 @@ para a internet.
 
 ## Nova interface Studio — edição manual e automática
 
-Esta branch introduz uma nova interface em `http://127.0.0.1:8000/`, com player,
-linha do tempo, propriedades do corte e biblioteca de projetos. A interface anterior
-continua disponível em `http://127.0.0.1:8000/classic`.
+A interface fica em `http://127.0.0.1:8000/`, com player, linha do tempo, propriedades
+do corte e biblioteca de projetos. O editor clássico foi removido; `/classic` redireciona
+para o Studio.
 
 - **Modo manual:** importa e valida o vídeo sem executar transcrição, seleção ou IA.
   Posicione o vídeo e use **Marcar I**, **Marcar O** e **Criar corte** para escolher
   exatamente o trecho. Depois ajuste os tempos, divida e exporte normalmente.
 - **Modo automático:** mantém o fluxo existente de transcrição e sugestão de cortes.
   Os trechos podem ser revisados manualmente antes da exportação.
-- **Acesso a recursos avançados:** narração, controles de legendas e FilmCraft
-  continuam no editor clássico enquanto a nova interface é aperfeiçoada.
-- **Limite atual:** a faixa de vídeo é uma representação temporal, ainda sem
-  miniaturas reais; não há waveform do áudio ou montagem multifaixa implementadas.
+- **Excluir projeto:** pelo ícone de lixeira em *Projetos recentes* ou no cartão de mídia.
+  Apaga o vídeo importado, os cortes e as exportações guardadas no projeto (cópias na pasta
+  de saída ficam). Se algum arquivo estiver em uso, nada é apagado e o app avisa.
+- **Sem interface por enquanto:** narração por IA, configurações de curadoria/IA, FilmCraft,
+  piloto automático e reconhecimento de música continuam disponíveis pela API
+  (`/api/...`), mas não têm tela no Studio.
+- **Limite atual:** a faixa de vídeo mostra miniaturas reais; não há waveform do áudio
+  nem montagem multifaixa.
 - **Privacidade:** o servidor continua projetado para `127.0.0.1`. Não exponha
   diretamente a aplicação na internet sem autenticação, revisão de segurança
   e infraestrutura adequada para vídeo.
@@ -172,6 +176,48 @@ $env:ACRCLOUD_HOST="SEU_HOST"; $env:ACRCLOUD_ACCESS_KEY="SUA_CHAVE"; $env:ACRCLO
 
 Marque a opção no formulário. São enviadas até 3 amostras de 12 s (`ACRCLOUD_MAX_SAMPLES`). Correspondência é indício,
 não prova; **ausência de correspondência não significa música livre**. Não é Content ID.
+
+## Processamento em lote por CSV (`main.py`)
+
+Para quando você já sabe onde cortar: o sistema não escolhe trechos, só executa a renderização
+pesada de cada linha marcada.
+
+```bash
+python main.py cortes.csv
+python main.py cortes.csv --saida output --palavras 4 --fonte "Montserrat ExtraBold"
+```
+
+O CSV aceita `,` ou `;` como separador (veja `cortes.exemplo.csv`):
+
+| coluna | exemplo | observação |
+|---|---|---|
+| `video_origem` | `entrada/podcast.mp4` | caminho relativo à pasta do CSV ou absoluto |
+| `tempo_inicio`, `tempo_fim` | `00:15:30`, `15:30`, `930` ou `00:15:30,5` | |
+| `layout` | `single_speaker`, `split_screen`, `pip` | |
+| `nome` (opcional) | `Melhor momento` | base do nome do arquivo |
+
+Para cada linha, numa pasta temporária removida ao fim da iteração:
+
+1. **Corte bruto** (`app/batch/slicer.py`): `ffmpeg -ss … -to … -i origem -c copy`, sem recodificar.
+   O quadro do início pedido é localizado no temporário pela impressão digital (MD5 de uma
+   miniatura), então a sobra até o quadro-chave anterior é descartada com precisão de quadro em
+   qualquer versão do FFmpeg.
+2. **Legenda** (`app/batch/captions.py`): faster-whisper transcreve só o áudio do trecho; blocos de
+   3 a 5 palavras (`--palavras`), em `.ass` amarelo, grosso, com contorno preto, no centro da tela.
+3. **Layout 9:16, 1080×1920** (`app/batch/layouts.py`), com a legenda embutida no mesmo passo:
+   - `single_speaker`: recorte central; segue o rosto se o OpenCV com `CascadeClassifier` estiver
+     disponível (`--rosto auto|sim|nao`).
+   - `split_screen`: metade esquerda (pessoa A) em cima, metade direita (pessoa B) embaixo (`vstack`).
+   - `pip`: fundo desfocado com o quadro inteiro sobreposto.
+4. **Validação** do MP4 (resolução, codec, duração, áudio, decodificação) e gravação em `output/`
+   como `001_nome_layout.mp4`, com o `.ass` ao lado.
+
+Linhas inválidas (tempo, layout, vídeo inexistente) são relatadas e puladas sem parar o lote.
+O código de saída é 0 só quando todas as linhas deram certo.
+
+Dependências: FFmpeg com libass e as bibliotecas de `requirements-ai.txt` (faster-whisper; OpenCV
+para seguir rosto). Sem faster-whisper, os vídeos saem sem legenda e com aviso. O modelo segue
+`WHISPER_MODEL` (padrão `small`) e `WHISPER_LANGUAGE` (padrão `pt`).
 
 ## Configuração
 

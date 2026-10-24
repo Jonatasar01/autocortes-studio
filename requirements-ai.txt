@@ -93,7 +93,7 @@ onnxruntime==1.23.2 ; python_full_version < '3.11'
     # via faster-whisper
 onnxruntime==1.31.0 ; python_full_version >= '3.11'
     # via faster-whisper
-opencv-python-headless==5.0.0.93
+opencv-python-headless==4.14.0.94
     # via autocortes-studio-local
 opentelemetry-api==1.45.1
     # via fastapi
