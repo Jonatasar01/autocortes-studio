@@ -43,11 +43,12 @@ _cascade_lock = threading.Lock()
 
 def available() -> bool:
     try:
-        import cv2  # noqa: F401
+        import cv2
         import numpy  # noqa: F401
     except ImportError:
         return False
-    return (DATA_DIR / 'haarcascade_frontalface_default.xml').is_file()
+    # O OpenCV 5 tirou o CascadeClassifier do pacote principal: sem ele não há detecção.
+    return hasattr(cv2, 'CascadeClassifier') and (DATA_DIR / 'haarcascade_frontalface_default.xml').is_file()
 
 
 def applicable(media: dict, out_size: tuple[int, int]) -> bool:
