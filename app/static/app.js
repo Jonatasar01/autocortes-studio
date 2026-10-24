@@ -112,6 +112,7 @@ $('#form').addEventListener('submit', async event => {
   xhr.onload = () => {
     button.disabled = false; $('#uploadBox').hidden = true;
     let data = {}; try { data = JSON.parse(xhr.responseText); } catch { /* resposta inválida */ }
+    if (xhr.status === 413 && !data.detail) data.detail = 'Arquivo grande demais para o acesso pela internet (Cloudflare aceita até 100 MB por envio). Use a importação por link ou envie direto no PC.';
     if (xhr.status !== 200) { phase('ERRO'); notify(data.detail || `Falha no envio (${xhr.status}).`, true); return; }
     if (data.warnings?.length) notify(data.warnings.join(' '));
     openProject(data.id); loadLibrary();

@@ -1,7 +1,7 @@
 """API local do AutoCortes (FastAPI). Camada fina: regras ficam em ``service``.
 
-Executar somente em 127.0.0.1. Para acesso remoto seria necessário autenticação e TLS —
-isso NÃO está implementado e por isso o bind padrão é local.
+O bind padrão é 127.0.0.1. Para acesso pela rede use ``python -m app`` com ``AUTOCORTES_HOST`` e
+``AUTOCORTES_PASSWORD`` (senha obrigatória). Na internet use também HTTPS (proxy reverso); veja o README.
 """
 from __future__ import annotations
 

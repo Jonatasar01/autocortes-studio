@@ -1,5 +1,13 @@
 ## Não lançado
 
+- **Acesso pela internet via Cloudflare Tunnel**: `publicar_cloudflare_windows.bat` abre o app (ainda em 127.0.0.1)
+  e o `cloudflared`, em modo rápido (`*.trycloudflare.com`, sem conta) ou com túnel fixo no seu domínio
+  (`CLOUDFLARE_TUNNEL_TOKEN` + `AUTOCORTES_PUBLIC_HOST`). Senha obrigatória. `AUTOCORTES_ALLOWED_HOSTS` aceita
+  sufixos (`.trycloudflare.com`); o bloqueio por senha errada usa o IP real (`CF-Connecting-IP`) quando a conexão
+  vem do `cloudflared` local; envio acima de 100 MB recusado pela Cloudflare mostra aviso claro. Ver `CLOUDFLARE.md`.
+- **Acesso por IP**: `python -m app` com `AUTOCORTES_HOST`/`AUTOCORTES_PORT`; senha opcional `AUTOCORTES_PASSWORD`
+  (HTTP Basic, bloqueio após falhas), obrigatória quando o host não é local. Os IPs do PC entram nos hosts aceitos.
+  Iniciadores e Docker Compose passam a aceitar essas variáveis. Ver "Acesso por IP" no README.
 - FilmCraft: etapa opcional **Remover pausas longas** (`transcript.set` + `transcript.removePauses`), com legendas
   recriadas da transcrição cortada e validação estrutural da linha do tempo. Ver `FILMCRAFT-PROTOTIPO.md`.
 - Corrigido: o **gancho** (frase no topo, primeiros 3 s) saía cortado nas bordas do vídeo porque o cabeçalho ASS usa

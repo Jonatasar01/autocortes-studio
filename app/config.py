@@ -1,6 +1,7 @@
 """Configuração central lida de variáveis de ambiente.
 
 Todos os valores possuem padrões seguros para uso pessoal em 127.0.0.1.
+Para acesso pela rede, veja ``AUTOCORTES_HOST`` e ``AUTOCORTES_PASSWORD`` (README).
 Os módulos devem ler ``config.X`` em tempo de execução (não ``from config import X``)
 para que os testes possam ajustar valores.
 """
@@ -74,8 +75,42 @@ WATCH_INTERVAL = _int('AUTOCORTES_WATCH_INTERVAL', 5, 1, 300)
 JOB_MAX_RETRIES = _int('AUTOCORTES_JOB_RETRIES', 2, 0, 5)
 JOB_RETRY_BASE_SECONDS = _int('AUTOCORTES_RETRY_SECONDS', 30, 0, 3600)
 
+# Endereço do servidor (usado por ``python -m app`` e pelos iniciadores)
+LOOPBACK_HOSTS = {'127.0.0.1', 'localhost', '::1'}
+HOST = os.getenv('AUTOCORTES_HOST', '127.0.0.1').strip() or '127.0.0.1'
+PORT = _int('AUTOCORTES_PORT', _int('PORT', 8000), 1, 65535)
+# Senha de acesso (HTTP Basic, qualquer usuário). Obrigatória quando HOST não é loopback.
+PASSWORD = os.getenv('AUTOCORTES_PASSWORD', '')
+AUTH_MAX_FAILURES = _int('AUTOCORTES_AUTH_MAX_FAILURES', 10, 1, 1000)
+AUTH_LOCKOUT_SECONDS = _int('AUTOCORTES_AUTH_LOCKOUT_SECONDS', 300, 1, 86400)
+
+
+def is_exposed() -> bool:
+    """True quando o servidor escuta em uma interface acessível por outros aparelhos."""
+    return HOST.lower() not in LOOPBACK_HOSTS
+
+
+def local_ips() -> list[str]:
+    """IPs desta máquina na rede local (para mostrar o endereço e liberar o Host)."""
+    import socket
+    found: list[str] = []
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(('10.255.255.255', 1))  # UDP: nenhum pacote é enviado
+            found.append(s.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        found += socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        pass
+    return [ip for i, ip in enumerate(found) if not ip.startswith('127.') and ip not in found[:i]]
+
+
 # Interface/segurança
 ENABLE_API_DOCS = _flag('AUTOCORTES_API_DOCS', False)
 ALLOWED_HOSTS = {'127.0.0.1', 'localhost', '[::1]', '::1', 'testserver'} | {
     h.strip().lower() for h in os.getenv('AUTOCORTES_ALLOWED_HOSTS', '').split(',') if h.strip()}
+if is_exposed():
+    ALLOWED_HOSTS |= set(local_ips()) | ({HOST.lower()} if HOST not in ('0.0.0.0', '::') else set())
 CSRF_HEADER = 'x-autocortes'
