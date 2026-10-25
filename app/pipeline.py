@@ -196,6 +196,7 @@ def run_export(ctx: JobContext) -> dict:
     width, height = media.target_size(prm['format'], info)
     out_len = sum(b - a for a, b in keep) if keep else end - start
     hook_text = prm.get('hook_text') if prm.get('hook') else None
+    sub_report = subtitles._new_report()
     if prm.get('subtitles'):
         style = subtitles.style_for(width, height)
         narration_source = bool(placed) and prm.get('subtitle_source', 'narracao') == 'narracao'
@@ -229,16 +230,18 @@ def run_export(ctx: JobContext) -> dict:
                     lines = [[w for w in line if w['end'] - w['start'] >= 0.02] for line in lines]
                     lines = [line for line in lines if line]
                 if lines:
-                    ass_text = subtitles.to_ass_dynamic(lines, width, height, hook_text=hook_text, clip_len=out_len)
+                    ass_text = subtitles.to_ass_dynamic(lines, width, height, hook_text=hook_text, clip_len=out_len,
+                                                        report=sub_report)
                 else:
                     warnings.append('Legenda dinâmica indisponível (a transcrição não tem o tempo de cada palavra); '
                                     'usada a legenda clássica.')
             elif prm.get('subtitle_style') == 'dinamica':
                 warnings.append('Legenda dinâmica usa a fala transcrita; com legenda da narração foi usada a clássica.')
             if ass_text is None:
-                ass_text = subtitles.to_ass(cues, width, height, hook_text=hook_text, clip_len=out_len)
+                ass_text = subtitles.to_ass(cues, width, height, hook_text=hook_text, clip_len=out_len,
+                                            report=sub_report)
     if ass_text is None and hook_text:
-        ass_text = subtitles.hook_only_ass(width, height, hook_text, clip_len=out_len)
+        ass_text = subtitles.to_ass([], width, height, hook_text=hook_text, clip_len=out_len, report=sub_report)
     if prm['format'] != 'original':
         ctx.stage('enquadramento', 'Procurando faixas pretas no vídeo')
         box = media.detect_letterbox(folder / p['filename'], info, start, end, cancel_event=ctx.cancel_event)
@@ -267,6 +270,16 @@ def run_export(ctx: JobContext) -> dict:
                                original_volume=max(0, min(100, int(prm.get('original_volume', 100)))) / 100,
                                track=track, post=post, audio_extra=audio_extra)
     result['warnings'] = warnings + result['warnings']
+    # Verificação de qualidade visual registrada na exportação: a legenda cabe e o rosto não foi cortado.
+    quality = {'subtitles': sub_report if sub_report['events'] else None,
+               'reframe': (track or {}).get('metrics') if track and track.get('ok') else None}
+    if quality['subtitles'] and quality['subtitles']['max_width_ratio'] > 1.0:
+        result['warnings'].append('Uma legenda ficou mais larga que a área útil; confira o vídeo.')
+    face_min = (quality['reframe'] or {}).get('face_visibility_min')
+    if face_min is not None and face_min < 0.9:
+        result['warnings'].append(f'O enquadramento deixa parte de um rosto fora do quadro em algum momento '
+                                  f'(visibilidade mínima {face_min:.0%}).')
+    result['quality'] = quality
     if plan:
         # Registro do plano usado: torna a exportação reproduzível.
         result['edit_plan'] = {'name': prm.get('edit_plan_name'), 'style': plan['style'],

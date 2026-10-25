@@ -295,6 +295,47 @@ quando não acha rostos; efeitos sonoros e música não são adicionados automat
 de conteúdo é heurística; a análise roda na requisição (alguns segundos para cortes longos), não na fila.
 Nenhum ganho de retenção é afirmado: não há dados de desempenho.
 
+## Segurança visual: legenda dentro do quadro e rosto inteiro no recorte
+
+**Legendas (`app/textfit.py`, `app/subtitles.py`).** As quebras de linha são decididas pela largura real
+em pixels, não pelo número de palavras. A largura vem das métricas da própria fonte que o libass usa
+(leitor TrueType sem dependências: tabelas `cmap`, `hmtx`, `OS/2`): Arial Bold no Windows, Liberation
+Sans ou DejaVu Sans no Linux, ou `AUTOCORTES_SUBTITLE_FONT`. Para cada grupo de palavras:
+
+1. mede no pior caso (qualquer palavra destacada a 108%, termos enfatizados a 112%, contorno e sombra);
+2. usa uma linha se couber em 95% da largura útil; senão, a divisão em duas linhas mais equilibrada;
+3. só se nada couber reduz o tamanho daquele evento (até 72% e, em último caso, o tamanho exato);
+4. fixa as quebras com `\N` e `\q2`, então a linha não "pula" quando o destaque anda.
+
+Vale para a legenda dinâmica, a clássica, o gancho e as legendas do lote por CSV. O cabeçalho passou de
+`WrapStyle: 2` (sem quebra) para `0` como rede de segurança. A previsão foi conferida contra o libass:
+fica entre 0 e 4% acima da largura renderizada.
+
+**Reenquadramento (`app/reframe.py`).** O detector já devolvia a caixa do rosto, mas o planejador só
+usava o centro. Agora:
+
+- cada rosto vira um intervalo de centros de recorte que o mantêm inteiro, com margem de 20% da
+  largura do rosto (reduzida para 10% e 0% em close-ups, nunca cortando o próprio rosto);
+- se duas pessoas cabem juntas, o recorte mantém as duas; senão, quem fala;
+- a suavização continua, mas a segurança tem precedência: a câmera é levada para dentro do intervalo;
+- trechos de pelo menos 0,6 s em que nenhum recorte preserva o rosto usam quadro inteiro com fundo
+  desfocado só naquele intervalo; o resto da cena continua seguindo o rosto;
+- a simplificação do caminho da câmera é verificada amostra a amostra (antes, o corte para 40 pontos
+  podia tirar o rosto do quadro).
+
+**Verificação na exportação.** Cada exportação grava `quality.subtitles` (`max_width_ratio`, linhas,
+eventos reduzidos, fonte medida) e `quality.reframe` (`face_visibility_min`, `face_visibility_p05`,
+amostras abaixo de 90%, segundos em fundo desfocado) e avisa se a legenda passar da área útil ou se um
+rosto ficar parcialmente fora.
+
+**Resultado no corte real (41:20–41:50 do episódio):** legenda mais larga em 92% da área útil (antes,
+"PERIGOS DOS ACAMPAMENTOS" passava das duas bordas); visibilidade do rosto no percentil 5 = 100%, com
+um único close em que o rosto é mais largo que o recorte, mostrado em quadro inteiro por 1 s.
+
+**Limitações:** o detector continua sendo o Haar do OpenCV, que não reconhece rostos de perfil acentuado
+ou olhando para cima; nesses quadros não há caixa para proteger. Não há filtro de Kalman, detector YuNet
+ou MediaPipe, identificação de falante por áudio nem aceleração por GPU (itens P1/P2 do relatório).
+
 ## Configuração
 
 | Variável | Padrão | Função |

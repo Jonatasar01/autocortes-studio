@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from . import textfit
+
 MAX_CUE_SECONDS = 4.2
 MIN_CUE_SECONDS = 0.6
 
@@ -156,6 +158,36 @@ HIGHLIGHT = '&H0027F804'   # verde (ASS usa &HAABBGGRR)
 EMPHASIS = '&H0000E1FF'    # âmbar: termos enfatizados na fala (plano de edição)
 WORDS_PER_LINE = 3
 LINE_GAP = 0.6
+# Layout medido: o texto ocupa no máximo 95% da largura útil (margens do estilo descontadas).
+SAFE_FILL = 0.95
+ACTIVE_SCALE = 1.08     # palavra falada no momento (\fscx108)
+EMPHASIS_SCALE = 1.12   # termo enfatizado pelo plano de edição (\fscx112)
+
+
+def _new_report() -> dict:
+    return {'events': 0, 'max_width_ratio': 0.0, 'reduced_events': 0, 'max_rows': 0, 'min_font': None,
+            'font': textfit.font_source()}
+
+
+def _record(report: dict | None, layout: textfit.Layout, available: float) -> None:
+    if report is None:
+        return
+    report['events'] += 1
+    report['max_width_ratio'] = round(max(report['max_width_ratio'], layout.width / available), 3)
+    report['reduced_events'] += int(layout.reduced)
+    report['max_rows'] = max(report['max_rows'], len(layout.rows))
+    report['min_font'] = layout.size if report['min_font'] is None else min(report['min_font'], layout.size)
+
+
+def _layout_text(text: str, *, available: float, size: int, outline: float, shadow: float, max_rows: int,
+                 family: str, report: dict | None = None) -> tuple[str, int]:
+    """Texto com quebras ``\\N`` medidas e o tamanho que cabe (igual ao do estilo, quando cabe)."""
+    words = text.replace('\n', ' ').split()
+    layout = textfit.plan_rows(words, safe_width=available * SAFE_FILL, size=size,
+                               min_size=max(12, round(size * 0.72)), outline=outline, shadow=shadow,
+                               max_rows=max_rows, metrics=textfit.metrics_for_family(family))
+    _record(report, layout, available)
+    return '\\N'.join(' '.join(words[i] for i in row) for row in layout.rows), layout.size
 
 
 def _hook_style(width: int, height: int, font_name: str) -> str:
@@ -183,22 +215,28 @@ def _hook_text(text: str) -> str:
     return out[:HOOK_MAX_CHARS].rsplit(' ', 1)[0].rstrip(' ,;:') + '…'
 
 
-def _hook_event(hook_text: str | None, clip_len: float | None) -> list[str]:
+def _hook_event(hook_text: str | None, clip_len: float | None, width: int, height: int,
+                font_name: str = 'Arial', report: dict | None = None) -> list[str]:
     text = _hook_text(hook_text or '')
     if not text:
         return []
     end = HOOK_SECONDS if clip_len is None else min(HOOK_SECONDS, max(0.5, clip_len))
-    # O cabeçalho usa WrapStyle 2 (sem quebra automática, bom para as legendas de 3 palavras). O gancho é uma
-    # frase longa, então \q0 liga a quebra inteligente dentro das margens do estilo Hook.
-    return [f'Dialogue: 1,{_ass_time(0)},{_ass_time(end)},Hook,,0,0,0,,{{\\q0\\fad(150,250)}}{text}']
+    size = round(width * 0.052)
+    pad = max(8, round(size * 0.25))   # caixa opaca (BorderStyle 3): o contorno vira a margem da caixa
+    body, fitted = _layout_text(text, available=width - 2 * round(width * 0.07), size=size, outline=pad,
+                                shadow=0, max_rows=3, family=font_name, report=report)
+    fs = f'\\fs{fitted}' if fitted != size else ''
+    # \q2: as quebras já foram medidas; o libass não deve quebrar de novo.
+    return [f'Dialogue: 1,{_ass_time(0)},{_ass_time(end)},Hook,,0,0,0,,{{\\q2{fs}\\fad(150,250)}}{body}']
 
 
 def to_ass(cues: list[dict], width: int, height: int, font_name: str = 'Arial', *,
-           hook_text: str | None = None, clip_len: float | None = None) -> str:
+           hook_text: str | None = None, clip_len: float | None = None, report: dict | None = None) -> str:
     st = style_for(width, height)
     header = [
         '[Script Info]', 'ScriptType: v4.00+', f'PlayResX: {width}', f'PlayResY: {height}',
-        'WrapStyle: 2', 'ScaledBorderAndShadow: yes', 'YCbCr Matrix: TV.709', '',
+        # Quebras decididas pela medição (\\N + \\q2 por evento); WrapStyle 0 é só a rede de segurança.
+        'WrapStyle: 0', 'ScaledBorderAndShadow: yes', 'YCbCr Matrix: TV.709', '',
         '[V4+ Styles]',
         'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, '
         'Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, '
@@ -209,9 +247,14 @@ def to_ass(cues: list[dict], width: int, height: int, font_name: str = 'Arial', 
         _hook_style(width, height, font_name),
         '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
     ]
-    lines = _hook_event(hook_text, clip_len)
-    lines += [f"Dialogue: 0,{_ass_time(c['start'])},{_ass_time(c['end'])},Default,,0,0,0,,"
-              + c['text'].replace('\n', '\\N') for c in cues]
+    lines = _hook_event(hook_text, clip_len, width, height, font_name, report)
+    available = width - 2 * st['margin_h']
+    for c in cues:
+        body, size = _layout_text(c['text'], available=available, size=st['font'], outline=st['outline'],
+                                  shadow=st['shadow'], max_rows=2, family=font_name, report=report)
+        fs = f'\\fs{size}' if size != st['font'] else ''
+        lines.append(f"Dialogue: 0,{_ass_time(c['start'])},{_ass_time(c['end'])},Default,,0,0,0,,"
+                     f"{{\\q2{fs}}}{body}")
     return '\n'.join(header + lines) + '\n'
 
 
@@ -250,8 +293,12 @@ def build_word_lines(transcript: list[dict], start: float, end: float,
 
 def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: str = 'Arial', *,
                    hook_text: str | None = None, clip_len: float | None = None,
-                   highlight: str = HIGHLIGHT) -> str:
-    """Legenda em caixa alta, poucas palavras por vez, com a palavra falada destacada."""
+                   highlight: str = HIGHLIGHT, report: dict | None = None) -> str:
+    """Legenda em caixa alta, poucas palavras por vez, com a palavra falada destacada.
+
+    O layout de cada grupo é medido uma vez, no pior caso (qualquer palavra ampliada a 108%, termos
+    enfatizados a 112%), e fixado com ``\\N``: a linha não muda de quebra quando o destaque anda.
+    """
     st = style_for(width, height)
     portrait = height > width * 1.1
     size = round(width * (0.078 if portrait else 0.05))
@@ -259,7 +306,7 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
     margin_v = round(height * (0.27 if portrait else 0.12))
     header = [
         '[Script Info]', 'ScriptType: v4.00+', f'PlayResX: {width}', f'PlayResY: {height}',
-        'WrapStyle: 2', 'ScaledBorderAndShadow: yes', 'YCbCr Matrix: TV.709', '',
+        'WrapStyle: 0', 'ScaledBorderAndShadow: yes', 'YCbCr Matrix: TV.709', '',
         '[V4+ Styles]',
         'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, '
         'Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, '
@@ -269,8 +316,18 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
         _hook_style(width, height, font_name),
         '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
     ]
-    events = _hook_event(hook_text, clip_len)
+    events = _hook_event(hook_text, clip_len, width, height, font_name, report)
+    available = width - 2 * st['margin_h']
+    metrics = textfit.metrics_for_family(font_name)
     for line in lines:
+        texts = [w['text'].upper() for w in line]
+        layout = textfit.plan_rows(texts, safe_width=available * SAFE_FILL, size=size,
+                                   min_size=max(12, round(size * 0.72)), outline=outline, shadow=2, max_rows=2,
+                                   active_scale=ACTIVE_SCALE,
+                                   scales=[EMPHASIS_SCALE if w.get('emph') else 1.0 for w in line],
+                                   metrics=metrics)
+        _record(report, layout, available)
+        fs = f'\\fs{layout.size}' if layout.size != size else ''
         line_end = line[-1]['end']
         if clip_len is not None:
             line_end = min(line_end, clip_len)
@@ -279,18 +336,23 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
             b = line[i + 1]['start'] if i + 1 < len(line) else line_end
             if b - a < 0.02:
                 continue
-            parts = []
-            for j, other in enumerate(line):
-                text = other['text'].upper()
-                if j == i:
-                    parts.append(f'{{\\c{highlight}&\\fscx108\\fscy108}}{text}{{\\r}}')
-                elif other.get('emph'):
-                    # Termo enfatizado na fala (plano de edição): âmbar e um pouco maior.
-                    parts.append(f'{{\\c{EMPHASIS}&\\fscx112\\fscy112}}{text}{{\\r}}')
-                else:
-                    parts.append(text)
-            pop = '{\\fscx92\\fscy92\\t(0,90,\\fscx100\\fscy100)}' if i == 0 else ''
-            events.append(f"Dialogue: 0,{_ass_time(a)},{_ass_time(b)},Dyn,,0,0,0,,{pop}{' '.join(parts)}")
+            rows = []
+            for row in layout.rows:
+                parts = []
+                for j in row:
+                    other, text = line[j], texts[j]
+                    if j == i:
+                        parts.append(f'{{\\c{highlight}&\\fscx108\\fscy108}}{text}{{\\r}}')
+                    elif other.get('emph'):
+                        # Termo enfatizado na fala (plano de edição): âmbar e um pouco maior.
+                        parts.append(f'{{\\c{EMPHASIS}&\\fscx112\\fscy112}}{text}{{\\r}}')
+                    else:
+                        parts.append(text)
+                rows.append(' '.join(parts))
+            # \r volta ao estilo e apagaria o \fs do evento: reaplica depois de cada palavra destacada.
+            body = '\\N'.join(rows).replace('{\\r}', '{\\r' + fs + '}') if fs else '\\N'.join(rows)
+            pop = '\\fscx92\\fscy92\\t(0,90,\\fscx100\\fscy100)' if i == 0 else ''
+            events.append(f"Dialogue: 0,{_ass_time(a)},{_ass_time(b)},Dyn,,0,0,0,,{{\\q2{fs}{pop}}}{body}")
     return '\n'.join(header + events) + '\n'
 
 

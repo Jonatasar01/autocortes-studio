@@ -121,7 +121,9 @@ class SubtitleTests(unittest.TestCase):
         ass = subtitles.to_ass(cues, 1080, 1920)
         self.assertIn('PlayResY: 1920', ass)
         dialogue = ass.strip().splitlines()[-1]
-        self.assertNotIn('{', dialogue)
+        # Só o prefixo do layout medido ({\q2…}) é marcação; o texto do usuário não pode ter tags.
+        self.assertTrue(dialogue.split(',,0,0,0,,', 1)[1].startswith('{\\q2'))
+        self.assertNotIn('{', dialogue.split('}', 1)[1])
         self.assertIn('ação', dialogue)
 
 
