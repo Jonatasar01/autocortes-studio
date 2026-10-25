@@ -162,7 +162,9 @@ function updateControls() {
   $('exportTop').disabled = state.exporting || !c || !ready;
   $('save').disabled = state.exporting || !c || !ready;
   $('saveTop').disabled = state.exporting || !c || !ready;
-  $('exportLabel').textContent = state.exporting ? 'Exportando…' : 'Exportar';
+  $('exportLabel').textContent = state.exporting === true ? 'Exportando…' : 'Exportar';
+  $('previewTop').disabled = state.exporting || !c || !ready;
+  $('previewLabel').textContent = state.exporting === 'preview' ? 'Gerando…' : 'Prévia';
 }
 
 function setDirty(on) {
@@ -1181,6 +1183,83 @@ function showExport(text, {progress = null, cancellable = false, tone = ''} = {}
   $('cancelExport').hidden = !cancellable;
 }
 
+function exportOptions(format, rights) {
+  return {
+    format, framing: $('framing').value, subtitles: $('subtitles').checked,
+    normalize_audio: $('normalize').checked, hook: $('hook').checked, acknowledge_rights: rights,
+    edit_plan: exportPlanName(),
+  };
+}
+
+// Prévia: a mesma montagem da exportação (layout, legenda, plano de edição) em meia resolução.
+async function previewEdit() {
+  const c = current();
+  if (!c || state.exporting || !isReady()) return toast('Selecione um corte pronto.', true);
+  const pid = state.project.id, cid = c.id, format = state.format;
+  state.exporting = 'preview';
+  updateControls();
+  try {
+    if (!await save({silent: true})) return;
+    $('downloads').replaceChildren();
+    showExport('Gerando a prévia…', {progress: 0});
+    setStatus('Gerando prévia…', 'busy');
+    const j = await api('/api/projects/' + pid + '/clips/' + cid + '/preview', 'POST', exportOptions(format, false));
+    state.exportJob = j.id;
+    await monitorJob(j.id, pid, cid, format, {preview: true});
+  } catch (e) {
+    if (state.project?.id === pid) showExport(e.message, {tone: 'error'});
+    setStatus('Prévia não concluída', 'error');
+    toast(e.message, true);
+  } finally {
+    state.exporting = false;
+    state.exportJob = null;
+    updateControls();
+  }
+}
+
+function openPreview(src, record, {preview = true} = {}) {
+  const v = $('previewVideo');
+  const portrait = !record?.height || record.height >= record.width;
+  v.classList.toggle('wide', !portrait);
+  v.src = src;
+  $('previewTitle').textContent = preview ? 'Prévia da edição' : 'Vídeo exportado';
+  $('previewNote').textContent = preview
+    ? 'Renderização rápida em meia resolução, com o mesmo recorte, legenda e efeitos da exportação final.'
+    : 'Arquivo final, como foi exportado.';
+  $('previewExport').hidden = !preview;
+  const q = record?.quality || {};
+  const facts = [];
+  const dur = record?.validation?.duration;
+  if (dur) facts.push(['Duração', fmt(dur), '']);
+  if (record?.width) facts.push(['Resolução', record.width + '×' + record.height + (preview ? ' (prévia)' : ''), '']);
+  const plan = record?.edit_plan;
+  facts.push(['Plano de edição', plan ? plan.style + ' · ' + plan.actions.length + ' ação(ões)' : 'nenhum', '']);
+  if (q.subtitles) {
+    const r = q.subtitles.max_width_ratio;
+    facts.push(['Legenda mais larga', Math.round(r * 100) + '% da área útil', r <= 0.95 ? 'good' : 'warn']);
+  }
+  if (q.reframe && q.reframe.face_visibility_p05 != null) {
+    const v5 = q.reframe.face_visibility_p05;
+    facts.push(['Rosto visível (95% do tempo)', Math.round(v5 * 100) + '%', v5 >= 0.95 ? 'good' : 'warn']);
+    if (q.reframe.fit_seconds) facts.push(['Quadro inteiro (sem recorte seguro)', q.reframe.fit_seconds.toFixed(1) + ' s', '']);
+  }
+  $('previewFacts').innerHTML = facts.map(([k, val, tone]) =>
+    '<li class="' + tone + '"><span>' + escape(k) + '</span><b>' + escape(val) + '</b></li>').join('');
+  $('previewWarnings').innerHTML = (record?.warnings || []).map((w) => '<li>' + escape(w) + '</li>').join('');
+  $('previewDialog').showModal();
+  v.play().catch(() => {});
+}
+function closePreview() {
+  const v = $('previewVideo');
+  v.pause();
+  v.removeAttribute('src');
+  v.load();
+}
+$('previewDialog').addEventListener('close', closePreview);
+$('previewClose').onclick = () => { $('previewDialog').close(); closePreview(); };
+$('previewExport').onclick = () => { $('previewDialog').close(); closePreview(); exportClip(); };
+$('previewTop').onclick = previewEdit;
+
 async function exportClip() {
   const c = current();
   if (!c || state.exporting || !isReady()) return toast('Selecione um corte pronto para exportar.', true);
@@ -1197,11 +1276,7 @@ async function exportClip() {
     $('downloads').replaceChildren();
     showExport('Enviando para a fila…', {progress: 0});
     setStatus('Exportando…', 'busy');
-    const j = await api('/api/projects/' + pid + '/clips/' + cid + '/export', 'POST', {
-      format, framing: $('framing').value, subtitles: $('subtitles').checked,
-      normalize_audio: $('normalize').checked, hook: $('hook').checked, acknowledge_rights: rights,
-      edit_plan: exportPlanName(),
-    });
+    const j = await api('/api/projects/' + pid + '/clips/' + cid + '/export', 'POST', exportOptions(format, rights));
     state.exportJob = j.id;
     await monitorJob(j.id, pid, cid, format);
   } catch (e) {
@@ -1215,13 +1290,29 @@ async function exportClip() {
   }
 }
 
-async function monitorJob(id, pid, cid, format) {
+async function monitorJob(id, pid, cid, format, {preview = false} = {}) {
   for (let i = 0; i < 2400; i++) {
     const j = await api('/api/jobs/' + id);
     const here = state.project?.id === pid;
     if (here && ACTIVE_JOB.includes(j.status)) {
       showExport((j.message || 'Processando') + ' · ' + Math.round((j.progress || 0) * 100) + '%',
         {progress: j.progress || 0, cancellable: j.status !== 'cancelling'});
+    }
+    if (j.status === 'done' && preview) {
+      setStatus('Prévia pronta', 'ok');
+      if (!here) return toast('Prévia pronta em outro projeto.');
+      await refresh();
+      showExport('Prévia pronta.', {tone: 'ok'});
+      const src = '/api/projects/' + pid + '/clips/' + cid + '/preview?v=' + Date.now();
+      const watch = document.createElement('button');
+      watch.type = 'button';
+      watch.className = 'btn block';
+      watch.innerHTML = '<svg class="ic"><use href="#i-eye"/></svg>';
+      watch.append('Assistir prévia');
+      watch.onclick = () => openPreview(src, j.result);
+      $('downloads').replaceChildren(watch);
+      openPreview(src, j.result);
+      return;
     }
     if (j.status === 'done') {
       setStatus('Exportação concluída', 'ok');
@@ -1233,7 +1324,13 @@ async function monitorJob(id, pid, cid, format) {
       a.href = '/api/projects/' + pid + '/clips/' + cid + '/download?format=' + encodeURIComponent(format);
       a.innerHTML = '<svg class="ic"><use href="#i-download"/></svg>';
       a.append('Baixar MP4 (' + format + ')');
-      $('downloads').replaceChildren(a);
+      const watch = document.createElement('button');
+      watch.type = 'button';
+      watch.className = 'btn block';
+      watch.innerHTML = '<svg class="ic"><use href="#i-eye"/></svg>';
+      watch.append('Assistir');
+      watch.onclick = () => openPreview(a.href, j.result, {preview: false});
+      $('downloads').replaceChildren(a, watch);
       for (const w of j.result?.warnings || []) {
         const p = document.createElement('p');
         p.className = 'hint';

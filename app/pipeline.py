@@ -6,6 +6,8 @@ resultados serem validados.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import json
 import logging
 import shutil
 import time
@@ -251,8 +253,7 @@ def run_export(ctx: JobContext) -> dict:
     track = None
     if prm['framing'] == 'track':
         ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
-        track = reframe.plan(folder / p['filename'], info, start, end, media.target_size(prm['format'], info),
-                             scenes=p.get('scenes') or [], cancel_event=ctx.cancel_event)
+        track = _cached_track(folder, p, info, start, end, prm['format'], ctx)
         if not track['ok']:
             warnings.append(track['message'])
     post = audio_extra = ''
@@ -261,14 +262,17 @@ def run_export(ctx: JobContext) -> dict:
         post = direction.video_post_filters(plan, (width, height), media.output_fps(info) or info.get('fps') or 30,
                                             out_len, remap)
         audio_extra = '' if placed else direction.audio_filters(plan, out_len)
-    ctx.stage('renderizando', 'Renderizando o corte')
-    result = media.export_clip(folder / p['filename'], info, folder / 'clips', f"clip_{int(prm['clip_id']):02d}",
+    preview = bool(prm.get('preview'))
+    ctx.stage('renderizando', 'Renderizando a prévia' if preview else 'Renderizando o corte')
+    out_dir = folder / ('preview' if preview else 'clips')
+    result = media.export_clip(folder / p['filename'], info, out_dir, f"clip_{int(prm['clip_id']):02d}",
                                start, end, fmt=prm['format'], framing=prm['framing'], ass_text=ass_text,
-                               srt_text=srt_text, normalize_audio=bool(prm.get('normalize_audio')),
+                               srt_text=None if preview else srt_text,
+                               normalize_audio=bool(prm.get('normalize_audio')),
                                on_progress=(ctx.span(0.25, 1.0) if placed else (lambda f, m='': ctx.progress(f))),
                                cancel_event=ctx.cancel_event, narration=placed, keep=keep,
                                original_volume=max(0, min(100, int(prm.get('original_volume', 100)))) / 100,
-                               track=track, post=post, audio_extra=audio_extra)
+                               track=track, post=post, audio_extra=audio_extra, preview=preview)
     result['warnings'] = warnings + result['warnings']
     # Verificação de qualidade visual registrada na exportação: a legenda cabe e o rosto não foi cortado.
     quality = {'subtitles': sub_report if sub_report['events'] else None,
@@ -287,6 +291,8 @@ def run_export(ctx: JobContext) -> dict:
                                'actions': [a for a in plan['actions'] if a.get('enabled', True)]}
     record = {**result, 'created_at': time.time(), 'job_id': ctx.id, 'title': prm.get('title'),
               'revision': prm.get('revision')}
+    if preview:
+        return _publish_preview(ctx, folder, prm, record)
     if placed:
         record['narration'] = {'voice': prm.get('voice'), 'tts_model': narration.config.OPENAI_TTS_MODEL,
                                'blocks': len(placed), 'ai_voice': True}
@@ -319,6 +325,46 @@ def run_export(ctx: JobContext) -> dict:
     for name in filter(None, stale):  # versões anteriores do mesmo formato (falha no Windows é tolerada)
         with contextlib.suppress(OSError):
             (folder / 'clips' / name).unlink()
+    for message in record['warnings']:
+        ctx.warn(message)
+    return record
+
+
+def _cached_track(folder: Path, p: dict, info: dict, start: float, end: float, fmt: str, ctx: JobContext) -> dict:
+    """Plano de enquadramento em cache por (trecho, formato, faixas pretas, versão do algoritmo).
+
+    A análise de rostos é a etapa mais lenta: a prévia e a exportação do mesmo corte reaproveitam o resultado.
+    """
+    size = media.target_size(fmt, info)
+    key = hashlib.sha256(json.dumps([reframe.PLAN_VERSION, p['filename'], round(start, 3), round(end, 3), size,
+                                     info.get('letterbox'), len(p.get('scenes') or [])]).encode()).hexdigest()[:24]
+    cache = folder / 'direction' / f'track_{key}.json'
+    with contextlib.suppress(OSError, ValueError):
+        return json.loads(cache.read_text(encoding='utf-8'))
+    track = reframe.plan(folder / p['filename'], info, start, end, size, scenes=p.get('scenes') or [],
+                         cancel_event=ctx.cancel_event)
+    with contextlib.suppress(OSError):
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(track), encoding='utf-8')
+    return track
+
+
+def _publish_preview(ctx: JobContext, folder: Path, prm: dict, record: dict) -> dict:
+    """Guarda só a prévia mais recente do corte: sem pacote, sem pasta de saída, sem histórico de exportações."""
+    record = {**record, 'preview': True, 'start': prm['start'], 'end': prm['end'],
+              'settings': {k: prm.get(k) for k in ('format', 'framing', 'subtitles', 'subtitle_style', 'hook',
+                                                    'normalize_audio', 'shorten_pauses', 'edit_plan_name')}}
+    stale = None
+    with storage.edit_project(ctx.project_id) as p:
+        clip = next((c for c in p.get('clips', []) if c['id'] == prm['clip_id']), None)
+        if clip is None:
+            stale = record['file']
+        else:
+            stale = (clip.get('preview') or {}).get('file')
+            clip['preview'] = record
+    if stale and stale != record['file']:
+        with contextlib.suppress(OSError):
+            (folder / 'preview' / stale).unlink()
     for message in record['warnings']:
         ctx.warn(message)
     return record

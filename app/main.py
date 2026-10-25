@@ -324,6 +324,18 @@ def export_clip(project_id: str, clip_id: int, options: ExportOptions):
     return service.request_export(project_id, clip_id, options.model_dump())
 
 
+@app.post('/api/projects/{project_id}/clips/{clip_id}/preview')
+def preview_clip(project_id: str, clip_id: int, options: ExportOptions):
+    """Prévia rápida (meia resolução) da edição final, com as mesmas opções da exportação."""
+    return service.request_export(project_id, clip_id, options.model_dump(), preview=True)
+
+
+@app.get('/api/projects/{project_id}/clips/{clip_id}/preview')
+def preview_file(project_id: str, clip_id: int):
+    return FileResponse(service.preview_path(project_id, clip_id), media_type='video/mp4',
+                        content_disposition_type='inline', headers={'Cache-Control': 'no-cache'})
+
+
 class NarrationRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     style: Literal['recap', 'comentario', 'documentario'] = 'recap'

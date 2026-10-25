@@ -49,6 +49,7 @@
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
 </svg>
 
@@ -110,6 +111,7 @@
         <span id="status" class="status" role="status" data-tone="idle"><span class="statusdot" aria-hidden="true"></span><span id="statusText">Editor pronto</span></span>
         <button id="help" class="iconbtn" title="Atalhos de teclado (?)" aria-label="Atalhos de teclado"><svg class="ic"><use href="#i-keyboard"/></svg></button>
         <button id="saveTop" class="btn" disabled title="Salvar alterações do corte (Ctrl+S)"><svg class="ic"><use href="#i-save"/></svg><span>Salvar</span></button>
+        <button id="previewTop" class="btn" disabled title="Ver como o corte vai ficar (renderização rápida em meia resolução)"><svg class="ic"><use href="#i-eye"/></svg><span id="previewLabel">Prévia</span></button>
         <button id="exportTop" class="btn primary" disabled title="Exportar o corte selecionado"><svg class="ic"><use href="#i-upload"/></svg><span id="exportLabel">Exportar</span></button>
       </div>
     </header>
@@ -407,6 +409,22 @@
     <div><dt><kbd>Ctrl</kbd> <kbd>S</kbd></dt><dd>Salvar alterações do corte</dd></div>
     <div><dt><kbd>?</kbd></dt><dd>Abrir esta ajuda</dd></div>
   </dl>
+</dialog>
+
+<dialog id="previewDialog" class="dialog preview" aria-labelledby="previewTitle">
+  <header><h2 id="previewTitle">Prévia da edição</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <div class="previewbody">
+    <video id="previewVideo" controls playsinline preload="auto"></video>
+    <div class="previewinfo">
+      <p id="previewNote" class="hint"></p>
+      <ul id="previewFacts" class="previewfacts"></ul>
+      <ul id="previewWarnings" class="previewwarnings"></ul>
+    </div>
+  </div>
+  <footer>
+    <button id="previewClose" class="btn ghost" type="button">Fechar</button>
+    <button id="previewExport" class="btn primary" type="button"><svg class="ic"><use href="#i-upload"/></svg><span>Exportar em alta qualidade</span></button>
+  </footer>
 </dialog>
 
 <dialog id="confirmDialog" class="dialog narrow" aria-labelledby="confirmTitle" aria-describedby="confirmText">

@@ -336,6 +336,24 @@ um único close em que o rosto é mais largo que o recorte, mostrado em quadro i
 ou olhando para cima; nesses quadros não há caixa para proteger. Não há filtro de Kalman, detector YuNet
 ou MediaPipe, identificação de falante por áudio nem aceleração por GPU (itens P1/P2 do relatório).
 
+## Prévia da edição
+
+O botão **Prévia** (barra superior) mostra como o corte vai ficar antes de exportar. É a mesma montagem
+da exportação (recorte 9:16, faixas pretas removidas, legenda, gancho, plano de edição com zoom, cor e
+pausas), renderizada em meia resolução (540×960 no 9:16) com codificação rápida e aberta num player
+vertical. Ao lado aparecem a duração, o plano usado, a largura máxima da legenda, a visibilidade do rosto
+e os avisos; "Exportar em alta qualidade" gera o arquivo final com as mesmas opções.
+
+- Fica só no computador: não pede a confirmação de direitos, não entra no histórico de exportações, não
+  gera pacote de publicação nem cópia na pasta de saída. Só a prévia mais recente de cada corte é guardada
+  (`<projeto>/preview/`). Narração por IA (paga) não entra na prévia.
+- A análise de rostos fica em cache por corte: a exportação depois da prévia (e as prévias seguintes)
+  reaproveitam o resultado. No corte de 30 s do episódio: primeira prévia com "seguir rosto" 36 s,
+  seguintes 14 s.
+- Depois de exportar, **Assistir** abre o arquivo final no mesmo player.
+- API: `POST /api/projects/{id}/clips/{n}/preview` (mesmas opções da exportação) e
+  `GET /api/projects/{id}/clips/{n}/preview` (o MP4).
+
 ## Configuração
 
 | Variável | Padrão | Função |
