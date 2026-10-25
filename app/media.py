@@ -580,8 +580,22 @@ def remap_time(t: float, keep: list[tuple[float, float]]) -> float:
     return offset
 
 
+def expr_sum(terms: list[str]) -> str:
+    """Soma de termos para expressões do FFmpeg, agrupada em árvore balanceada.
+
+    O avaliador do FFmpeg (7+) recusa somas encadeadas com ~100 termos ou mais (limite de profundidade);
+    agrupar em parênteses deixa a profundidade em log2(n).
+    """
+    if not terms:
+        return '0'
+    if len(terms) == 1:
+        return terms[0]
+    mid = len(terms) // 2
+    return f'({expr_sum(terms[:mid])}+{expr_sum(terms[mid:])})'
+
+
 def _select_expr(keep: list[tuple[float, float]]) -> str:
-    return '+'.join(f'gte(t,{a:.6f})*lt(t,{b:.6f})' for a, b in keep)
+    return expr_sum([f'gte(t,{a:.6f})*lt(t,{b:.6f})' for a, b in keep])
 
 
 def _blur_branch(inp: str, W: int, H: int, out: str) -> str:

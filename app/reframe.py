@@ -22,6 +22,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
+from . import media
 from .errors import Cancelled, sanitize
 
 log = logging.getLogger('autocortes.reframe')
@@ -495,7 +496,7 @@ def _to_visible(targets: list[tuple], media: dict, box: dict | None) -> list[tup
 def crop_x_expression(shots: list[dict]) -> str:
     """Centro do recorte (fração da largura) como expressão de ``t`` do FFmpeg, linear por partes.
 
-    Usa soma de termos com ``between`` (sem aninhamento), então funciona com dezenas de pontos.
+    Soma de termos indicadores agrupada em árvore (``media.expr_sum``), então aceita centenas de pontos.
     """
     terms: list[str] = []
     fill = [s for s in shots if s['layout'] == 'fill' and s['points']]
@@ -512,13 +513,13 @@ def crop_x_expression(shots: list[dict]) -> str:
         last_t, last_x = pts[-1]
         terms.append(f'gte(t,{last_t:.3f})*lt(t,{shot["end"]:.3f})*{last_x:.4f}')
     # fora das cenas com rosto (ou antes do primeiro ponto) a câmera fica no centro: soma dos indicadores = 0
-    covered = '+'.join(f'gte(t,{s["points"][0][0]:.3f})*lt(t,{s["end"]:.3f})' for s in fill) or '0'
+    covered = media.expr_sum([f'gte(t,{s["points"][0][0]:.3f})*lt(t,{s["end"]:.3f})' for s in fill])
     terms.append(f'(1-min(1,{covered}))*0.5')
-    return '+'.join(terms)
+    return media.expr_sum(terms)
 
 
 def fit_enable_expression(shots: list[dict]) -> str | None:
     spans = [s for s in shots if s['layout'] == 'fit']
     if not spans:
         return None
-    return '+'.join(f'between(t,{s["start"]:.3f},{s["end"]:.3f})' for s in spans)
+    return media.expr_sum([f'between(t,{s["start"]:.3f},{s["end"]:.3f})' for s in spans])

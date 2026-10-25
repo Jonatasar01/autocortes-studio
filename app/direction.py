@@ -394,7 +394,7 @@ def zoom_expression(plan: dict, remap) -> str | None:
             terms.append(f"{amount:.3f}*clip((it-{a:.3f})/{b - a:.3f},0,1)*between(it,{a:.3f},{b:.3f})")
         else:
             terms.append(f"{amount:.3f}*{_ramp(a, b)}")
-    return f"1+{'+'.join(terms)}" if terms else None
+    return f"1+{media.expr_sum(terms)}" if terms else None
 
 
 def video_post_filters(plan: dict, size: tuple[int, int], fps: float, out_duration: float, remap) -> str:
