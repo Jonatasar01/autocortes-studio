@@ -512,7 +512,7 @@ def update_edit_plan(project_id: str, clip_id: int, name: str, changes: dict) ->
         return _plans_view(clip)
 
 
-def request_export(project_id: str, clip_id: int, options: dict) -> dict:
+def request_export(project_id: str, clip_id: int, options: dict, *, preview: bool = False) -> dict:
     fmt = options.get('format') or ('9:16' if options.get('portrait', True) else '16:9')
     if fmt not in media.FORMATS:
         raise AppError('Formato inválido. Use 9:16, 16:9, 1:1 ou original.', 400, 'bad_format')
@@ -523,10 +523,13 @@ def request_export(project_id: str, clip_id: int, options: dict) -> dict:
         _require_ready(p)
         clip = _find_clip(p, clip_id)
         review = p.get('rights') or {}
-        if review.get('requires_acknowledgement') and not options.get('acknowledge_rights'):
+        if preview:
+            # A prévia fica no computador e não é publicada; narração (paga) não entra na prévia.
+            options = {**options, 'narration': False}
+        if not preview and review.get('requires_acknowledgement') and not options.get('acknowledge_rights'):
             raise AppError('Há riscos relevantes de direitos neste projeto. Leia os alertas e confirme que está '
                            'ciente antes de exportar.', 409, 'rights_ack_required')
-        if options.get('acknowledge_rights') and review.get('requires_acknowledgement'):
+        if not preview and options.get('acknowledge_rights') and review.get('requires_acknowledgement'):
             p.setdefault('rights_acknowledgements', []).append({'at': time.time(), 'clip_id': clip_id,
                                                                 'level': review.get('level')})
         use_narration = bool(options.get('narration'))
@@ -585,12 +588,26 @@ def request_export(project_id: str, clip_id: int, options: dict) -> dict:
         if plan is not None:
             params['edit_plan'] = copy.deepcopy(plan)
             params['edit_plan_name'] = plan_name
+        if preview:
+            params['preview'] = True
         if use_narration:
             params['narration_script'] = copy.deepcopy(clip['narration'])
     key = 'export:' + project_id + ':' + hashlib.sha256(
         json.dumps(params, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     job, created = _jobs().submit(project_id, 'export', params, dedupe_key=key)
     return public_job(job) | {'duplicate': not created}
+
+
+def preview_path(project_id: str, clip_id: int) -> Path:
+    p = storage.read_project(project_id)
+    record = _find_clip(p, clip_id).get('preview') or {}
+    name = record.get('file') or ''
+    if not re.fullmatch(r'clip_\d{2}_(9x16|16x9|1x1|orig)_v\d+\.mp4', name):
+        raise AppError('Gere a prévia deste corte primeiro.', 404, 'no_preview')
+    path = storage.project_dir(project_id) / 'preview' / name
+    if not path.is_file():
+        raise AppError('A prévia não está mais disponível. Gere de novo.', 404, 'no_preview')
+    return path
 
 
 def request_narration(project_id: str, clip_id: int, options: dict) -> dict:

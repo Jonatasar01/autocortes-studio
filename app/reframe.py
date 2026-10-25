@@ -36,6 +36,7 @@ SMOOTHING = 0.18             # fração da distância percorrida a cada amostra
 SIMPLIFY_TOLERANCE = 0.004   # erro máximo (fração da largura) ao simplificar o caminho da câmera
 MAX_POINTS_PER_SHOT = 40
 MIN_SHOT_SECONDS = 0.6
+PLAN_VERSION = 2   # muda quando o algoritmo do plano muda (invalida os planos em cache)
 # Segurança do rosto: a caixa do rosto, com margem, precisa caber inteira no recorte.
 FACE_MARGIN_RATIO = 0.20     # margem lateral = 20% da largura do rosto (cabelo, movimento, erro do detector)
 FACE_MIN_MARGIN = 0.015      # e pelo menos 1,5% da largura do quadro

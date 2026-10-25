@@ -657,8 +657,12 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
                       narration: list[dict] | None = None, original_volume: float = 1.0,
                       keep: list[tuple[float, float]] | None = None,
                       track: dict | None = None, post: str = '',
-                      audio_extra: str = '') -> tuple[list[str], tuple[int, int]]:
+                      audio_extra: str = '', preview: bool = False) -> tuple[list[str], tuple[int, int]]:
     graph, size = build_filtergraph(media, fmt, framing, subtitles_file, keep, track, post)
+    if preview:
+        # Prévia: o mesmo grafo (layout, legenda, efeitos) e só no fim reduz à metade para codificar rápido.
+        size = (_even(size[0] / 2), _even(size[1] / 2))
+        graph = graph[:-len('[vout]')] + f',scale={size[0]}:{size[1]}:flags=bilinear[vout]'
     args = ['-ss', f'{start:.3f}', '-i', str(source)]
     for item in narration or []:
         args += ['-i', str(item['path'])]
@@ -684,7 +688,8 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
                  '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2']
     else:
         args += ['-an']
-    args += ['-c:v', 'libx264', '-preset', config.FFMPEG_PRESET, '-crf', '20', '-pix_fmt', 'yuv420p',
+    quality = ['-preset', 'ultrafast', '-crf', '30'] if preview else ['-preset', config.FFMPEG_PRESET, '-crf', '20']
+    args += ['-c:v', 'libx264', *quality, '-pix_fmt', 'yuv420p',
              '-profile:v', 'high', '-movflags', '+faststart', '-avoid_negative_ts', 'make_zero',
              # Remove metadados do original (ex.: localização GPS de celulares)
              '-map_metadata', '-1', '-map_chapters', '-1', '-sn', '-dn', output_name]
@@ -692,7 +697,7 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
 
 
 def validate_output(path: Path, *, expected_duration: float, expected_size: tuple[int, int],
-                    expect_audio: bool, cancel_event: threading.Event | None = None) -> dict:
+                    expect_audio: bool, cancel_event: threading.Event | None = None, decode: bool = True) -> dict:
     """Validação real do arquivo exportado. Código de saída zero não basta."""
     checks: list[dict] = []
     warnings: list[str] = []
@@ -729,7 +734,11 @@ def validate_output(path: Path, *, expected_duration: float, expected_size: tupl
             offset = abs(a_start - v_start)
             check('sincronia_audio', drift <= 0.35 and offset <= 0.12,
                   f'diferença de duração {drift:.2f} s, deslocamento inicial {offset:.3f} s')
-    # Decodificação completa: detecta erros de contêiner/fluxo e trechos pretos.
+    # Decodificação completa: detecta erros de contêiner/fluxo e trechos pretos (dispensada nas prévias).
+    if not decode:
+        valid = all(c['ok'] for c in checks)
+        return {'valid': valid, 'checks': checks, 'warnings': warnings, 'duration': round(duration, 3),
+                'size_bytes': path.stat().st_size}
     try:
         stderr = run_ffmpeg(['-loglevel', 'level+info', '-i', path.name, '-vf',
                              'blackdetect=d=1.0:pix_th=0.10', '-f', 'null', '-'],
@@ -765,8 +774,11 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                 normalize_audio: bool = False, on_progress: ProgressFn | None = None,
                 cancel_event: threading.Event | None = None, narration: list[dict] | None = None,
                 original_volume: float = 1.0, keep: list[tuple[float, float]] | None = None,
-                track: dict | None = None, post: str = '', audio_extra: str = '') -> dict:
-    """Renderiza em pasta temporária, valida e só então publica com renomeação atômica."""
+                track: dict | None = None, post: str = '', audio_extra: str = '', preview: bool = False) -> dict:
+    """Renderiza em pasta temporária, valida e só então publica com renomeação atômica.
+
+    ``preview``: mesma montagem em meia resolução e codificação rápida, para conferir antes de exportar.
+    """
     if cancel_event is not None and cancel_event.is_set():
         raise Cancelled()
     if fmt not in FORMATS:
@@ -800,7 +812,7 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                 raise Cancelled()
             args, size = build_export_args(source, media, start, duration, fmt, framing, subs,
                                            normalize_audio, render, narration, original_volume, keep, track,
-                                           post, audio_extra)
+                                           post, audio_extra, preview)
             run_ffmpeg(args, duration=out_duration, cwd=work, cancel_event=cancel_event,
                        on_progress=lambda p, m: progress(p * 0.85, 'Renderizando'))
             return size
@@ -825,7 +837,7 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
         progress(0.86, 'Validando arquivo exportado')
         report = validate_output(work / render, expected_duration=out_duration, expected_size=size,
                                  expect_audio=media.get('audio_index') is not None or bool(narration),
-                                 cancel_event=cancel_event)
+                                 cancel_event=cancel_event, decode=not preview)
         if not report['valid']:
             failed = [c for c in report['checks'] if not c['ok']]
             raise AppError('O vídeo exportado não passou na validação: ' +
