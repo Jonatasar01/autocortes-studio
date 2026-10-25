@@ -36,6 +36,9 @@ SMOOTHING = 0.18             # fração da distância percorrida a cada amostra
 SIMPLIFY_TOLERANCE = 0.004   # erro máximo (fração da largura) ao simplificar o caminho da câmera
 MAX_POINTS_PER_SHOT = 40
 MIN_SHOT_SECONDS = 0.6
+# Segurança do rosto: a caixa do rosto, com margem, precisa caber inteira no recorte.
+FACE_MARGIN_RATIO = 0.20     # margem lateral = 20% da largura do rosto (cabelo, movimento, erro do detector)
+FACE_MIN_MARGIN = 0.015      # e pelo menos 1,5% da largura do quadro
 
 _cascades: dict[str, object] = {}
 _cascade_lock = threading.Lock()
@@ -147,12 +150,16 @@ def _mouth(gray, box):
     return cv2.resize(gray[y0:y1, x0:x1], (24, 12))
 
 
-def speaker_targets(samples: list[dict]) -> list[tuple[float, float | None]]:
-    """Para cada amostra, centro horizontal (0-1) do provável falante, ou None sem rosto."""
+def speaker_targets(samples: list[dict]) -> list[tuple]:
+    """Para cada amostra: ``(t, centro_x, caixa_do_falante, caixas_visíveis)``.
+
+    Sem rosto: ``(t, None, None, [])``. As caixas são ``(x, y, largura, altura)`` em fração do quadro;
+    elas são mantidas para o recorte poder garantir que o rosto inteiro fique visível.
+    """
     import cv2
     import numpy as np
     tracks: list[dict] = []
-    targets: list[tuple[float, float | None]] = []
+    targets: list[tuple] = []
     for i, s in enumerate(samples):
         for box in s['faces']:
             cx, cy = box[0] + box[2] / 2, box[1] + box[3] / 2
@@ -175,15 +182,77 @@ def speaker_targets(samples: list[dict]) -> list[tuple[float, float | None]]:
         visible = [tr for tr in tracks if tr['last'] == i]
         if visible:
             speaker = max(visible, key=lambda tr: (round(tr['activity'], 1), tr['box'][2] * tr['box'][3]))
-            targets.append((s['t'], speaker['box'][0] + speaker['box'][2] / 2))
+            targets.append((s['t'], speaker['box'][0] + speaker['box'][2] / 2, tuple(speaker['box']),
+                            [tuple(tr['box']) for tr in visible]))
         else:
-            targets.append((s['t'], None))
+            targets.append((s['t'], None, None, []))
     return targets
 
 
-def camera_path(targets: list[tuple[float, float | None]], crop_frac: float) -> list[tuple[float, float]]:
-    """Câmera virtual: zona morta + suavização exponencial, limitada às bordas do quadro."""
-    known = [x for _, x in targets if x is not None]
+FACE_MARGIN_STEPS = (FACE_MARGIN_RATIO, FACE_MARGIN_RATIO / 2, 0.0)   # margem preferida → mínima
+
+
+def expanded_face_x(box: tuple[float, float, float, float],
+                    margin_ratio: float = FACE_MARGIN_RATIO) -> tuple[float, float]:
+    """Bordas horizontais do rosto com margem (fração da largura do quadro)."""
+    x, _y, w, _h = box
+    pad = max(FACE_MIN_MARGIN if margin_ratio > 0 else 0.0, w * margin_ratio)
+    return max(0.0, x - pad), min(1.0, x + w + pad)
+
+
+def safe_center_interval(box: tuple[float, float, float, float], crop_frac: float) -> tuple[float, float] | None:
+    """Centros de recorte que mantêm o rosto inteiro dentro do recorte.
+
+    ``crop_left <= face_left`` e ``crop_right >= face_right``  ⇒  ``right - C/2 <= centro <= left + C/2``,
+    limitado às bordas do quadro. Tenta a margem preferida (20% da largura do rosto); em close-ups
+    reduz a margem até zero, mas nunca aceita cortar o próprio rosto. ``None``: nem o rosto cabe.
+    """
+    for ratio in FACE_MARGIN_STEPS:
+        left, right = expanded_face_x(box, ratio)
+        lo = max(crop_frac / 2, right - crop_frac / 2)
+        hi = min(1 - crop_frac / 2, left + crop_frac / 2)
+        if lo <= hi + 1e-9:
+            return lo, hi
+    return None
+
+
+def face_visibility(box: tuple[float, float, float, float], center: float, crop_frac: float) -> float:
+    """Fração (0-1) da largura do rosto (sem margem) que fica dentro do recorte centrado em ``center``."""
+    left, right = expanded_face_x(box, 0.0)
+    c0, c1 = center - crop_frac / 2, center + crop_frac / 2
+    inter = max(0.0, min(right, c1) - max(left, c0))
+    return min(1.0, inter / max(1e-6, right - left))
+
+
+def union_box(boxes: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
+    x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+    x1, y1 = max(b[0] + b[2] for b in boxes), max(b[1] + b[3] for b in boxes)
+    return x0, y0, x1 - x0, y1 - y0
+
+
+def _sample_interval(target: tuple, crop_frac: float) -> tuple[float, float] | None | bool:
+    """Intervalo seguro da amostra: todos os rostos visíveis se couberem juntos, senão o do falante.
+
+    ``False``: amostra sem rosto. ``None``: há rosto, mas nenhum recorte o preserva.
+    """
+    box = target[2] if len(target) > 2 else None
+    if box is None:
+        return False
+    faces = target[3] if len(target) > 3 else []
+    if len(faces) > 1:
+        both = safe_center_interval(union_box(list(faces)), crop_frac)
+        if both is not None:
+            return both
+    return safe_center_interval(box, crop_frac)
+
+
+def camera_path(targets: list[tuple], crop_frac: float) -> list[tuple[float, float]]:
+    """Câmera virtual: zona morta + suavização exponencial, limitada às bordas do quadro.
+
+    Quando a amostra traz a caixa do rosto, a segurança tem precedência sobre a suavização: o centro
+    é sempre levado para dentro do intervalo em que o rosto (com margem) cabe inteiro no recorte.
+    """
+    known = [tg[1] for tg in targets if tg[1] is not None]
     if not known:
         return []
     half = crop_frac / 2
@@ -191,18 +260,44 @@ def camera_path(targets: list[tuple[float, float | None]], crop_frac: float) -> 
     last = known[0]
     cam = clamp(last)
     path = []
-    for t, x in targets:
+    for tg in targets:
+        t, x = tg[0], tg[1]
         last = x if x is not None else last
         goal = clamp(last)
+        interval = _sample_interval(tg, crop_frac)
+        if interval:
+            goal = min(max(goal, interval[0]), interval[1])
+        elif interval is None:
+            cam = goal  # rosto maior que o recorte: centraliza já, sem atraso da suavização
         if abs(goal - cam) > DEAD_ZONE:
             cam += SMOOTHING * (goal - cam)
         else:
             cam += SMOOTHING * 0.15 * (goal - cam)
+        if interval:
+            cam = min(max(cam, interval[0]), interval[1])
         path.append((round(t, 3), round(cam, 4)))
     return path
 
 
-def simplify(points: list[tuple[float, float]], tolerance: float = SIMPLIFY_TOLERANCE) -> list[tuple[float, float]]:
+def _center_at(points: list[tuple[float, float]], t: float) -> float:
+    if t <= points[0][0]:
+        return points[0][1]
+    for (t0, x0), (t1, x1) in zip(points, points[1:]):
+        if t0 <= t <= t1:
+            return x0 + (x1 - x0) * ((t - t0) / (t1 - t0) if t1 > t0 else 0)
+    return points[-1][1]
+
+
+def visibility_report(targets: list[tuple], points: list[tuple[float, float]], crop_frac: float) -> list[float]:
+    """Visibilidade do rosto do falante em cada amostra com rosto, no caminho que será renderizado."""
+    if not points:
+        return []
+    return [face_visibility(tg[2], _center_at(points, tg[0]), crop_frac)
+            for tg in targets if len(tg) > 2 and tg[2] is not None]
+
+
+def simplify(points: list[tuple[float, float]], tolerance: float = SIMPLIFY_TOLERANCE,
+             max_points: int = MAX_POINTS_PER_SHOT) -> list[tuple[float, float]]:
     """Ramer–Douglas–Peucker: mantém só os pontos necessários para o movimento da câmera."""
     if len(points) <= 2:
         return list(points)
@@ -224,8 +319,57 @@ def simplify(points: list[tuple[float, float]], tolerance: float = SIMPLIFY_TOLE
     keep = {0, len(points) - 1}
     rdp(0, len(points) - 1, keep)
     out = [points[k] for k in sorted(keep)]
-    while len(out) > MAX_POINTS_PER_SHOT:  # caminhos muito agitados: reduz a densidade
+    while len(out) > max_points:  # caminhos muito agitados: reduz a densidade
         out = out[::2] + ([out[-1]] if len(out) % 2 == 0 else [])
+    return out
+
+
+MAX_SAFE_POINTS = 160   # teto do caminho verificado (a expressão do crop continua curta para o FFmpeg)
+
+
+def safe_simplify(targets: list[tuple], raw: list[tuple[float, float]], crop_frac: float) -> list[tuple[float, float]]:
+    """Simplifica o caminho só até onde nenhuma amostra perde visibilidade do rosto.
+
+    Tenta tolerâncias cada vez menores; fica com o primeiro caminho em que cada amostra mantém a
+    visibilidade do caminho bruto (tolerância de 1 ponto percentual).
+    """
+    reference = visibility_report(targets, raw, crop_frac)
+    for tol in (SIMPLIFY_TOLERANCE, SIMPLIFY_TOLERANCE / 2, SIMPLIFY_TOLERANCE / 4, SIMPLIFY_TOLERANCE / 10, 0.0):
+        points = simplify(raw, tolerance=tol, max_points=MAX_SAFE_POINTS)
+        got = visibility_report(targets, points, crop_frac)
+        if all(g >= r - 0.01 for g, r in zip(got, reference)):
+            return points
+    return simplify(raw, tolerance=0.0, max_points=10 ** 6)
+
+
+def _split_unsafe(targets: list[tuple], a: float, b: float, crop_frac: float) -> list[tuple]:
+    """Divide uma cena em trechos ``fill`` e ``fit``: rosto presente sem recorte seguro por pelo menos
+    ``MIN_SHOT_SECONDS`` vira ``fit``; sequências curtas ficam no recorte (centrado no rosto)."""
+    step = 1 / SAMPLE_FPS
+    runs, current = [], None
+    for tg in targets:
+        bad = _sample_interval(tg, crop_frac) is None
+        if bad:
+            if current and tg[0] - current[1] <= step * 1.5:
+                current[1] = tg[0]
+            else:
+                current = [tg[0], tg[0]]
+                runs.append(current)
+    runs = [(max(a, r0 - step / 2), min(b, r1 + step / 2)) for r0, r1 in runs if r1 - r0 + step >= MIN_SHOT_SECONDS]
+    out, cursor = [], a
+    for r0, r1 in runs:
+        if r0 - cursor >= MIN_SHOT_SECONDS:
+            out.append((cursor, r0, 'fill', [tg for tg in targets if cursor <= tg[0] < r0]))
+        elif out or r0 > cursor:
+            r0 = cursor  # pedaço seguro curto demais entre trechos inseguros: junta ao fundo desfocado
+        out.append((r0, r1, 'fit', []))
+        cursor = r1
+    if b - cursor >= MIN_SHOT_SECONDS or not out:
+        out.append((cursor, b, 'fill', [tg for tg in targets if cursor <= tg[0] < b]))
+    elif out:
+        last = out[-1]
+        out[-1] = (last[0], b, last[2], last[3] if last[2] == 'fit' else
+                   [tg for tg in targets if last[0] <= tg[0] < b])
     return out
 
 
@@ -266,38 +410,83 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
     bounds.append(round(duration, 3))
 
     shots: list[dict] = []
-    for a, b in zip(bounds, bounds[1:]):
-        part = [s for s in samples if a <= s['t'] < b]
-        targets = _to_visible(speaker_targets(part), media, box)
-        seen = sum(1 for _, x in targets if x is not None)
-        if not targets or seen / len(targets) < MIN_FACE_COVERAGE:
-            layout, points = 'fit', []
-        else:
-            points = simplify(camera_path(targets, crop_frac))
-            layout = 'fill'
-            if points and points[0][0] > a:
-                points.insert(0, (a, points[0][1]))
+    visibility: list[float] = []
+    unsafe_shots = 0
+
+    def add(a: float, b: float, layout: str, points: list) -> None:
+        if b - a <= 1e-3:
+            return
         if shots and shots[-1]['layout'] == layout == 'fit':
             shots[-1]['end'] = b
         else:
             shots.append({'start': a, 'end': b, 'layout': layout, 'points': points})
+
+    for a, b in zip(bounds, bounds[1:]):
+        part = [s for s in samples if a <= s['t'] < b]
+        targets = _to_visible(speaker_targets(part), media, box)
+        seen = sum(1 for tg in targets if tg[1] is not None)
+        if not targets or seen / len(targets) < MIN_FACE_COVERAGE:
+            add(a, b, 'fit', [])
+            continue
+        for sa, sb, layout, sub in _split_unsafe(targets, a, b, crop_frac):
+            if layout == 'fit':
+                # Há rosto, mas nenhum recorte vertical o preserva (close extremo, duas pessoas afastadas):
+                # quadro inteiro com fundo desfocado só neste trecho, em vez de cortar a pessoa.
+                unsafe_shots += 1
+                add(sa, sb, 'fit', [])
+                continue
+            raw = camera_path(sub, crop_frac)
+            if not raw:
+                add(sa, sb, 'fit', [])
+                continue
+            # A simplificação não pode tirar o rosto do recorte (verificada amostra a amostra).
+            points = safe_simplify(sub, raw, crop_frac)
+            visibility += visibility_report(sub, points, crop_frac)
+            if points and points[0][0] > sa:
+                points.insert(0, (sa, points[0][1]))
+            add(sa, sb, 'fill', points)
     if not any(s['layout'] == 'fill' for s in shots):
+        if unsafe_shots:
+            return {'ok': False, 'shots': [], 'message': 'Os rostos deste trecho não cabem inteiros no recorte '
+                    'vertical; exportado com fundo desfocado para não cortar ninguém.'}
         return {'ok': False, 'shots': [], 'message': 'Nenhum rosto encontrado para seguir neste trecho; '
                 'exportado com fundo desfocado.'}
     fit_seconds = sum(s['end'] - s['start'] for s in shots if s['layout'] == 'fit')
     message = 'Enquadramento seguindo o rosto de quem fala.'
     if fit_seconds >= 0.5:
-        message += f' {fit_seconds:.0f} s sem rosto visível usam fundo desfocado.'
-    return {'ok': True, 'shots': shots, 'crop_frac': round(crop_frac, 4), 'message': message}
+        message += f' {fit_seconds:.0f} s sem rosto seguro para recortar usam fundo desfocado.'
+    if unsafe_shots:
+        message += f' {unsafe_shots} cena(s) com rosto que não cabe no recorte vertical ficaram em quadro inteiro.'
+    ordered = sorted(visibility)
+    metrics = {'face_samples': len(ordered),
+               'face_visibility_min': round(ordered[0], 3) if ordered else None,
+               'face_visibility_p05': round(ordered[int(len(ordered) * 0.05)], 3) if ordered else None,
+               'unsafe_samples': sum(1 for v in ordered if v < 0.9),
+               'unsafe_shots': unsafe_shots, 'fit_seconds': round(fit_seconds, 2)}
+    return {'ok': True, 'shots': shots, 'crop_frac': round(crop_frac, 4), 'message': message, 'metrics': metrics}
 
 
-def _to_visible(targets: list[tuple[float, float | None]], media: dict,
-                box: dict | None) -> list[tuple[float, float | None]]:
-    """Centro horizontal do falante (fração do quadro inteiro) → fração da área sem faixas pretas."""
+def _to_visible(targets: list[tuple], media: dict, box: dict | None) -> list[tuple]:
+    """Centro e caixas do falante (fração do quadro inteiro) → fração da área sem faixas pretas."""
     if not box:
         return targets
     W = media['width']
-    return [(t, None if x is None else min(1.0, max(0.0, (x * W - box['x']) / box['w']))) for t, x in targets]
+
+    def fx(v: float) -> float:
+        return (v * W - box['x']) / box['w']
+
+    def fbox(b):
+        return (fx(b[0]), b[1], b[2] * W / box['w'], b[3]) if b else b
+
+    out = []
+    for tg in targets:
+        t, x = tg[0], tg[1]
+        nx = None if x is None else min(1.0, max(0.0, fx(x)))
+        if len(tg) > 2:
+            out.append((t, nx, fbox(tg[2]), [fbox(b) for b in tg[3]]))
+        else:
+            out.append((t, nx))
+    return out
 
 
 # --------------------------------------------------------------------------- FFmpeg

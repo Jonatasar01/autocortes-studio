@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 
 from .. import media, transcription
+from .. import textfit
 from ..subtitles import _ass_time, clean_text
 
 MIN_WORDS, MAX_WORDS = 3, 5
@@ -107,6 +108,7 @@ def to_ass(blocks: list[list[dict]], *, width: int = 1080, height: int = 1920, f
         '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
     ]
     events = []
+    metrics = textfit.metrics_for_family(font)
     for i, block in enumerate(blocks):
         start = block[0]['start']
         end = block[-1]['end'] + HOLD
@@ -118,9 +120,16 @@ def to_ass(blocks: list[list[dict]], *, width: int = 1080, height: int = 1920, f
             end = start + MIN_EVENT
         text = join_words(w['text'] for w in block)
         text = text.upper() if uppercase else text
+        # Quebras medidas na fonte real (no máximo 2 linhas); o tamanho só cai se nada couber.
+        tokens = text.split()
+        layout = textfit.plan_rows(tokens, safe_width=(width - 2 * round(width * 0.07)) * 0.95, size=size,
+                                   min_size=round(size * 0.72), outline=outline, shadow=3, max_rows=2,
+                                   metrics=metrics)
+        body = '\\N'.join(' '.join(tokens[k] for k in row) for row in layout.rows)
+        fs = f'\\fs{layout.size}' if layout.size != size else ''
         # Leve "pop" de entrada: 90% → 100% em 80 ms.
         events.append(f'Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Retencao,,0,0,0,,'
-                      f'{{\\fscx90\\fscy90\\t(0,80,\\fscx100\\fscy100)}}{text}')
+                      f'{{\\q2{fs}\\fscx90\\fscy90\\t(0,80,\\fscx100\\fscy100)}}{body}')
     return '\n'.join(header + events) + '\n'
 
 

@@ -20,10 +20,11 @@ def hook_lines(width=720, height=1280, text=HOOK_90):
     return [line for line in ass.splitlines() if line.startswith('Dialogue:') and ',Hook,' in line]
 
 
-def test_hook_event_enables_automatic_wrapping():
+def test_hook_event_uses_measured_line_breaks():
     (line,) = hook_lines()
-    # WrapStyle 2 (cabeçalho) desliga a quebra; o evento precisa religá-la (\q0).
-    assert '\\q0' in line.split(',,0,0,0,,', 1)[1].split('}', 1)[0]
+    # As quebras são medidas na fonte real (\N) e fixadas com \q2: o libass não quebra de novo.
+    assert '\\q2' in line.split(',,0,0,0,,', 1)[1].split('}', 1)[0]
+    assert '\\N' in line
 
 
 def test_hook_event_never_contains_an_unbreakable_run_wider_than_the_frame():
@@ -37,13 +38,14 @@ def test_hook_event_truncates_on_a_word_boundary_without_cutting_words():
     text = ' '.join(['palavra'] * 30)  # 233 caracteres
     (line,) = hook_lines(text=text)
     shown = line.split('}', 1)[1]
-    assert len(shown) <= 91
-    assert all(part.rstrip('…') == 'palavra' for part in shown.split()) and shown.endswith('…')
+    parts = shown.replace('\\N', ' ').split()
+    assert len(' '.join(parts)) <= 91
+    assert all(part.rstrip('…') == 'palavra' for part in parts) and shown.endswith('…')
 
 
 def test_dynamic_style_uses_the_same_hook_event():
     ass = subtitles.to_ass_dynamic([], 720, 1280, hook_text=HOOK_90, clip_len=5)
-    assert '\\q0' in [l for l in ass.splitlines() if ',Hook,' in l and l.startswith('Dialogue')][0]
+    assert '\\q2' in [l for l in ass.splitlines() if ',Hook,' in l and l.startswith('Dialogue')][0]
 
 
 # ----------------------------------------------------------------------------- gancho: render real com libass
