@@ -10,7 +10,7 @@ import re
 import threading
 from pathlib import Path
 
-from .. import config, media, transcription
+from .. import media, transcription
 from ..subtitles import _ass_time, clean_text
 
 MIN_WORDS, MAX_WORDS = 3, 5
@@ -34,12 +34,8 @@ def extract_audio(clip: Path, offset: float, duration: float, dest: Path, *,
 
 
 def transcribe(wav: Path, duration: float, *, cancel_event: threading.Event | None = None) -> tuple[list[dict], dict]:
-    transcript, status = transcription.transcribe(wav, duration, cancel_event=cancel_event)
-    if status.get('device') == 'cpu' and config.WHISPER_DEVICE != 'cpu':
-        # A GPU falhou e a transcrição caiu para a CPU. Nos próximos cortes do lote vai
-        # direto para a CPU: tentar o CUDA de novo após uma falha pode travar o processo.
-        config.WHISPER_DEVICE = 'cpu'
-    return transcript, status
+    # A escolha GPU/CPU (e o fallback depois de uma falha do CUDA) fica em app.transcription.
+    return transcription.transcribe(wav, duration, cancel_event=cancel_event)
 
 
 def _words(transcript: list[dict], duration: float) -> list[dict]:

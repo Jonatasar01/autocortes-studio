@@ -471,8 +471,15 @@ def create_edit_plans(project_id: str, clip_id: int, options: dict) -> dict:
     if options.get('variants'):
         plans = {name: direction.build_plan(analysis, st, intensity, toggles) for name, st in PLAN_VARIANTS.items()}
         recommended, why = direction.choose_style(analysis)
-        selected = next((n for n, st in PLAN_VARIANTS.items() if st == recommended), 'equilibrado')
-        plans[selected]['reason'] = 'Versão recomendada. ' + why
+        selected = next((n for n, st in PLAN_VARIANTS.items() if st == recommended), None)
+        if selected:
+            plans[selected]['reason'] = 'Versão recomendada. ' + why
+        else:
+            # Ex.: entrevista → Podcast premium, que não é uma das três versões.
+            selected = 'equilibrado'
+            plans[selected]['reason'] = (f'O estilo indicado para este trecho é {direction.STYLES[recommended]} '
+                                         f'(use esse preset em "Planejar edição"). {why} Entre as três versões, '
+                                         'a equilibrada é a mais próxima.')
     else:
         plans = {'principal': direction.build_plan(analysis, style, intensity, toggles)}
         selected = 'principal'
