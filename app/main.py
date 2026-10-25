@@ -277,6 +277,46 @@ class ExportOptions(BaseModel):
     original_volume: int = Field(default=100, ge=0, le=100)
     subtitle_source: Optional[Literal['fala', 'narracao']] = None
     shorten_pauses: bool = False
+    edit_plan: Optional[str] = Field(default=None, pattern=r'^[a-z_]{1,40}$')
+
+
+class PlanToggles(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    zoom: bool = True
+    dynamic_subtitles: bool = True
+    audio: bool = True
+    denoise: bool = False
+    remove_pauses: bool = True
+    reframe: bool = True
+
+
+class PlanRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    style: Literal['auto', 'impacto', 'equilibrado', 'cinematografico', 'podcast'] = 'auto'
+    intensity: float = Field(default=0.6, ge=0, le=1)
+    variants: bool = False
+    options: PlanToggles = Field(default_factory=PlanToggles)
+
+
+class PlanUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    selected: bool = False
+    actions: dict[str, bool] = Field(default_factory=dict)
+
+
+@app.post('/api/projects/{project_id}/clips/{clip_id}/plans')
+def create_plans(project_id: str, clip_id: int, request: PlanRequest):
+    return service.create_edit_plans(project_id, clip_id, request.model_dump())
+
+
+@app.get('/api/projects/{project_id}/clips/{clip_id}/plans')
+def get_plans(project_id: str, clip_id: int):
+    return service.get_edit_plans(project_id, clip_id)
+
+
+@app.patch('/api/projects/{project_id}/clips/{clip_id}/plans/{name}')
+def update_plan(project_id: str, clip_id: int, name: str, changes: PlanUpdate):
+    return service.update_edit_plan(project_id, clip_id, name, changes.model_dump())
 
 
 @app.post('/api/projects/{project_id}/clips/{clip_id}/export')

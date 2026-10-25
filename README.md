@@ -240,6 +240,61 @@ AudioVisualMastering().render_final_clip(
   ser gravada no destino.
 - Se o arquivo já tem a legenda embutida (saída padrão do lote), passe `None` como legenda.
 
+## Estilo de edição: motor de direção criativa (`app/direction.py`)
+
+Na aba **Efeitos** do Studio, a seção **Estilo de edição** analisa o corte selecionado e gera um
+**plano de edição**: uma lista de ações com tempo, parâmetros e justificativa. Cada ação pode ser
+desligada antes de exportar. Nada é aleatório; tudo vem de evidência medida no trecho.
+
+**O que é medido**
+
+| Evidência | Como | Usada para |
+|---|---|---|
+| Tempo de cada palavra | faster-whisper (já existente) | ritmo (palavras/s), pausas |
+| Energia da voz por palavra | RMS em janelas de 20 ms do áudio do trecho | ênfases (≥ 4 dB acima da mediana, ou 1,5 dB em fim de exclamação) |
+| Pontuação | `?` e `!` da transcrição | perguntas, exclamações, fim de frase |
+| Mudanças de cena | detecção de cenas do projeto | zoom nunca atravessa um corte de cena |
+
+O tipo de conteúdo (humor, entrevista, explicação, narrativa, outro) é uma heurística simples sobre a
+transcrição (marcas de riso, perguntas, conectivos) e é mostrado com a evidência e uma confiança
+baixa/média. Sem transcrição, o plano informa a limitação e não cria ênfases nem cortes de pausa.
+
+**Estilos** (intensidade de 0 a 100% escala zoom, cortes e destaques)
+
+| Estilo | Zoom | Pausas | Legenda | Enquadramento | Cor e transição |
+|---|---|---|---|---|---|
+| Impacto dinâmico | até 14%, ~1 a cada 8 s | encurta acima de ~0,45 s | dinâmica + destaques | seguir rosto | leve saturação |
+| Equilibrado | até 8% | encurta acima de ~0,75 s | dinâmica | fundo desfocado | — |
+| Cinematográfico | só aproximação lenta (≤ 5%) em plano longo | preserva (> 1,4 s) | clássica | fundo desfocado | contraste, vinheta, fade 0,4 s |
+| Podcast premium | até 6%, espaçado | encurta acima de ~0,8 s | dinâmica | seguir rosto | — |
+| Inteligente | escolhe um dos acima pelo conteúdo e explica o motivo | | | | |
+
+Regras fixas: zoom máximo de 20%, rampas suaves (0,25 s de entrada, 0,35 s de saída), duração mínima
+de 0,8 s; pausa depois de pergunta nunca é cortada; no cinematográfico e no podcast, pausas de fim
+de frase são preservadas; legendas só realçam palavras que foram ditas.
+
+**Versões:** "Gerar 3 versões" cria as versões dinâmica, equilibrada e cinematográfica do mesmo corte,
+com um resumo do que cada uma muda (zooms, destaques, segundos de pausa removidos, duração final). A
+versão recomendada vem marcada; a escolhida é usada na exportação. O plano completo fica gravado no
+registro da exportação, então o resultado é reproduzível.
+
+**Renderização:** tudo na mesma passada do FFmpeg já existente. Pausas usam os intervalos `keep` do
+encurtamento de pausas; depois do layout entram `eq`/`vignette` (cor), `zoompan` (zoom, com os tempos
+remapeados após o corte de pausas) e `fade`, antes da legenda; no áudio, `afftdn` (redução de ruído,
+opcional), `afade` e `loudnorm`. A análise do trecho fica em cache (`direction/clip_NN.json`) e só é
+refeita se os tempos ou a revisão do corte mudarem; um plano feito antes de mudar os tempos é recusado
+na exportação.
+
+**API:** `POST /api/projects/{id}/clips/{n}/plans` (`style`, `intensity`, `variants`, `options`),
+`GET` no mesmo endereço e `PATCH .../plans/{nome}` (`selected`, `actions: {id: true|false}`); a
+exportação aceita `edit_plan`.
+
+**Limitações:** não há identificação de falantes (diarização) nem split-screen no editor (o
+split-screen existe no lote por CSV); "seguir rosto" depende do OpenCV e cai para fundo desfocado
+quando não acha rostos; efeitos sonoros e música não são adicionados automaticamente; a classificação
+de conteúdo é heurística; a análise roda na requisição (alguns segundos para cortes longos), não na fila.
+Nenhum ganho de retenção é afirmado: não há dados de desempenho.
+
 ## Configuração
 
 | Variável | Padrão | Função |

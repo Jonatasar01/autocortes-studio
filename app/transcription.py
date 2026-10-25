@@ -17,6 +17,9 @@ from .errors import Cancelled, sanitize
 log = logging.getLogger('autocortes.transcription')
 _cache: dict[tuple, object] = {}
 _lock = threading.Lock()
+# Depois que a GPU falha uma vez (ex.: placa NVIDIA sem as DLLs do CUDA), o processo usa só a CPU:
+# tentar o CUDA de novo após a falha pode travar a transcrição seguinte indefinidamente.
+_gpu_failed = False
 
 
 def available() -> bool:
@@ -40,12 +43,13 @@ def _load_model(device: str):
 
 def transcribe(audio_path: Path, duration: float, *, on_progress: Callable[[float, str], None] | None = None,
                cancel_event: threading.Event | None = None) -> tuple[list[dict], dict]:
+    global _gpu_failed
     if not available():
         return [], {'state': 'not_installed',
                     'message': 'Transcrição não instalada (faster-whisper). Sem transcrição, os cortes são '
                                'apenas temporais — não há análise do conteúdo falado.'}
     language = None if config.WHISPER_LANGUAGE.lower() == 'auto' else config.WHISPER_LANGUAGE
-    devices = [config.WHISPER_DEVICE] + (['cpu'] if config.WHISPER_DEVICE != 'cpu' else [])
+    devices = ['cpu'] if config.WHISPER_DEVICE == 'cpu' or _gpu_failed else [config.WHISPER_DEVICE, 'cpu']
     last_error: Exception | None = None
     for device in devices:
         try:
@@ -85,6 +89,9 @@ def transcribe(audio_path: Path, duration: float, *, on_progress: Callable[[floa
         except Exception as exc:  # CUDA ausente, pesos não baixados, áudio ilegível...
             last_error = exc
             log.warning('Falha na transcrição em %s: %s', device, sanitize(exc, 300))
+            if device != 'cpu':
+                _gpu_failed = True
+                log.warning('GPU indisponível para a transcrição; as próximas usarão só a CPU.')
             with _lock:
                 _cache.clear()
             continue

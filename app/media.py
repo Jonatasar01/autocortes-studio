@@ -608,7 +608,8 @@ def _track_graph(src: str, pre: str, subs: str, W: int, H: int, track: dict) -> 
 
 def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str | None,
                       keep: list[tuple[float, float]] | None = None,
-                      track: dict | None = None) -> tuple[str, tuple[int, int]]:
+                      track: dict | None = None, post: str = '') -> tuple[str, tuple[int, int]]:
+    """``post``: filtros extras (começando com vírgula) aplicados no quadro final, antes da legenda."""
     W, H = target_size(fmt, media)
     # Formato original mantém o quadro como está; os demais descartam as faixas pretas embutidas.
     src = f"[0:{media['video_index']}]" if fmt == 'original' else source_label(media)
@@ -616,7 +617,7 @@ def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str |
     if keep:
         fps = output_fps(media) or media.get('fps') or 30
         pre = f"fps={fps:g},select='{_select_expr(keep)}',setpts=N/FRAME_RATE/TB,"
-    subs = f',ass={subtitles_file}' if subtitles_file else ''
+    subs = post + (f',ass={subtitles_file}' if subtitles_file else '')
     if fmt == 'original':
         graph = f'{src}{pre}scale={W}:{H}:flags=bicubic,setsar=1{subs}[vout]'
     elif framing == 'track' and track and track.get('ok'):
@@ -655,8 +656,9 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
                       subtitles_file: str | None, normalize_audio: bool, output_name: str,
                       narration: list[dict] | None = None, original_volume: float = 1.0,
                       keep: list[tuple[float, float]] | None = None,
-                      track: dict | None = None) -> tuple[list[str], tuple[int, int]]:
-    graph, size = build_filtergraph(media, fmt, framing, subtitles_file, keep, track)
+                      track: dict | None = None, post: str = '',
+                      audio_extra: str = '') -> tuple[list[str], tuple[int, int]]:
+    graph, size = build_filtergraph(media, fmt, framing, subtitles_file, keep, track, post)
     args = ['-ss', f'{start:.3f}', '-i', str(source)]
     for item in narration or []:
         args += ['-i', str(item['path'])]
@@ -674,6 +676,8 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
         audio_filter = 'aresample=async=1:first_pts=0'
         if keep:
             audio_filter = f"aselect='{_select_expr(keep)}',asetpts=N/SR/TB," + audio_filter
+        if audio_extra:
+            audio_filter += ',' + audio_extra
         if normalize_audio:
             audio_filter += ',loudnorm=I=-14:TP=-1.5:LRA=11'
         args += ['-map', f"0:{media['audio_index']}", '-af', audio_filter,
@@ -761,7 +765,7 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                 normalize_audio: bool = False, on_progress: ProgressFn | None = None,
                 cancel_event: threading.Event | None = None, narration: list[dict] | None = None,
                 original_volume: float = 1.0, keep: list[tuple[float, float]] | None = None,
-                track: dict | None = None) -> dict:
+                track: dict | None = None, post: str = '', audio_extra: str = '') -> dict:
     """Renderiza em pasta temporária, valida e só então publica com renomeação atômica."""
     if cancel_event is not None and cancel_event.is_set():
         raise Cancelled()
@@ -795,7 +799,8 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
             if cancel_event is not None and cancel_event.is_set():
                 raise Cancelled()
             args, size = build_export_args(source, media, start, duration, fmt, framing, subs,
-                                           normalize_audio, render, narration, original_volume, keep, track)
+                                           normalize_audio, render, narration, original_volume, keep, track,
+                                           post, audio_extra)
             run_ffmpeg(args, duration=out_duration, cwd=work, cancel_event=cancel_event,
                        on_progress=lambda p, m: progress(p * 0.85, 'Renderizando'))
             return size

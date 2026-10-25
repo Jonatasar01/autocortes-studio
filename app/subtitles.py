@@ -153,6 +153,7 @@ def srt_timestamp(sec: float) -> str:
 SUBTITLE_STYLES = ('classica', 'dinamica')
 HOOK_SECONDS = 3.0
 HIGHLIGHT = '&H0027F804'   # verde (ASS usa &HAABBGGRR)
+EMPHASIS = '&H0000E1FF'    # âmbar: termos enfatizados na fala (plano de edição)
 WORDS_PER_LINE = 3
 LINE_GAP = 0.6
 
@@ -281,7 +282,13 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
             parts = []
             for j, other in enumerate(line):
                 text = other['text'].upper()
-                parts.append(f'{{\\c{highlight}&\\fscx108\\fscy108}}{text}{{\\r}}' if j == i else text)
+                if j == i:
+                    parts.append(f'{{\\c{highlight}&\\fscx108\\fscy108}}{text}{{\\r}}')
+                elif other.get('emph'):
+                    # Termo enfatizado na fala (plano de edição): âmbar e um pouco maior.
+                    parts.append(f'{{\\c{EMPHASIS}&\\fscx112\\fscy112}}{text}{{\\r}}')
+                else:
+                    parts.append(text)
             pop = '{\\fscx92\\fscy92\\t(0,90,\\fscx100\\fscy100)}' if i == 0 else ''
             events.append(f"Dialogue: 0,{_ass_time(a)},{_ass_time(b)},Dyn,,0,0,0,,{pop}{' '.join(parts)}")
     return '\n'.join(header + events) + '\n'
