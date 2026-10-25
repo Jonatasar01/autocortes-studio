@@ -19,6 +19,7 @@ ai = [
 ]
 music = ["requests>=2.31,<3"]
 links = ["yt-dlp[default]>=2026.1.1"]
+tts = ["edge-tts>=7.2,<8"]  # narração dos vídeos com coluna script (app/audio/tts_generator.py)
 
 [dependency-groups]
 dev = ["pytest>=8,<10", "httpx>=0.27,<1"]

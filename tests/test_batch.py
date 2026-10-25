@@ -12,6 +12,7 @@ from app.batch import captions, layouts, runner
 from app.batch.ingest import CsvError, parse_csv, parse_timestamp
 from app.batch.slicer import slice_copy
 from tests.helpers import HAS_FFMPEG, fake_transcript, make_video
+from tests.test_mastering import make_voice
 
 
 class TimestampTests(unittest.TestCase):
@@ -57,6 +58,25 @@ class CsvTests(unittest.TestCase):
     def test_comma_and_cp1252(self):
         result = parse_csv(self.write('video_origem,tempo_inicio,tempo_fim,layout\nvídeo.mp4,5,20,pip\n', 'cp1252'))
         self.assertEqual(result.rows[0].video.name, 'vídeo.mp4')
+
+    def test_script_column_multiline_txt_and_voice(self):
+        (self.dir / 'roteiros').mkdir()
+        (self.dir / 'roteiros' / 'dois.txt').write_text('Roteiro vindo de arquivo.\n', encoding='utf-8')
+        result = parse_csv(self.write(
+            'video_origem;tempo_inicio;tempo_fim;layout;script;voz\n'
+            'a.mp4;0;30;pip;"Você sabia?\nSegunda linha; com ponto e vírgula.";pt-BR-FranciscaNeural\n'
+            'a.mp4;0;30;pip;roteiros/dois.txt;\n'
+            'a.mp4;0;30;pip;;\n'
+            'a.mp4;0;30;pip;falta.txt;\n'))
+        one, two, three = result.rows
+        self.assertEqual(one.script, 'Você sabia?\nSegunda linha; com ponto e vírgula.')
+        self.assertEqual(one.voice, 'pt-BR-FranciscaNeural')
+        self.assertTrue(one.narrated)
+        self.assertEqual(two.script, 'Roteiro vindo de arquivo.')
+        self.assertFalse(three.narrated)
+        self.assertEqual(len(result.errors), 1)
+        self.assertIn('falta.txt', result.errors[0])
+        self.assertTrue(result.errors[0].startswith('Linha 6:'))  # a linha 2 ocupa duas linhas do arquivo
 
     def test_missing_columns(self):
         with self.assertRaises(CsvError):
@@ -208,6 +228,61 @@ class BatchMediaTests(unittest.TestCase):
             res = runner.process_row(row, 1, opts, log=lambda _m: None)
         self.assertTrue(res.ok, res.message)
         self.assertTrue(res.output.with_suffix('.ass').is_file())
+
+    def _fake_tts(self, seconds: float):
+        def synthesize(text, dest, *, voice, rate='+0%'):
+            self.tts_calls.append((text, voice))
+            return make_voice(Path(dest), seconds)
+        self.tts_calls = []
+        return mock.patch.object(runner.tts_generator, 'synthesize', side_effect=synthesize)
+
+    def test_narrated_row_uses_narration_for_audio_duration_and_captions(self):
+        csv_path = self.dir / 'narrado.csv'
+        csv_path.write_text('video_origem,tempo_inicio,tempo_fim,layout,nome,script\n'
+                            'fonte.mp4,00:00:02,00:00:09,pip,Curiosidade,"Você sabia disso? Pois é."\n',
+                            encoding='utf-8')
+        row = parse_csv(csv_path).rows[0]
+        heard: list[Path] = []
+
+        def transcribe(wav, duration, cancel_event=None):
+            heard.append(Path(wav))
+            return fake_transcript(duration, ['Você sabia disso? Pois é.']), {'state': 'ok'}
+
+        opts = runner.Options(output_dir=self.dir / 'narrados', face_tracking='nao', voice='pt-BR-FranciscaNeural')
+        with self._fake_tts(4), mock.patch.object(runner.transcription, 'available', return_value=True), \
+                mock.patch.object(runner.captions, 'transcribe', side_effect=transcribe):
+            res = runner.process_row(row, 1, opts, log=lambda _m: None)
+        self.assertTrue(res.ok, res.message)
+        self.assertEqual(self.tts_calls, [('Você sabia disso? Pois é.', 'pt-BR-FranciscaNeural')])
+        # Whisper ouviu só a narração, nunca o áudio do trecho original.
+        self.assertEqual([p.name for p in heard], ['narracao.wav'])
+        info = media.probe_media(res.output)
+        self.assertAlmostEqual(info['duration'], 4, delta=0.15)  # corte de 7 s encurtado para a narração
+        self.assertEqual((info['width'], info['height']), (1080, 1920))
+        self.assertEqual(res.output.name, '001_curiosidade_pip_narrado.mp4')
+        self.assertTrue(res.output.with_suffix('.ass').is_file())
+        self.assertIn('voz sintética', ' '.join(res.warnings))
+
+    def test_narration_longer_than_cut_fails_clearly(self):
+        row = parse_csv(self._csv('fonte.mp4,00:00:02,00:00:04,pip\n')).rows[0]
+        row.script = 'Um roteiro longo demais para dois segundos de vídeo.'
+        with self._fake_tts(6):
+            res = runner.process_row(row, 1, runner.Options(output_dir=self.dir / 'x', captions=False,
+                                                            face_tracking='nao'), log=lambda _m: None)
+        self.assertFalse(res.ok)
+        self.assertIn('aumente tempo_fim', res.message)
+
+    def test_narration_slightly_longer_freezes_last_frame_with_music(self):
+        music = self.dir / 'bgm.mp3'
+        subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=330:d=1',
+                        '-c:a', 'libmp3lame', str(music)], check=True)
+        row = parse_csv(self._csv('fonte.mp4,00:00:02,00:00:05,split_screen\n')).rows[0]
+        row.script = 'Texto curto.'
+        opts = runner.Options(output_dir=self.dir / 'congelado', captions=False, face_tracking='nao', bgm=music)
+        with self._fake_tts(4):
+            res = runner.process_row(row, 1, opts, log=lambda _m: None)
+        self.assertTrue(res.ok, res.message)
+        self.assertAlmostEqual(media.probe_media(res.output)['duration'], 4, delta=0.15)
 
     def _csv(self, line: str) -> Path:
         path = self.dir / 'um.csv'

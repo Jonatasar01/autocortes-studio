@@ -195,6 +195,8 @@ O CSV aceita `,` ou `;` como separador (veja `cortes.exemplo.csv`):
 | `tempo_inicio`, `tempo_fim` | `00:15:30`, `15:30`, `930` ou `00:15:30,5` | |
 | `layout` | `single_speaker`, `split_screen`, `pip` | |
 | `nome` (opcional) | `Melhor momento` | base do nome do arquivo |
+| `script` (opcional) | `"Repare nesta cena…"` ou `roteiros/01.txt` | roteiro de narração; com ele, a linha vira vídeo narrado |
+| `voz` (opcional) | `pt-BR-FranciscaNeural` | voz da narração (padrão `--voz`, que é `pt-BR-AntonioNeural`) |
 
 Para cada linha, numa pasta temporária removida ao fim da iteração:
 
@@ -218,6 +220,38 @@ O código de saída é 0 só quando todas as linhas deram certo.
 Dependências: FFmpeg com libass e as bibliotecas de `requirements-ai.txt` (faster-whisper; OpenCV
 para seguir rosto). Sem faster-whisper, os vídeos saem sem legenda e com aviso. O modelo segue
 `WHISPER_MODEL` (padrão `small`) e `WHISPER_LANGUAGE` (padrão `pt`).
+
+### Vídeos narrados (coluna `script`)
+
+```bash
+pip install -r requirements-tts.txt
+python main.py cortes.csv --musica musicas/lofi.mp3 --voz pt-BR-FranciscaNeural --volume-original 0.08
+```
+
+Numa linha com `script` (texto entre aspas, pode ter quebras de linha, ou o caminho de um `.txt`):
+
+1. **Narração** (`app/audio/tts_generator.py`): o roteiro vira MP3 com voz neural pelo `edge-tts`.
+   Precisa de internet; o `edge-tts` usa o serviço de leitura em voz alta do Microsoft Edge e não é
+   uma API oficial com garantia de funcionamento.
+2. **Duração**: o vídeo final dura o mesmo que a narração. O trecho do corte além dela é descartado;
+   se a narração passar do corte em até 1,5 s, o último quadro congela; acima disso a linha falha e
+   pede para aumentar `tempo_fim` ou encurtar o roteiro.
+3. **Legenda**: o Whisper transcreve só a narração. As falas do vídeo original não entram.
+4. **Áudio, numa única codificação** com o layout escolhido: narração com `acompressor` e `loudnorm`
+   (-14 LUFS, LRA 11, -1 dBTP), áudio original a `0.08` (≈ -22 dB) e música opcional a `0.05`,
+   repetida ou cortada; `amix` termina junto com a narração.
+
+Saída `001_nome_layout_narrado.mp4`. A mesma via existe fora do lote:
+`AudioVisualMastering().render_final_clip(video, musica, legenda, saida, tts_audio_path='voz.mp3')`, com a
+legenda gerada por `captions_from_narration('voz.mp3', pasta)`.
+
+**Sobre monetização.** Narração e roteiro próprios são o que as plataformas pedem para não tratar
+o vídeo como reaproveitado, mas não garantem nada. O YouTube avalia se o resultado tem valor
+original e trata como "conteúdo não autêntico" canais de vídeos em série, quase iguais e produzidos
+em massa. A análise não depende de detalhes técnicos como o volume do áudio original. O Content ID
+continua reconhecendo imagem e som de terceiros, e a narração não dá licença sobre esse material.
+Roteiros que comentam, explicam ou contam algo que a cena sozinha não mostra são os que costumam ser
+aceitos. Se a plataforma pedir, informe que a voz é sintética.
 
 ### Masterização final (`app/batch/mastering.py`)
 

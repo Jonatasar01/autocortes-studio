@@ -3,8 +3,10 @@
 Uso:
     python main.py cortes.csv
     python main.py cortes.csv --saida output --palavras 4 --fonte "Montserrat ExtraBold"
+    python main.py cortes.csv --musica musicas/lofi.mp3 --voz pt-BR-FranciscaNeural
 
-Colunas do CSV: video_origem, tempo_inicio, tempo_fim, layout [, nome]
+Colunas do CSV: video_origem, tempo_inicio, tempo_fim, layout [, nome, script, voz]
+Linhas com script viram vídeos narrados (voz sintética + áudio original baixo + legenda da narração).
 Layouts: single_speaker, split_screen, pip. Saída: MP4 1080×1920 (9:16) com legenda embutida.
 """
 from __future__ import annotations
@@ -13,7 +15,9 @@ import argparse
 import sys
 from pathlib import Path
 
+from app.audio import tts_generator
 from app.batch.ingest import CsvError
+from app.batch.mastering import MasteringError, audio_duration
 from app.batch.runner import Options, run_batch
 from app.errors import Cancelled
 
@@ -30,6 +34,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help='não remove as faixas pretas embutidas no vídeo original')
     p.add_argument('--rosto', choices=('auto', 'sim', 'nao'), default='auto',
                    help='rastrear rosto no single_speaker (auto = se o OpenCV estiver instalado)')
+    n = p.add_argument_group('vídeos narrados (linhas com a coluna script)')
+    n.add_argument('--voz', default=tts_generator.DEFAULT_VOICE,
+                   help=f'voz neural padrão (padrão: {tts_generator.DEFAULT_VOICE}; a coluna voz tem prioridade)')
+    n.add_argument('--volume-original', type=float, default=0.08,
+                   help='volume do áudio original sob a narração, de 0 a 1 (padrão: 0.08)')
+    n.add_argument('--musica', type=Path, help='música de fundo (repetida ou cortada na duração da narração)')
+    n.add_argument('--volume-musica', type=float, default=0.05, help='volume da música, de 0 a 1 (padrão: 0.05)')
     return p.parse_args(argv)
 
 
@@ -41,7 +52,16 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(errors='replace')
     opts = Options(output_dir=args.saida.resolve(), captions=not args.sem_legenda, max_words=args.palavras,
                    font=args.fonte, uppercase=not args.minusculas, face_tracking=args.rosto,
-                   remove_bars=not args.manter_faixas)
+                   remove_bars=not args.manter_faixas, voice=args.voz,
+                   original_volume=min(1.0, max(0.0, args.volume_original)),
+                   bgm=args.musica.resolve() if args.musica else None,
+                   bgm_volume=min(1.0, max(0.0, args.volume_musica)))
+    if opts.bgm is not None:
+        try:
+            audio_duration(opts.bgm, 'A música de fundo')
+        except MasteringError as exc:
+            print(f'ERRO: {exc}', file=sys.stderr)
+            return 2
     try:
         results, skipped = run_batch(args.csv, opts)
     except CsvError as exc:
