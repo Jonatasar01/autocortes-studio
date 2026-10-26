@@ -205,7 +205,7 @@
             <strong>Nenhum vídeo aberto</strong>
             <p>Importe um vídeo no painel de mídia ou abra um projeto recente.</p>
           </div>
-          <div id="loading" class="loading" hidden><span class="spinner" aria-hidden="true"></span><span id="loadingText">Carregando…</span></div>
+          <div id="loading" class="loading" hidden role="status"><span class="spinner" aria-hidden="true"></span><span id="loadingText">Carregando…</span><progress id="loadingBar" max="100" value="0" hidden aria-label="Progresso da análise"></progress></div>
         </div>
         <div class="controls">
           <input id="seek" class="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Posição do vídeo" disabled>

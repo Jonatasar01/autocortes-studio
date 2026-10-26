@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import shutil
+import threading
 import time
 
 from . import (curation, direction, media, music, narration, publish, reframe, rights, selection, settings, storage,
@@ -21,6 +22,22 @@ log = logging.getLogger('autocortes.pipeline')
 
 
 # --------------------------------------------------------------------------- análise
+
+class _AnyEvent:
+    """Evento de cancelamento que dispara com o do job ou com um próprio (``set``)."""
+
+    def __init__(self, parent):
+        self.parent, self.own = parent, threading.Event()
+
+    def set(self) -> None:
+        self.own.set()
+
+    def is_set(self) -> bool:
+        return self.own.is_set() or bool(self.parent is not None and self.parent.is_set())
+
+    def wait(self, timeout: float) -> bool:
+        return self.own.wait(timeout) or self.is_set()
+
 
 def run_analysis(ctx: JobContext) -> dict:
     pid = ctx.project_id
@@ -50,6 +67,22 @@ def run_analysis(ctx: JobContext) -> dict:
         p.update({'media': info, 'rights': review, 'music_review': music_review, 'warnings': warnings})
     ctx.progress(0.08)
 
+    # Cenas em paralelo com a transcrição: na GPU a detecção quase não usa CPU, e em vídeos longos ela
+    # levava quase tanto tempo quanto a transcrição. Pasta própria: a transcrição apaga a sua ao terminar.
+    scene_state: dict = {'fraction': 0.0, 'scenes': [], 'error': None}
+    scene_stop = _AnyEvent(ctx.cancel_event)   # para a detecção se a análise falhar antes dela terminar
+
+    def find_scenes() -> None:
+        try:
+            scene_state['scenes'] = media.detect_scenes(
+                source, info, folder / 'work_cenas', cancel_event=scene_stop,
+                on_progress=lambda f, _m='': scene_state.__setitem__('fraction', f))
+        except BaseException as exc:  # inclusive Cancelled: relançado na thread do job
+            scene_state['error'] = exc
+
+    scene_thread = threading.Thread(target=find_scenes, name=f'cenas-{pid[:8]}', daemon=True)
+    scene_thread.start()
+
     transcript: list[dict] = []
     if not info['audio']:
         t_status = {'state': 'no_audio', 'message': 'Vídeo sem áudio: não há fala para analisar; cortes temporais.'}
@@ -69,14 +102,24 @@ def run_analysis(ctx: JobContext) -> dict:
         except media.FFmpegError as exc:
             t_status = {'state': 'failed', 'message': 'Não foi possível extrair o áudio; cortes temporais. '
                         + exc.args[0]}
+        except BaseException:
+            scene_stop.set()
+            raise
         finally:
             shutil.rmtree(work, ignore_errors=True)
     ctx.progress(0.75)
 
-    ctx.stage('cenas', 'Detectando mudanças de cena')
-    scenes = media.detect_scenes(source, info, folder / 'work', on_progress=ctx.span(0.75, 0.88),
-                                 cancel_event=ctx.cancel_event)
-    shutil.rmtree(folder / 'work', ignore_errors=True)
+    if scene_thread.is_alive():
+        ctx.stage('cenas', 'Detectando mudanças de cena')
+        while scene_thread.is_alive():
+            scene_thread.join(1.0)
+            ctx.progress(0.75 + 0.13 * scene_state['fraction'])
+    scene_thread.join()
+    shutil.rmtree(folder / 'work_cenas', ignore_errors=True)
+    if scene_state['error'] is not None:
+        raise scene_state['error']
+    scenes = scene_state['scenes']
+    ctx.progress(0.88)
 
     ctx.stage('selecionando', 'Selecionando os melhores trechos')
     fallback = None if t_status['state'] == 'ok' else t_status['message']

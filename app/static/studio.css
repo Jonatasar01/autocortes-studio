@@ -306,6 +306,8 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .novideo strong { color: var(--text-2); font-weight: 600; }
 .novideo p { max-width: 280px; font-size: 12.5px; }
 .loading { position: absolute; left: 12px; top: 12px; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--panel) 92%, transparent); color: var(--text-2); font-size: 12px; }
+.loading #loadingText { font-variant-numeric: tabular-nums; }
+.loading progress { width: 120px; flex: none; }
 .controls { flex: none; display: grid; gap: 6px; padding: 0 2px; }
 .controlrow { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; }
 .timecode { white-space: nowrap; }

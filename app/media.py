@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import collections
 import json
+import logging
 import math
 import os
 import re
@@ -25,6 +26,8 @@ from typing import Callable
 
 from . import config, storage
 from .errors import AppError, Cancelled, sanitize
+
+log = logging.getLogger('autocortes.media')
 
 ALLOWED_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'}
 FORMATS = ('9:16', '16:9', '1:1', 'original')
@@ -376,12 +379,27 @@ def detect_scenes(source: Path, media: dict, work_dir: Path, *, on_progress: Pro
         return []
     work_dir.mkdir(parents=True, exist_ok=True)
     out = work_dir / 'scenes.txt'
-    vf = f"fps=4,scale=192:-2,select='gt(scene,{threshold})',metadata=print:file=scenes.txt"
-    try:
-        run_ffmpeg(['-i', str(source), '-map', f"0:{media['video_index']}", '-an', '-vf', vf, '-f', 'null', '-'],
-                   duration=media['duration'], cwd=work_dir, on_progress=on_progress, cancel_event=cancel_event)
-    except FFmpegError:
-        return []
+    detect = f"select='gt(scene,{threshold})',metadata=print:file=scenes.txt"
+    # Só 4 quadros/s são comparados, então os quadros que não servem de referência nem precisam ser
+    # decodificados (noref). Na GPU (NVDEC) a decodificação e a redução ficam na placa: ~97% menos CPU,
+    # o que deixa a detecção rodar junto com a transcrição.
+    attempts = []
+    if os.getenv('AUTOCORTES_HWACCEL', '1') != '0':
+        attempts.append(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-skip_frame', 'noref',
+                         '-i', str(source), '-map', f"0:{media['video_index']}", '-an',
+                         '-vf', f'fps=4,scale_cuda=192:-2,hwdownload,format=nv12,{detect}'])
+    attempts.append(['-skip_frame', 'noref', '-i', str(source), '-map', f"0:{media['video_index']}", '-an',
+                     '-vf', f'fps=4,scale=192:-2,{detect}'])
+    for i, args in enumerate(attempts):
+        out.unlink(missing_ok=True)
+        try:
+            run_ffmpeg(args + ['-f', 'null', '-'], duration=media['duration'], cwd=work_dir,
+                       on_progress=on_progress, cancel_event=cancel_event)
+            break
+        except FFmpegError:
+            if i == len(attempts) - 1:
+                return []
+            log.info('Detecção de cenas sem GPU (NVDEC indisponível para este vídeo); usando a CPU.')
     if not out.exists():
         return []
     times = [float(m) for m in re.findall(r'pts_time:([0-9.]+)', out.read_text(errors='replace'))]

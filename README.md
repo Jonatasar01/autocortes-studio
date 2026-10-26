@@ -135,6 +135,14 @@ pip install -r requirements-ai.txt
 
 - **Transcrição:** `faster-whisper` local. Variáveis: `WHISPER_MODEL` (`small` padrão; `base`/`tiny` para pouca memória),
   `WHISPER_DEVICE` (`auto`, `cpu`, `cuda`), `WHISPER_LANGUAGE` (`pt` padrão; `auto` para detectar). O primeiro uso baixa os pesos.
+- **Vídeos longos:** acima de 20 min, o áudio é transcrito em partes de ~20 min cortadas em pausas. A memória
+  fica fixa (pico de ~1,5 GB) em vez de crescer com a duração; antes, uma live de 8 h falhava por falta de memória.
+- **GPU NVIDIA no Windows:** `pip install -r requirements-gpu.txt` instala o cuBLAS e o cuDNN do CUDA 12 (~1,2 GB)
+  que o CTranslate2 procura; sem eles a GPU falha com `cublas64_12.dll` e tudo roda na CPU. Na GPU a transcrição
+  usa inferência em lote (`WHISPER_BATCH_SIZE`, padrão 8; `0` desliga), redividida em frases.
+- **Detecção de cenas:** decodifica na GPU (NVDEC) quando possível e roda em paralelo com a transcrição;
+  `AUTOCORTES_HWACCEL=0` força a CPU. Numa GTX 1650, uma live de 8,5 h passou de mais de 2 h (e sem
+  transcrição) para 43 min de análise completa.
 - **Sem transcrição** (não instalada, vídeo sem áudio, falha ou fala insuficiente), os cortes são **temporais** e
   aparecem identificados como tal, sem nota — não houve análise do conteúdo.
 - **Ollama:** instale, rode `ollama pull llama3.2` e defina `OLLAMA_ENABLED=1` (opcional `OLLAMA_MODEL`). O app só

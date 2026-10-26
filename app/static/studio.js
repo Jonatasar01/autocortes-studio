@@ -78,9 +78,21 @@ function setStatus(text, tone = 'idle') {
   $('status').dataset.tone = tone;
 }
 
-function setLoading(text) {
+function setLoading(text, progress = null) {
   $('loading').hidden = !text;
   if (text) $('loadingText').textContent = text;
+  $('loadingBar').hidden = !text || progress === null;
+  if (progress !== null) $('loadingBar').value = Math.round(progress * 100);
+}
+
+// Andamento da análise: etapa atual, porcentagem e há quanto tempo está rodando.
+function analysisLabel(job) {
+  if (!job) return {text: 'Analisando vídeo…', progress: null, pct: null};
+  const pct = Math.round((job.progress || 0) * 100);
+  const mins = job.started ? Math.floor((Date.now() / 1000 - job.started) / 60) : null;
+  const stage = job.status === 'queued' ? 'Na fila' : (job.message || 'Analisando vídeo');
+  const text = stage + ' · ' + pct + '%' + (mins ? ' · ' + mins + ' min' : '');
+  return {text, progress: job.progress || 0, pct};
 }
 
 async function api(url, method = 'GET', body) {
@@ -474,8 +486,9 @@ async function openProject(id) {
   loadProjects();
   closeDrawers();
   if (p.status === 'queued' || p.status === 'analyzing') {
-    setStatus('Analisando vídeo…', 'busy');
-    setLoading('Analisando vídeo…');
+    const a = analysisLabel(p.analysis);
+    setStatus(a.pct === null ? 'Analisando vídeo…' : 'Analisando vídeo · ' + a.pct + '%', 'busy');
+    setLoading(a.text, a.progress);
     setTimeout(() => {
       if (state.openVersion === version) openProject(id).catch((e) => toast(e.message, true));
     }, 1700);
