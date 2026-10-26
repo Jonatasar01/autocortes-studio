@@ -5,8 +5,12 @@ e cai automaticamente para "Fundo desfocado" quando não há rosto suficiente pa
 
 Como funciona (equivalente simplificado ao reenquadramento de serviços como o Opus Clip):
 1. Amostra o trecho a poucos quadros por segundo (só leitura, em baixa resolução).
-2. Detecta rostos com os classificadores Haar do OpenCV (incluídos em ``app/data``; nada é baixado).
-3. Liga as detecções entre quadros e estima quem fala pelo movimento da região da boca.
+2. Detecta rostos com o YuNet (rede do ``cv2.FaceDetectorYN``, modelo de 230 KB em ``app/data``, licença
+   MIT), que também dá olhos e cantos da boca. Sem ``FaceDetectorYN``, usa os classificadores Haar, que
+   confundem texturas (papel de parede, mosaicos) com rostos.
+3. Liga as detecções entre quadros, descarta as que "piscam" (aparecem em poucos quadros da cena) e
+   estima quem fala pelo movimento da boca MENOS o movimento da testa: numa textura ou num movimento
+   de câmera tudo se mexe igual, e a diferença fica perto de zero.
 4. Move uma "câmera virtual" com zona morta e suavização, reiniciada a cada mudança de cena
    (cenas detectadas na análise e por diferença de histograma).
 5. Cenas sem rosto suficiente usam o layout de fundo desfocado só naquele intervalo.
@@ -37,7 +41,14 @@ SMOOTHING = 0.18             # fração da distância percorrida a cada amostra
 SIMPLIFY_TOLERANCE = 0.004   # erro máximo (fração da largura) ao simplificar o caminho da câmera
 MAX_POINTS_PER_SHOT = 40
 MIN_SHOT_SECONDS = 0.6
-PLAN_VERSION = 2   # muda quando o algoritmo do plano muda (invalida os planos em cache)
+PLAN_VERSION = 3   # muda quando o algoritmo do plano muda (invalida os planos em cache)
+YUNET_MODEL = 'face_detection_yunet_2023mar.onnx'
+YUNET_SCORE = 0.7            # confiança mínima do YuNet
+MIN_TRACK_HITS = 3           # um rosto precisa aparecer em 3 amostras (0,6 s); falsos positivos piscam
+# (absoluto, não fração da cena: uma troca de câmera que a análise não viu não pode apagar um close curto)
+SPEAKER_MIN_WIDTH = 0.45     # candidatos a falante: rostos com pelo menos 45% da largura do maior visível
+SPEAKER_SWITCH = 0.8         # vantagem de atividade para trocar de falante dentro da cena (evita vaivém)
+SPEAKER_MIN_HOLD = 5         # e só depois de 5 amostras (1 s) no falante atual
 # Segurança do rosto: a caixa do rosto, com margem, precisa caber inteira no recorte.
 FACE_MARGIN_RATIO = 0.20     # margem lateral = 20% da largura do rosto (cabelo, movimento, erro do detector)
 FACE_MIN_MARGIN = 0.015      # e pelo menos 1,5% da largura do quadro
@@ -90,6 +101,34 @@ def detect_faces(gray) -> list[tuple[float, float, float, float]]:
     return [(float(x) / w, float(y) / h, float(bw) / w, float(bh) / h) for (x, y, bw, bh) in boxes]
 
 
+def yunet_available() -> bool:
+    try:
+        import cv2
+    except ImportError:
+        return False
+    return hasattr(cv2, 'FaceDetectorYN') and (DATA_DIR / YUNET_MODEL).is_file()
+
+
+def _yunet(size: tuple[int, int]):
+    """Um detector por análise (o FaceDetectorYN guarda estado e não é seguro entre threads)."""
+    import cv2
+    return cv2.FaceDetectorYN.create(str(DATA_DIR / YUNET_MODEL), '', size, YUNET_SCORE, 0.3, 50)
+
+
+def detect_faces_yunet(frame, detector) -> tuple[list[tuple], list[tuple]]:
+    """Rostos ``(x, y, largura, altura)`` e marcos ``(olho_d, olho_e, nariz, boca_d, boca_e)``, em fração."""
+    h, w = frame.shape[:2]
+    detector.setInputSize((w, h))
+    _, found = detector.detect(frame)
+    boxes, marks = [], []
+    for f in [] if found is None else found:
+        x, y, bw, bh = (float(v) for v in f[:4])
+        x0, y0 = max(0.0, x), max(0.0, y)
+        boxes.append((x0 / w, y0 / h, (min(w, x + bw) - x0) / w, (min(h, y + bh) - y0) / h))
+        marks.append(tuple((float(f[4 + 2 * k]) / w, float(f[5 + 2 * k]) / h) for k in range(5)))
+    return boxes, marks
+
+
 def sample(source: Path, start: float, end: float, *, cancel_event: threading.Event | None = None,
            on_progress: Callable[[float, str], None] | None = None) -> list[dict]:
     """Lê o trecho e devolve amostras {t (relativo ao início do corte), hist, gray, faces}."""
@@ -98,6 +137,7 @@ def sample(source: Path, start: float, end: float, *, cancel_event: threading.Ev
     if not cap.isOpened():
         raise RuntimeError('não foi possível abrir o vídeo para análise de rostos')
     samples: list[dict] = []
+    detector = None
     try:
         cap.set(cv2.CAP_PROP_POS_MSEC, start * 1000)
         next_t = start
@@ -122,7 +162,13 @@ def sample(source: Path, start: float, end: float, *, cancel_event: threading.Ev
             hist = cv2.calcHist([hsv], [0, 1], None, [32, 32], [0, 180, 0, 256])
             cv2.normalize(hist, hist)
             gray = cv2.equalizeHist(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY))
-            samples.append({'t': max(0.0, t - start), 'hist': hist, 'gray': gray, 'faces': detect_faces(gray)})
+            entry = {'t': max(0.0, t - start), 'hist': hist, 'gray': gray}
+            if yunet_available():
+                detector = detector or _yunet((small.shape[1], small.shape[0]))
+                entry['faces'], entry['marks'] = detect_faces_yunet(small, detector)
+            else:
+                entry['faces'] = detect_faces(gray)
+            samples.append(entry)
             if on_progress:
                 on_progress(min(1.0, (t - start) / span), '')
     finally:
@@ -141,15 +187,53 @@ def histogram_cuts(samples: list[dict]) -> list[float]:
 
 # --------------------------------------------------------------------------- falante e câmera
 
-def _mouth(gray, box):
+def _patch(gray, rect):
     import cv2
     h, w = gray.shape[:2]
-    x, y, bw, bh = box
-    x0, x1 = int((x + bw * 0.25) * w), int((x + bw * 0.75) * w)
-    y0, y1 = int((y + bh * 0.65) * h), int((y + bh * 0.95) * h)
+    x, y, rw, rh = rect
+    x0, x1 = max(0, int(x * w)), min(w, int((x + rw) * w))
+    y0, y1 = max(0, int(y * h)), min(h, int((y + rh) * h))
     if x1 - x0 < 4 or y1 - y0 < 4:
         return None
     return cv2.resize(gray[y0:y1, x0:x1], (24, 12))
+
+
+def face_regions(box, marks=None) -> tuple[tuple, tuple]:
+    """Retângulos ``(boca, testa)`` em fração do quadro; com marcos do YuNet ficam presos à boca e aos olhos."""
+    x, y, bw, bh = box
+    if marks:
+        (ex0, ey0), (ex1, ey1), _nose, (mx0, my0), (mx1, my1) = marks
+        mw = max(abs(mx1 - mx0), bw * 0.2)
+        mx, my = (mx0 + mx1) / 2, (my0 + my1) / 2
+        ew = max(abs(ex1 - ex0), bw * 0.3)
+        ex, ey = (ex0 + ex1) / 2, (ey0 + ey1) / 2
+        return (mx - mw * 0.8, my - mw * 0.45, mw * 1.6, mw), (ex - ew * 0.8, ey - ew * 0.75, ew * 1.6, ew * 0.45)
+    return (x + bw * 0.25, y + bh * 0.65, bw * 0.5, bh * 0.3), (x + bw * 0.25, y + bh * 0.08, bw * 0.5, bh * 0.2)
+
+
+def _assign_tracks(samples: list[dict]) -> list[list[int]]:
+    """Liga as detecções entre amostras pela distância dos centros; devolve o id da trilha de cada rosto."""
+    last_box: dict[int, tuple] = {}
+    last_seen: dict[int, int] = {}
+    ids: list[list[int]] = []
+    for i, s in enumerate(samples):
+        row, taken = [], set()
+        for box in s['faces']:
+            cx, cy = box[0] + box[2] / 2, box[1] + box[3] / 2
+            best, best_d = None, 0.15
+            for tid, tb in last_box.items():
+                if tid in taken or i - last_seen[tid] > 10:
+                    continue
+                d = ((cx - tb[0] - tb[2] / 2) ** 2 + (cy - tb[1] - tb[3] / 2) ** 2) ** 0.5
+                if d < best_d:
+                    best, best_d = tid, d
+            if best is None:
+                best = len(last_box)
+            taken.add(best)
+            last_box[best], last_seen[best] = box, i
+            row.append(best)
+        ids.append(row)
+    return ids
 
 
 def speaker_targets(samples: list[dict]) -> list[tuple]:
@@ -157,37 +241,50 @@ def speaker_targets(samples: list[dict]) -> list[tuple]:
 
     Sem rosto: ``(t, None, None, [])``. As caixas são ``(x, y, largura, altura)`` em fração do quadro;
     elas são mantidas para o recorte poder garantir que o rosto inteiro fique visível.
+
+    Trilhas que aparecem em menos de ``MIN_TRACK_HITS`` amostras são descartadas (detecções
+    falsas em texturas piscam). Quem fala é quem tem mais movimento na boca do que na testa.
     """
     import cv2
     import numpy as np
-    tracks: list[dict] = []
+    ids = _assign_tracks(samples)
+    hits: dict[int, int] = {}
+    for row in ids:
+        for tid in row:
+            hits[tid] = hits.get(tid, 0) + 1
+    keep_min = min(MIN_TRACK_HITS, len(samples))
+    state: dict[int, dict] = {}
+    speaker_id, held = None, 0
     targets: list[tuple] = []
-    for i, s in enumerate(samples):
-        for box in s['faces']:
-            cx, cy = box[0] + box[2] / 2, box[1] + box[3] / 2
-            best, best_d = None, 0.15
-            for tr in tracks:
-                if tr['last'] == i or i - tr['last'] > 10:
-                    continue
-                tx, ty = tr['box'][0] + tr['box'][2] / 2, tr['box'][1] + tr['box'][3] / 2
-                d = ((cx - tx) ** 2 + (cy - ty) ** 2) ** 0.5
-                if d < best_d:
-                    best, best_d = tr, d
-            if best is None:
-                best = {'box': box, 'activity': 0.0, 'mouth': None, 'last': i}
-                tracks.append(best)
-            mouth = _mouth(s['gray'], box)
-            if best['mouth'] is not None and mouth is not None:
-                motion = float(np.mean(cv2.absdiff(mouth, best['mouth'])))
-                best['activity'] = 0.7 * best['activity'] + 0.3 * motion
-            best.update(box=box, mouth=mouth, last=i)
-        visible = [tr for tr in tracks if tr['last'] == i]
-        if visible:
-            speaker = max(visible, key=lambda tr: (round(tr['activity'], 1), tr['box'][2] * tr['box'][3]))
-            targets.append((s['t'], speaker['box'][0] + speaker['box'][2] / 2, tuple(speaker['box']),
-                            [tuple(tr['box']) for tr in visible]))
-        else:
+    for s, row in zip(samples, ids):
+        marks = s.get('marks') or [None] * len(s['faces'])
+        visible = []
+        for box, mark, tid in zip(s['faces'], marks, row):
+            if hits[tid] < keep_min:
+                continue
+            tr = state.setdefault(tid, {'activity': 0.0, 'mouth': None, 'ref': None})
+            mouth_rect, ref_rect = face_regions(box, mark)
+            mouth, ref = _patch(s['gray'], mouth_rect), _patch(s['gray'], ref_rect)
+            if tr['mouth'] is not None and mouth is not None and tr['ref'] is not None and ref is not None:
+                moved = float(np.mean(cv2.absdiff(mouth, tr['mouth'])))
+                still = float(np.mean(cv2.absdiff(ref, tr['ref'])))
+                tr['activity'] = 0.7 * tr['activity'] + 0.3 * max(0.0, moved - still)
+            tr.update(box=box, mouth=mouth, ref=ref)
+            visible.append(tid)
+        if not visible:
             targets.append((s['t'], None, None, []))
+            continue
+        widest = max(state[t]['box'][2] for t in visible)
+        candidates = [t for t in visible if state[t]['box'][2] >= SPEAKER_MIN_WIDTH * widest]
+        best = max(candidates, key=lambda t: (round(state[t]['activity'], 1), state[t]['box'][2] * state[t]['box'][3]))
+        if speaker_id in candidates and best != speaker_id and (
+                held < SPEAKER_MIN_HOLD
+                or state[best]['activity'] < state[speaker_id]['activity'] + SPEAKER_SWITCH):
+            best = speaker_id   # troca de falante só com vantagem clara e depois de um tempo mínimo
+        held = held + 1 if best == speaker_id else 1
+        speaker_id = best
+        box = state[best]['box']
+        targets.append((s['t'], box[0] + box[2] / 2, tuple(box), [tuple(state[t]['box']) for t in visible]))
     return targets
 
 
@@ -262,23 +359,44 @@ def camera_path(targets: list[tuple], crop_frac: float) -> list[tuple[float, flo
     last = known[0]
     cam = clamp(last)
     path = []
+    prev_faces: list = []
+    prev_x = None
     for tg in targets:
         t, x = tg[0], tg[1]
         last = x if x is not None else last
         goal = clamp(last)
+        faces = tg[3] if len(tg) > 3 else []
         interval = _sample_interval(tg, crop_frac)
         if interval:
             goal = min(max(goal, interval[0]), interval[1])
         elif interval is None:
             cam = goal  # rosto maior que o recorte: centraliza já, sem atraso da suavização
+        cut = (bool(faces and prev_faces and _new_shot(prev_faces, faces))  # troca de câmera não detectada
+               or (x is not None and prev_x is not None and abs(x - prev_x) > crop_frac))  # falante longe
+        if cut and path and abs(goal - path[-1][1]) > DEAD_ZONE:
+            # Corte seco, como um editor faria: mantém a posição antiga até o instante da troca,
+            # em vez de deslizar pelo cenário entre as duas pessoas.
+            path.append((round(t - 0.001, 3), path[-1][1]))
+            cam = goal
+        prev_x = x if x is not None else prev_x
         if abs(goal - cam) > DEAD_ZONE:
             cam += SMOOTHING * (goal - cam)
         else:
             cam += SMOOTHING * 0.15 * (goal - cam)
         if interval:
             cam = min(max(cam, interval[0]), interval[1])
+        if faces:
+            prev_faces = faces
         path.append((round(t, 3), round(cam, 4)))
     return path
+
+
+def _new_shot(before: list, after: list, radius: float = 0.15) -> bool:
+    """Nenhum rosto atual perto de um rosto da amostra anterior: outro plano, não movimento de pessoa."""
+    def center(b):
+        return b[0] + b[2] / 2, b[1] + b[3] / 2
+    return all(min(((center(a)[0] - center(b)[0]) ** 2 + (center(a)[1] - center(b)[1]) ** 2) ** 0.5
+                   for b in before) > radius for a in after)
 
 
 def _center_at(points: list[tuple[float, float]], t: float) -> float:

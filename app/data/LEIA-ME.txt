@@ -1,3 +1,9 @@
 Classificadores Haar de detecção de rosto do OpenCV (repositório opencv/opencv, ramo 4.x,
 data/haarcascades). Licença Intel incluída no cabeçalho de cada arquivo XML. Usados pelo
-enquadramento "Seguir rosto" (app/reframe.py). O OpenCV 5 não distribui mais esses arquivos.
+enquadramento "Seguir rosto" (app/reframe.py) só quando o OpenCV não tem o YuNet. O OpenCV 5
+não distribui mais esses arquivos.
+
+face_detection_yunet_2023mar.onnx: detector de rostos YuNet (repositório opencv/opencv_zoo,
+models/face_detection_yunet), licença MIT em LICENSE-yunet.txt. Detector principal do
+"Seguir rosto" (cv2.FaceDetectorYN). SHA-256:
+8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4

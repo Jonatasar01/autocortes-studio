@@ -366,9 +366,25 @@ rosto ficar parcialmente fora.
 "PERIGOS DOS ACAMPAMENTOS" passava das duas bordas); visibilidade do rosto no percentil 5 = 100%, com
 um único close em que o rosto é mais largo que o recorte, mostrado em quadro inteiro por 1 s.
 
-**Limitações:** o detector continua sendo o Haar do OpenCV, que não reconhece rostos de perfil acentuado
-ou olhando para cima; nesses quadros não há caixa para proteger. Não há filtro de Kalman, detector YuNet
-ou MediaPipe, identificação de falante por áudio nem aceleração por GPU (itens P1/P2 do relatório).
+**Quem está falando.** O detector é o YuNet (`cv2.FaceDetectorYN`, modelo de 230 KB em `app/data`,
+licença MIT); o Haar só entra se o OpenCV instalado não tiver o YuNet. O Haar marcava papel de parede,
+mosaicos e roupas como rostos (até 8 por quadro numa cena com 3 pessoas) e o recorte ia parar no
+cenário. Agora:
+
+- detecções que aparecem em menos de 3 amostras (0,6 s) são descartadas;
+- quem fala é quem tem mais movimento na boca do que na testa (pelos marcos de boca e olhos do YuNet);
+  numa textura, ou com a câmera em movimento, tudo se mexe igual e a diferença fica perto de zero;
+- rostos muito menores que o maior da cena (figurantes ao fundo) não concorrem;
+- o falante só muda depois de 1 s e com vantagem clara, e a troca para alguém longe, ou uma troca de
+  câmera que a análise de cenas não viu, vira corte seco em vez de a câmera deslizar pelo cenário.
+
+No corte "Visão, você está cego" (22,7 s), o recorte ficava 0,7 s no papel de parede e 1,5 s no mosaico
+em vez do guarda que falava. Agora todos os trechos mostram um rosto, e a abertura sem pessoas sai em
+quadro inteiro com fundo desfocado.
+
+**Limitações:** quem fala é estimado só pela imagem; a identificação pelo áudio (diarização) não existe.
+Quando duas pessoas mexem a boca ao mesmo tempo, ou quando quem fala está de costas ou fora do
+quadro, o sistema pode escolher a pessoa errada. Não há filtro de Kalman nem aceleração por GPU.
 
 ## Prévia da edição
 
