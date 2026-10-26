@@ -238,7 +238,15 @@ def run_export(ctx: JobContext) -> dict:
         keep = direction.keep_intervals(plan, end - start)
         if keep:
             keep = media.snap_intervals(keep, media.output_fps(info) or info.get('fps') or 30)
+    if prm['format'] != 'original':
+        # Antes da legenda: sem as faixas pretas o vídeo muda de altura na tela, e a legenda se posiciona por ela.
+        ctx.stage('enquadramento', 'Procurando faixas pretas no vídeo')
+        box = media.detect_letterbox(folder / p['filename'], info, start, end, cancel_event=ctx.cancel_event)
+        if box:
+            info = {**info, 'letterbox': box}
+            warnings.append(f"Faixas pretas do vídeo original removidas (área útil {box['w']}×{box['h']}).")
     width, height = media.target_size(prm['format'], info)
+    band = media.content_band(prm['format'], prm['framing'], info, (width, height))
     out_len = sum(b - a for a, b in keep) if keep else end - start
     hook_text = prm.get('hook_text') if prm.get('hook') else None
     sub_report = subtitles._new_report()
@@ -276,7 +284,7 @@ def run_export(ctx: JobContext) -> dict:
                     lines = [line for line in lines if line]
                 if lines:
                     ass_text = subtitles.to_ass_dynamic(lines, width, height, hook_text=hook_text, clip_len=out_len,
-                                                        report=sub_report)
+                                                        report=sub_report, video_band=band)
                 else:
                     warnings.append('Legenda dinâmica indisponível (a transcrição não tem o tempo de cada palavra); '
                                     'usada a legenda clássica.')
@@ -284,15 +292,10 @@ def run_export(ctx: JobContext) -> dict:
                 warnings.append('Legenda dinâmica usa a fala transcrita; com legenda da narração foi usada a clássica.')
             if ass_text is None:
                 ass_text = subtitles.to_ass(cues, width, height, hook_text=hook_text, clip_len=out_len,
-                                            report=sub_report)
+                                            report=sub_report, video_band=band)
     if ass_text is None and hook_text:
-        ass_text = subtitles.to_ass([], width, height, hook_text=hook_text, clip_len=out_len, report=sub_report)
-    if prm['format'] != 'original':
-        ctx.stage('enquadramento', 'Procurando faixas pretas no vídeo')
-        box = media.detect_letterbox(folder / p['filename'], info, start, end, cancel_event=ctx.cancel_event)
-        if box:
-            info = {**info, 'letterbox': box}
-            warnings.append(f"Faixas pretas do vídeo original removidas (área útil {box['w']}×{box['h']}).")
+        ass_text = subtitles.to_ass([], width, height, hook_text=hook_text, clip_len=out_len, report=sub_report,
+                                    video_band=band)
     track = None
     if prm['framing'] == 'track':
         ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')

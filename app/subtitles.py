@@ -230,9 +230,36 @@ def _hook_event(hook_text: str | None, clip_len: float | None, width: int, heigh
     return [f'Dialogue: 1,{_ass_time(0)},{_ass_time(end)},Hook,,0,0,0,,{{\\q2{fs}\\fad(150,250)}}{body}']
 
 
+UI_BOTTOM_PORTRAIT = 0.17   # base da tela vertical coberta por botões e legenda do Shorts/Reels/TikTok
+UI_BOTTOM_OTHER = 0.07
+BAND_GAP = 0.025             # distância entre a borda do vídeo e a legenda
+
+
+def placement(width: int, height: int, size: int, default_margin: int,
+              video_band: tuple[int, int] | None = None) -> tuple[int, int]:
+    """``(Alignment, MarginV)`` do ASS para a legenda não ficar em cima da borda do vídeo.
+
+    ``video_band`` = faixa vertical ``(topo, base)`` em pixels onde o vídeo aparece (enquadramento com barras
+    ou fundo desfocado). A legenda vai inteira para a área logo abaixo do vídeo, acima da zona dos botões;
+    se não couber ali, fica inteira dentro do vídeo, apoiada um pouco acima da borda de baixo.
+    """
+    if not video_band or video_band[1] - video_band[0] >= height * 0.9:
+        return 2, default_margin
+    top, bottom = video_band
+    portrait = height > width * 1.1
+    floor = height * (1 - (UI_BOTTOM_PORTRAIT if portrait else UI_BOTTOM_OTHER))
+    gap = round(height * BAND_GAP)
+    block = round(2 * size * 1.25)          # pior caso: duas linhas
+    if bottom + gap + block <= floor:
+        return 8, round(bottom + gap)       # ancorada no topo, logo abaixo do vídeo
+    return 2, round(height - bottom + gap)  # dentro do vídeo, acima da borda
+
+
 def to_ass(cues: list[dict], width: int, height: int, font_name: str = 'Arial', *,
-           hook_text: str | None = None, clip_len: float | None = None, report: dict | None = None) -> str:
+           hook_text: str | None = None, clip_len: float | None = None, report: dict | None = None,
+           video_band: tuple[int, int] | None = None) -> str:
     st = style_for(width, height)
+    align, margin_v = placement(width, height, st['font'], st['margin_v'], video_band)
     header = [
         '[Script Info]', 'ScriptType: v4.00+', f'PlayResX: {width}', f'PlayResY: {height}',
         # Quebras decididas pela medição (\\N + \\q2 por evento); WrapStyle 0 é só a rede de segurança.
@@ -242,8 +269,8 @@ def to_ass(cues: list[dict], width: int, height: int, font_name: str = 'Arial', 
         'Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, '
         'Alignment, MarginL, MarginR, MarginV, Encoding',
         f"Style: Default,{font_name},{st['font']},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,"
-        f"-1,0,0,0,100,100,0,0,1,{st['outline']},{st['shadow']},2,{st['margin_h']},{st['margin_h']},"
-        f"{st['margin_v']},1",
+        f"-1,0,0,0,100,100,0,0,1,{st['outline']},{st['shadow']},{align},{st['margin_h']},{st['margin_h']},"
+        f"{margin_v},1",
         _hook_style(width, height, font_name),
         '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
     ]
@@ -293,7 +320,8 @@ def build_word_lines(transcript: list[dict], start: float, end: float,
 
 def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: str = 'Arial', *,
                    hook_text: str | None = None, clip_len: float | None = None,
-                   highlight: str = HIGHLIGHT, report: dict | None = None) -> str:
+                   highlight: str = HIGHLIGHT, report: dict | None = None,
+                   video_band: tuple[int, int] | None = None) -> str:
     """Legenda em caixa alta, poucas palavras por vez, com a palavra falada destacada.
 
     O layout de cada grupo é medido uma vez, no pior caso (qualquer palavra ampliada a 108%, termos
@@ -303,7 +331,7 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
     portrait = height > width * 1.1
     size = round(width * (0.078 if portrait else 0.05))
     outline = max(3, round(size * 0.09))
-    margin_v = round(height * (0.27 if portrait else 0.12))
+    align, margin_v = placement(width, height, size, round(height * (0.27 if portrait else 0.12)), video_band)
     header = [
         '[Script Info]', 'ScriptType: v4.00+', f'PlayResX: {width}', f'PlayResY: {height}',
         'WrapStyle: 0', 'ScaledBorderAndShadow: yes', 'YCbCr Matrix: TV.709', '',
@@ -312,7 +340,7 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
         'Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, '
         'Alignment, MarginL, MarginR, MarginV, Encoding',
         f"Style: Dyn,{font_name},{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,"
-        f"-1,0,0,0,100,100,0,0,1,{outline},2,2,{st['margin_h']},{st['margin_h']},{margin_v},1",
+        f"-1,0,0,0,100,100,0,0,1,{outline},2,{align},{st['margin_h']},{st['margin_h']},{margin_v},1",
         _hook_style(width, height, font_name),
         '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
     ]

@@ -484,6 +484,20 @@ def visible_size(media: dict) -> tuple[int, int]:
     return (box['w'], box['h']) if box else (media['width'], media['height'])
 
 
+def content_band(fmt: str, framing: str, media: dict, size: tuple[int, int]) -> tuple[int, int] | None:
+    """Faixa vertical ``(topo, base)`` onde o vídeo aparece nos enquadramentos que não cortam a imagem.
+
+    ``None`` quando o vídeo ocupa a tela inteira (formato original, ou seguir rosto, que recorta).
+    """
+    if fmt == 'original' or framing not in ('blur', 'fit'):
+        return None
+    W, H = size
+    vw, vh = visible_size(media)
+    h = min(H, W * vh / max(1, vw))
+    top = (H - h) / 2
+    return round(top), round(top + h)
+
+
 def source_label(media: dict) -> str:
     """Rótulo de entrada do vídeo no filtergraph, já sem as faixas pretas."""
     box = media.get('letterbox')
