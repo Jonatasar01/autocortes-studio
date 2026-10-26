@@ -43,10 +43,8 @@ MIN_WORDS_FOR_ANALYSIS = 20
 
 # Quantidade automática (``desired_count`` = 0): entram todos os cortes bons, não um número fixo.
 AUTO = 0
-AUTO_MIN_SCORE = 75          # nota mínima de um corte no modo automático
-AUTO_RELATIVE = 12           # e no máximo 12 pontos abaixo do melhor do vídeo
-AUTO_PER_HOUR = 6            # limite de segurança: até 6 cortes por hora de vídeo
-AUTO_MAX = 40
+AUTO_MIN_SCORE = 80          # corte válido: começo e fim limpos, fala clara e algum interesse no conteúdo
+AUTO_MAX = 500               # só um teto técnico; na prática entram todos os válidos
 AUTO_MIN_SECONDS = 15.0      # no automático o corte acompanha o assunto: 15 s até 2x a duração alvo
 AUTO_MAX_FACTOR = 2.0
 AUTO_GAP = 30.0              # distância mínima entre cortes: o mesmo assunto não vira três cortes vizinhos
@@ -403,7 +401,7 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
                  scenes: list[float] | None = None, fallback_reason: str | None = None) -> tuple[list[dict], dict]:
     target = max(10, min(90, int(target)))
     auto = int(desired_count) == AUTO
-    desired = auto_cap(duration) if auto else max(1, min(15, int(desired_count)))
+    desired = AUTO_MAX if auto else max(1, min(15, int(desired_count)))
     scenes = scenes or []
     units = build_units(segments or [])
     words = sum(len(tokens(u['text'])) for u in units)
@@ -433,8 +431,8 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
         clips = temporal_candidates(duration, target, desired, scenes, reason)
         return _finalize(clips), {'mode': 'temporal', 'reason': reason, 'candidates_evaluated': 0}
     scored.sort(key=lambda x: (-x[0], units[x[1]]['start']))
-    # Automático: só entra quem tem nota boa no absoluto E perto dos melhores deste vídeo.
-    floor = max(AUTO_MIN_SCORE, scored[0][0] - AUTO_RELATIVE) if auto else None
+    # Automático: entram todos os trechos válidos (nota mínima), do melhor para o pior, sem número fixo.
+    floor = AUTO_MIN_SCORE if auto else None
     chosen: list[dict] = []
     for score, i, j, breakdown, reasons in scored:
         if floor is not None and score < floor and chosen:
@@ -472,13 +470,9 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
         clip['description'] = text[:600] + ('…' if len(text) > 600 else '')
     info = {'mode': 'transcricao', 'reason': None, 'candidates_evaluated': len(scored)}
     if auto:
-        info.update(count_mode='automatico', min_score=floor, cap=desired)
+        info.update(count_mode='automatico', min_score=floor)
     return _finalize(chosen), info
 
-
-def auto_cap(duration: float) -> int:
-    """Limite de segurança do modo automático: até ``AUTO_PER_HOUR`` cortes por hora (mín. 3, máx. 40)."""
-    return max(3, min(AUTO_MAX, math.ceil(duration / 3600 * AUTO_PER_HOUR)))
 
 
 def _finalize(clips: list[dict]) -> list[dict]:

@@ -362,7 +362,7 @@ function params() {
     source_rights: $('sourceRights').value, third_party_footage: $('thirdParty').checked ? 'yes' : 'unknown',
     external_audio: $('audioRights').value, graphics_rights: $('graphicsRights').value,
     monetization: $('monetization').value, license_notes: $('licenseNotes').value,
-    editing_mode: $('mode').value, target_seconds: $('target').value, desired_count: $('desired').value,
+    editing_mode: $('mode').value, target_seconds: $('target').value, desired_count: 0,  // 0: todos os trechos válidos
     autopilot: 'false', recognize_music_opt_in: 'false',
   };
 }

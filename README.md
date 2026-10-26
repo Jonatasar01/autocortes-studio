@@ -82,9 +82,11 @@ Projetos ficam em `data/` e reaparecem em **Projetos recentes** após reiniciar.
 
 ### Quantidade automática de cortes
 
-No modo **Automático**, o padrão de **Sugestões** é **Automático (pelo conteúdo)** (`desired_count=0`). Não há
-número fixo: entram todos os trechos com nota de pelo menos 75 e a no máximo 12 pontos do melhor trecho do
-vídeo. Há um limite de segurança de 6 cortes por hora (no mínimo 3, no máximo 40). Nesse modo:
+No modo **Automático** não há campo de quantidade (`desired_count=0`): entram **todos os trechos válidos para
+clipe**, ou seja, com nota de pelo menos 80, do melhor para o pior. Não há limite por hora (só um teto técnico
+de 500). Numa live de 8,5 h isso deu 144 cortes (71 min somados), entre eles 16 dos 19 melhores momentos
+marcados na leitura completa. A API ainda aceita `desired_count` de 1 a 15 para quem quiser um número fixo.
+Nesse modo:
 
 - cada corte acompanha o assunto, de 15 s até 2x a duração alvo, e fica a pelo menos 30 s do próximo
   (o mesmo assunto não vira três cortes vizinhos);

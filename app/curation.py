@@ -42,6 +42,7 @@ CHUNK_OVERLAP = 120            # sobreposição entre blocos (s) para não perde
 JUDGE_BATCH = 8
 AI_WEIGHT = 0.7
 AUTO_MIN_FINAL = 70        # quantidade automática: nota final mínima (a IA pesa 70%)
+AUTO_JUDGE_MAX = 60        # automático: trechos levados ao juiz (cada lote é uma chamada paga à API)
 WEIGHTS = {'gancho': 0.35, 'coerencia': 0.25, 'valor': 0.25, 'tendencia': 0.15}
 
 PROPOSE_SCHEMA = {
@@ -233,7 +234,7 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
     """Seleciona e avalia cortes com IA. Levanta AppError em falhas (o chamador mantém a heurística)."""
     target = max(10, min(90, int(target)))
     auto = int(desired) == selection.AUTO
-    desired = selection.auto_cap(duration) if auto else max(1, min(15, int(desired)))
+    desired = AUTO_JUDGE_MAX // 3 if auto else max(1, min(15, int(desired)))
     scenes = scenes or []
     units = selection.build_units(segments or [])
     if not units:
@@ -379,7 +380,7 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
             clip['score_breakdown'] = c['breakdown']
         clip['reasons'] = reasons + [r for r in c['reasons'][:3]]
         chosen.append(clip)
-        if len(chosen) >= desired:
+        if not auto and len(chosen) >= desired:   # automático: entram todos os aprovados
             break
     for clip in chosen:
         clip.pop('_content', None)

@@ -64,7 +64,9 @@ async def unexpected_error(_request: Request, exc: Exception):
 
 @app.get('/', response_class=HTMLResponse)
 def home():
-    return (config.STATIC_DIR / 'studio.html').read_text(encoding='utf-8')
+    # no-cache: sem isso o navegador reaproveita a página antiga depois de uma atualização do app.
+    return HTMLResponse((config.STATIC_DIR / 'studio.html').read_text(encoding='utf-8'),
+                        headers={'Cache-Control': 'no-cache'})
 
 
 @app.get('/classic')

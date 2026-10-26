@@ -100,10 +100,19 @@ class AutoSelectionTests(unittest.TestCase):
         self.assertEqual(len(clips), 2)
         self.assertNotIn('count_mode', info)
 
-    def test_auto_cap_by_duration(self):
-        self.assertEqual(selection.auto_cap(600), 3)
-        self.assertEqual(selection.auto_cap(3600 * 2), 12)
-        self.assertEqual(selection.auto_cap(3600 * 20), selection.AUTO_MAX)
+    def test_automatic_keeps_every_valid_clip_without_count_limit(self):
+        # 12 blocos bons e diferentes entre si: todos entram (antes havia teto por hora e margem do melhor).
+        topics = ['futebol', 'cozinha', 'viagem', 'faculdade', 'academia', 'musica', 'cinema', 'praia',
+                  'trabalho', 'cachorro', 'mercado', 'aniversario']
+        blocks = [[f'Deixa eu contar uma historia sobre {t}{k} que aconteceu comigo, mano.' if k == 0 else
+                   f'Foi a primeira vez com {t}{k} {t}x{k} {t}y{k}, eu fiquei muito feliz, que loucura.'
+                   for k in range(6)] for t in topics]
+        segments, duration = build(blocks)
+        clips, info = selection.select_clips(segments, duration, 30, selection.AUTO)
+        self.assertGreaterEqual(len(clips), 12)
+        self.assertTrue(all(c['score'] >= selection.AUTO_MIN_SCORE for c in clips))
+        self.assertEqual(info['min_score'], selection.AUTO_MIN_SCORE)
+        self.assertEqual([c['rank'] for c in clips], list(range(1, len(clips) + 1)))
 
 
 class AutopilotTests(unittest.TestCase):
