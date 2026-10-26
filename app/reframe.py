@@ -41,14 +41,16 @@ SMOOTHING = 0.18             # fração da distância percorrida a cada amostra
 SIMPLIFY_TOLERANCE = 0.004   # erro máximo (fração da largura) ao simplificar o caminho da câmera
 MAX_POINTS_PER_SHOT = 40
 MIN_SHOT_SECONDS = 0.6
-PLAN_VERSION = 3   # muda quando o algoritmo do plano muda (invalida os planos em cache)
+PLAN_VERSION = 4   # muda quando o algoritmo do plano muda (invalida os planos em cache)
 YUNET_MODEL = 'face_detection_yunet_2023mar.onnx'
 YUNET_SCORE = 0.7            # confiança mínima do YuNet
 MIN_TRACK_HITS = 3           # um rosto precisa aparecer em 3 amostras (0,6 s); falsos positivos piscam
 # (absoluto, não fração da cena: uma troca de câmera que a análise não viu não pode apagar um close curto)
 SPEAKER_MIN_WIDTH = 0.45     # candidatos a falante: rostos com pelo menos 45% da largura do maior visível
-SPEAKER_SWITCH = 0.8         # vantagem de atividade para trocar de falante dentro da cena (evita vaivém)
-SPEAKER_MIN_HOLD = 5         # e só depois de 5 amostras (1 s) no falante atual
+SPEAKER_SWITCH = 1.5         # vantagem para trocar de falante dentro da cena (evita vaivém)
+SPEAKER_MIN_HOLD = 10        # e só depois de 10 amostras (2 s) no falante atual: troca a cada 1 s cansa
+STATIC_FACE_MOTION = 0.05    # rosto que oscila menos que 5% da própria largura: imagem/ícone, não pessoa
+SPEAKER_MOTION_WEIGHT = 12.0 # peso do movimento do rosto na escolha de quem fala
 # Segurança do rosto: a caixa do rosto, com margem, precisa caber inteira no recorte.
 FACE_MARGIN_RATIO = 0.20     # margem lateral = 20% da largura do rosto (cabelo, movimento, erro do detector)
 FACE_MIN_MARGIN = 0.015      # e pelo menos 1,5% da largura do quadro
@@ -236,6 +238,32 @@ def _assign_tracks(samples: list[dict]) -> list[list[int]]:
     return ids
 
 
+def _track_motion(samples: list[dict], ids: list[list[int]]) -> tuple[dict[int, float], dict[int, float]]:
+    """``(movimento, largura mediana)`` de cada rosto da cena.
+
+    Movimento: desvio do centro e do tamanho da caixa, em largura do próprio rosto. Pessoa real (mesmo
+    parada, falando) passa de 5%; ícone ou retrato da interface de um jogo fica abaixo de 3%.
+    """
+    import numpy as np
+    boxes: dict[int, list] = {}
+    for s, row in zip(samples, ids):
+        for box, tid in zip(s['faces'], row):
+            boxes.setdefault(tid, []).append(box)
+    motion, widths = {}, {}
+    for tid, bs in boxes.items():
+        a = np.asarray(bs, dtype=float)
+        w = max(1e-6, float(a[:, 2].mean()))
+        cx, cy = a[:, 0] + a[:, 2] / 2, a[:, 1] + a[:, 3] / 2
+        motion[tid] = float(np.hypot(np.hypot(cx.std(), cy.std()), a[:, 2].std()) / w)
+        widths[tid] = float(np.median(a[:, 2]))
+    return motion, widths
+
+
+def _speaking_score(activity: float, motion: float) -> float:
+    """Indício de que o rosto é de quem fala: boca ativa (0–10+) e movimento do rosto (0,35 → +2,8)."""
+    return activity + SPEAKER_MOTION_WEIGHT * motion
+
+
 def speaker_targets(samples: list[dict]) -> list[tuple]:
     """Para cada amostra: ``(t, centro_x, caixa_do_falante, caixas_visíveis)``.
 
@@ -253,6 +281,11 @@ def speaker_targets(samples: list[dict]) -> list[tuple]:
         for tid in row:
             hits[tid] = hits.get(tid, 0) + 1
     keep_min = min(MIN_TRACK_HITS, len(samples))
+    motion, widths = _track_motion(samples, ids)
+    # Rostos parados (ícones e retratos da interface de um jogo, fotos, pôsteres) não falam. Só saem da disputa
+    # quando há algum rosto que se mexe na cena: num podcast com pessoas bem paradas, nada é descartado.
+    alive = {t for t, m in motion.items() if hits[t] >= keep_min and m >= STATIC_FACE_MOTION}
+    static = {t for t, m in motion.items() if m < STATIC_FACE_MOTION and hits[t] >= MIN_TRACK_HITS} if alive else set()
     state: dict[int, dict] = {}
     speaker_id, held = None, 0
     targets: list[tuple] = []
@@ -260,7 +293,7 @@ def speaker_targets(samples: list[dict]) -> list[tuple]:
         marks = s.get('marks') or [None] * len(s['faces'])
         visible = []
         for box, mark, tid in zip(s['faces'], marks, row):
-            if hits[tid] < keep_min:
+            if hits[tid] < keep_min or tid in static:
                 continue
             tr = state.setdefault(tid, {'activity': 0.0, 'mouth': None, 'ref': None})
             mouth_rect, ref_rect = face_regions(box, mark)
@@ -274,12 +307,17 @@ def speaker_targets(samples: list[dict]) -> list[tuple]:
         if not visible:
             targets.append((s['t'], None, None, []))
             continue
-        widest = max(state[t]['box'][2] for t in visible)
-        candidates = [t for t in visible if state[t]['box'][2] >= SPEAKER_MIN_WIDTH * widest]
-        best = max(candidates, key=lambda t: (round(state[t]['activity'], 1), state[t]['box'][2] * state[t]['box'][3]))
+        # Largura típica de cada rosto na cena (mediana): virar a cabeça não tira a pessoa da disputa.
+        widest = max(widths[t] for t in visible)
+        candidates = [t for t in visible if widths[t] >= SPEAKER_MIN_WIDTH * widest]
+        # Boca ativa + quanto o rosto se mexe: personagem de jogo ou figura animada mexe pouco a cabeça; pessoa
+        # real falando mexe muito. Empate (ex.: duas pessoas paradas e caladas): o maior rosto.
+        best = max(candidates, key=lambda t: (round(_speaking_score(state[t]['activity'], motion.get(t, 0.0)), 1),
+                                              state[t]['box'][2] * state[t]['box'][3]))
         if speaker_id in candidates and best != speaker_id and (
                 held < SPEAKER_MIN_HOLD
-                or state[best]['activity'] < state[speaker_id]['activity'] + SPEAKER_SWITCH):
+                or _speaking_score(state[best]['activity'], motion.get(best, 0.0))
+                < _speaking_score(state[speaker_id]['activity'], motion.get(speaker_id, 0.0)) + SPEAKER_SWITCH):
             best = speaker_id   # troca de falante só com vantagem clara e depois de um tempo mínimo
         held = held + 1 if best == speaker_id else 1
         speaker_id = best

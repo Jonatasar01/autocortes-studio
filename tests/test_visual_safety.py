@@ -191,8 +191,26 @@ class SpeakerChoiceTests(unittest.TestCase):
     def test_textured_false_face_does_not_win(self):
         face, texture = (0.55, 0.3, 0.12, 0.22), (0.1, 0.25, 0.2, 0.36)   # textura maior que o rosto
         targets = reframe.speaker_targets(self.frames(20, face, texture))
-        late = [tg[2] for tg in targets[8:]]
+        late = [tg[2] for tg in targets[12:]]   # depois da espera mínima de 2 s no falante
         self.assertTrue(all(box == face for box in late), late)
+
+    def test_static_game_icon_loses_to_moving_real_face(self):
+        # Live de jogo: ícone de agente parado (com animação logo abaixo, que parece "boca") e o rosto real da
+        # webcam, que se mexe. O ícone tem a boca mais "ativa", mas é imagem parada: o rosto real vence.
+        np = self.np
+        icon = (0.6, 0.6, 0.1, 0.18)
+        samples = []
+        base = self.rng.integers(0, 255, (180, 320), dtype='uint8')
+        for i in range(25):
+            gray = base.copy()
+            y0, y1 = int((0.6 + 0.18 * 0.65) * 180), int((0.6 + 0.18 * 0.95) * 180)
+            gray[y0:y1, 192:224] = self.rng.integers(0, 255, (y1 - y0, 32))
+            dx, dy = 0.02 * np.sin(i * 1.3), 0.015 * np.cos(i * 0.9)
+            real = (round(0.15 + dx, 4), round(0.2 + dy, 4), round(0.08 + 0.006 * np.sin(i), 4), 0.15)
+            samples.append({'t': i / 5, 'gray': np.ascontiguousarray(gray), 'faces': [real, icon]})
+        targets = reframe.speaker_targets(samples)
+        self.assertTrue(all(tg[2] != icon for tg in targets))
+        self.assertTrue(all(icon not in tg[3] for tg in targets))   # nem entra no enquadramento conjunto
 
     def test_flickering_detection_is_dropped(self):
         face = (0.55, 0.3, 0.12, 0.22)
