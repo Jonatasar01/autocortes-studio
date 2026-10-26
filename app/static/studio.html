@@ -271,6 +271,12 @@
             <div role="tabpanel" id="panelSubtitles" aria-labelledby="tabSubtitles" hidden>
               <span class="eyebrow">Legendas</span>
               <label class="switch"><input id="subtitles" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legendas no vídeo</strong><small>Usa a transcrição do projeto quando houver. Gravadas no MP4 exportado.</small></span></label>
+              <label class="field" for="subtitleStyle">Estilo da legenda</label>
+              <select id="subtitleStyle">
+                <option value="dinamica">Animada (palavra falada em destaque)</option>
+                <option value="classica">Clássica (texto simples)</option>
+              </select>
+              <p id="subtitleStyleNote" class="hint" hidden>O plano de edição em uso define o estilo da legenda.</p>
             </div>
 
             <div role="tabpanel" id="panelEffects" aria-labelledby="tabEffects" hidden>

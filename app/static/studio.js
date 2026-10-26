@@ -165,6 +165,7 @@ function updateControls() {
   $('exportLabel').textContent = state.exporting === true ? 'Exportando…' : 'Exportar';
   $('previewTop').disabled = state.exporting || !c || !ready;
   $('previewLabel').textContent = state.exporting === 'preview' ? 'Gerando…' : 'Prévia';
+  syncSubtitleStyle();
 }
 
 function setDirty(on) {
@@ -1089,6 +1090,7 @@ function renderPlans() {
   const plans = c?.edit_plans || {};
   const names = Object.keys(plans);
   $('planResult').hidden = !names.length;
+  syncSubtitleStyle();
   if (!names.length) return;
   const name = selectedPlanName(), plan = plans[name];
   $('planVersions').innerHTML = names.length > 1 ? names.map((n) =>
@@ -1160,10 +1162,11 @@ $('planActions').onchange = (e) => {
   const box = e.target.closest('[data-act]');
   if (box) patchPlan({actions: {[box.dataset.act]: box.checked}});
 };
-const exportPlanName = () => {
+function exportPlanName() {
   const c = current();
   return $('usePlan').checked && c?.edit_plans && !planStale(c) ? selectedPlanName() || null : null;
-};
+}
+$('usePlan').addEventListener('change', syncSubtitleStyle);
 
 // ------------------------------------------------------------------ exportação
 
@@ -1186,10 +1189,21 @@ function showExport(text, {progress = null, cancellable = false, tone = ''} = {}
 function exportOptions(format, rights) {
   return {
     format, framing: $('framing').value, subtitles: $('subtitles').checked,
+    subtitle_style: $('subtitleStyle').value,
     normalize_audio: $('normalize').checked, hook: $('hook').checked, acknowledge_rights: rights,
     edit_plan: exportPlanName(),
   };
 }
+
+// Estilo da legenda: lembrado entre sessões; com um plano de edição em uso, o plano decide.
+$('subtitleStyle').value = store.get('subtitleStyle') === 'classica' ? 'classica' : 'dinamica';
+$('subtitleStyle').addEventListener('change', () => store.set('subtitleStyle', $('subtitleStyle').value));
+function syncSubtitleStyle() {
+  const planned = Boolean(exportPlanName());
+  $('subtitleStyle').disabled = !$('subtitles').checked || planned;
+  $('subtitleStyleNote').hidden = !planned || !$('subtitles').checked;
+}
+$('subtitles').addEventListener('change', syncSubtitleStyle);
 
 // Prévia: a mesma montagem da exportação (layout, legenda, plano de edição) em meia resolução.
 async function previewEdit() {
