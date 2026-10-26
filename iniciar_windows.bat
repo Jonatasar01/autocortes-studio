@@ -4,6 +4,8 @@ rem Servidor exclusivamente local; reutiliza uma venv existente.
 rem Python: prefere o 3.12 (py -3.12). Aceita 3.10 a 3.12 (as versoes usadas pelo CI do projeto).
 rem Versoes mais novas, como 3.15, ainda nao tem pacotes prontos para todas as dependencias.
 cd /d "%~dp0"
+rem Limite de envio de video em GB (o padrao do app e 4). Uma variavel ja definida no sistema tem prioridade.
+if not defined MAX_UPLOAD_GB set MAX_UPLOAD_GB=50
 if exist .venv\Scripts\python.exe goto checkvenv
 where py >nul 2>&1
 if errorlevel 1 goto trypath
