@@ -80,6 +80,26 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 Projetos ficam em `data/` e reaparecem em **Projetos recentes** após reiniciar.
 
+### Quantidade automática de cortes
+
+No modo **Automático**, o padrão de **Sugestões** é **Automático (pelo conteúdo)** (`desired_count=0`). Não há
+número fixo: entram todos os trechos com nota de pelo menos 75 e a no máximo 12 pontos do melhor trecho do
+vídeo. Há um limite de segurança de 6 cortes por hora (no mínimo 3, no máximo 40). Nesse modo:
+
+- cada corte acompanha o assunto, de 15 s até 2x a duração alvo, e fica a pelo menos 30 s do próximo
+  (o mesmo assunto não vira três cortes vizinhos);
+- a nota soma, além de clareza e começo/fim limpos, o **interesse** do trecho: história, notícia ou assunto
+  pessoal, emoção, dinheiro e valores, reação e humor, troca de perguntas e pessoas citadas pelo nome;
+- trechos dominados por instruções de partida ("smoke no meio, drone no mercado") perdem pontos;
+- repetições em laço da transcrição ("bora, bora, bora…" dezenas de vezes, típicas do Whisper em música e
+  gritaria) são descartadas, e a pergunta no início vale menos (sozinha, não faz um bom corte);
+- com curadoria por IA, entram os trechos com nota final de pelo menos 70; no piloto automático,
+  `max_clips: 0` exporta todos os cortes aprovados pela nota mínima.
+
+Numa live de 8,5 h, a seleção encontrou cerca de 14 dos 19 melhores momentos marcados na leitura completa
+da transcrição; a anterior, cerca de 11. Humor de diálogo (piadas que dependem do tom) continua difícil para
+a heurística; a curadoria por IA (Configurações) avalia o conteúdo de fato.
+
 ## Modo autônomo (v2.2)
 
 O app pode trabalhar sozinho, do vídeo bruto até os arquivos prontos para revisão. Abra **⚙ Configurações** e defina:

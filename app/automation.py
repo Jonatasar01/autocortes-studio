@@ -10,11 +10,11 @@ from .errors import AppError
 
 PRESETS = {
     'shorts': {'name': 'Shorts automáticos', 'description': '3 melhores cortes verticais, legenda dinâmica e áudio normalizado.',
-               'target': 35, 'count': 5, 'max': 3, 'formats': ['9:16'], 'narration': False},
+               'target': 35, 'count': 0, 'max': 3, 'formats': ['9:16'], 'narration': False},
     'multiformato': {'name': 'Distribuição multiformato', 'description': '3 cortes em vertical, horizontal e quadrado.',
-                     'target': 45, 'count': 5, 'max': 3, 'formats': ['9:16', '16:9', '1:1'], 'narration': False},
+                     'target': 45, 'count': 0, 'max': 3, 'formats': ['9:16', '16:9', '1:1'], 'narration': False},
     'narrado': {'name': 'Recap com IA', 'description': 'Seleção, roteiro e voz quando configurados e autorizados. Fallback local explícito.',
-                'target': 45, 'count': 5, 'max': 3, 'formats': ['9:16'], 'narration': True},
+                'target': 45, 'count': 0, 'max': 3, 'formats': ['9:16'], 'narration': True},
 }
 
 

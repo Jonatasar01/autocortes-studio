@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import threading
 import time
@@ -40,6 +41,46 @@ DANGLING_END = {'e', 'mas', 'que', 'de', 'do', 'da', 'dos', 'das', 'para', 'pra'
 TERMINAL_RE = re.compile(r'[.!?…]["”\')\]]*$')
 MIN_WORDS_FOR_ANALYSIS = 20
 
+# Quantidade automática (``desired_count`` = 0): entram todos os cortes bons, não um número fixo.
+AUTO = 0
+AUTO_MIN_SCORE = 75          # nota mínima de um corte no modo automático
+AUTO_RELATIVE = 12           # e no máximo 12 pontos abaixo do melhor do vídeo
+AUTO_PER_HOUR = 6            # limite de segurança: até 6 cortes por hora de vídeo
+AUTO_MAX = 40
+AUTO_MIN_SECONDS = 15.0      # no automático o corte acompanha o assunto: 15 s até 2x a duração alvo
+AUTO_MAX_FACTOR = 2.0
+AUTO_GAP = 30.0              # distância mínima entre cortes: o mesmo assunto não vira três cortes vizinhos
+STRUCTURE_WEIGHT = 1.0       # peso da estrutura (clareza, confiança, começo/fim, conteúdo)
+INTEREST_WEIGHT = 1.0        # peso do interesse do conteúdo
+
+# Interesse do conteúdo (palavras sem acento, em minúsculas). Pesos em ``_interest``.
+STORY_TERMS = {'aconteceu', 'lembro', 'lembra', 'historia', 'contei', 'contar', 'conta', 'epoca', 'imagina',
+               'descobri', 'revelei', 'aprendi', 'comecei', 'primeira', 'ultima', 'passado', 'infancia'}
+STORY_PHRASES = ('uma vez', 'quando eu', 'foi assim', 'na epoca', 'vou te contar', 'sabe o que', 'ja te contei')
+NEWS_TERMS = {'casar', 'casamento', 'anunciar', 'comunicar', 'novidade', 'gravidez', 'gravida', 'mudanca',
+              'contratar', 'contratei', 'demitido', 'aposentar', 'familia', 'noivo', 'noiva', 'filho', 'filha'}
+EMOTION_TERMS = {'chorei', 'chorar', 'chorou', 'choro', 'emocionado', 'emocionei', 'emocionante', 'feliz',
+                 'saudade', 'medo', 'orgulho', 'amo', 'obrigado', 'gratidao', 'triste', 'tristeza', 'raiva',
+                 'vergonha', 'humilhado', 'injustica', 'ansioso', 'nervoso'}
+MONEY_TERMS = {'mil', 'milhao', 'milhoes', 'reais', 'dolar', 'dolares', 'contos', 'salario', 'premiacao',
+               'dinheiro', 'pagar', 'paguei', 'golpe'}
+REACTION_TERMS = {'kkk', 'kkkk', 'kkkkk', 'haha', 'hahaha', 'mentira', 'caralho', 'porra', 'nossa', 'serio',
+                  'zoando', 'deboche', 'debochando', 'debochado', 'sacanagem', 'absurdo', 'loucura', 'bizarro',
+                  'maluco', 'doideira', 'odeio', 'ridiculo', 'otario', 'palhaco', 'idiota', 'burro', 'vigarista',
+                  'desgracado', 'safado', 'pilantra', 'trapaca', 'enganar', 'enganou', 'xingando', 'humilhacao'}
+REACTION_PHRASES = ('nao acredito', 'pelo amor de deus', 'que isso', 'meu deus', 'olha isso', 'para com isso',
+                    'ta de brincadeira', 'como assim')
+# Fala de partida (Valorant, CS, Free Fire...): ótima ao vivo, sem sentido num corte isolado.
+GAME_CALLOUTS = {'smoke', 'smokar', 'esmocar', 'bang', 'bangar', 'banguei', 'drone', 'dronar', 'dronando',
+                 'spike', 'plant', 'plantar', 'plantando', 'planta', 'ult', 'ulti', 'ultar', 'costa', 'varanda',
+                 'mercado', 'rush', 'ruxa', 'ruxar', 'flash', 'spot', 'spotar', 'spotei', 'esportar', 'beitar',
+                 'beitei', 'default', 'retake', 'pixel', 'round', 'mid', 'site', 'bombe', 'bomb', 'bomba',
+                 'defusar', 'lurk', 'cipher', 'sova', 'jett', 'jet', 'chamber', 'neon', 'reyna', 'clove',
+                 'vandal', 'phantom', 'awp', 'sheriff', 'garagem', 'ct', 'trap', 'eco', 'pistol', 'drop',
+                 'dropa', 'info', 'tp', 'clutch', 'trade', 'pinou', 'peek', 'contato', 'skye', 'fade', 'gekko',
+                 'matei', 'mata', 'matar', 'matou', 'morri', 'morreu', 'morra', 'headshot', 'kill', 'tiro',
+                 'tiros', 'mira', 'defuse', 'plantou', 'reload', 'recarregando', 'bangue', 'aim'}
+
 
 def tokens(text: str) -> list[str]:
     return re.findall(r"[0-9a-zà-öø-ÿ]+", (text or '').lower())
@@ -51,6 +92,94 @@ def _fold(word: str) -> str:
 
 def _content(toks: list[str]) -> list[str]:
     return [t for t in toks if t not in STOPWORDS and len(t) > 2]
+
+
+def loop_mask(toks: list[str], min_repeats: int = 4, max_n: int = 6) -> list[bool]:
+    """Marca as palavras de repetições em laço ("bora, bora, bora…", "vou agachar" x40).
+
+    O Whisper "alucina" assim em música e gritaria de partida. Uma sequência de 1 a ``max_n`` palavras
+    repetida ``min_repeats`` vezes seguidas é laço; a primeira ocorrência continua valendo.
+    """
+    mask = [False] * len(toks)
+    i = 0
+    while i < len(toks):
+        jumped = False
+        for n in range(1, max_n + 1):
+            unit = toks[i:i + n]
+            if len(unit) < n:
+                break
+            reps = 1
+            while toks[i + reps * n:i + (reps + 1) * n] == unit:
+                reps += 1
+            if reps >= min_repeats:
+                for k in range(i + n, i + reps * n):
+                    mask[k] = True
+                i += reps * n
+                jumped = True
+                break
+        if not jumped:
+            i += 1
+    return mask
+
+
+def collapse_loops(text: str) -> str:
+    """Remove as repetições em laço do texto (para títulos e descrições)."""
+    words = text.split()
+    toks = [tokens(w)[0] if tokens(w) else w.lower() for w in words]
+    mask = loop_mask(toks)
+    out: list[str] = []
+    for word, looped in zip(words, mask):
+        if looped:
+            if out and not out[-1].endswith('…'):
+                out[-1] = out[-1].rstrip(',.;') + '…'
+            continue
+        out.append(word)
+    return ' '.join(out)
+
+
+def _interest(text: str, toks: list[str]) -> tuple[float, float, list[str]]:
+    """``(interesse 0–25, penalidade de fala de jogo 0–15, motivos)`` pelo conteúdo do trecho."""
+    folded = [_fold(t) for t in toks]
+    joined = ' ' + ' '.join(folded) + ' '
+    words = set(folded)
+    reasons = []
+    story = len(words & STORY_TERMS) + sum(joined.count(f' {p} ') for p in STORY_PHRASES)
+    news = len(words & NEWS_TERMS)
+    emotion = len(words & EMOTION_TERMS)
+    money = len(words & MONEY_TERMS) + (1 if re.search(r'\d', text) and words & {'mil', 'reais', 'dolar'} else 0)
+    reaction = sum(folded.count(t) for t in REACTION_TERMS) + sum(joined.count(f' {p} ') for p in REACTION_PHRASES)
+    questions = text.count('?')
+    score = 0.0
+    if story:
+        score += 4 * min(2, story)
+        reasons.append('Conta uma história ou fato')
+    if news:
+        score += 7
+        reasons.append('Notícia ou assunto pessoal')
+    if emotion:
+        score += 3 * min(2, emotion)
+        reasons.append('Momento emocional')
+    if money:
+        score += 4
+        reasons.append('Fala de dinheiro ou valores')
+    if reaction:
+        score += 2 * min(3, reaction)
+        reasons.append('Reação forte ou humor')
+    if questions >= 2:
+        score += 3
+        reasons.append('Troca de perguntas e respostas')
+    # Nomes próprios no meio da frase (pessoas, personagens, marcas): o Whisper os escreve com maiúscula.
+    names = {m.lower() for m in re.findall(r'(?<=[a-zà-ÿ,] )([A-ZÀ-Ý][a-zà-ÿ]{2,})', text)}
+    if len(names) >= 2:
+        score += 3
+        reasons.append('Cita pessoas ou personagens')
+    callouts = sum(1 for t in folded if t in GAME_CALLOUTS)
+    density = callouts / max(1, len(folded))
+    game_penalty = 0.0
+    if density > 0.04:
+        game_penalty = min(15.0, (density - 0.04) * 250)
+        reasons.append('Muita fala de jogo (instruções da partida), pouco sentido fora dela')
+    return min(25.0, score), game_penalty, reasons
 
 
 def _fmt_time(sec: float) -> str:
@@ -179,20 +308,29 @@ def score_window(units: list[dict], i: int, j: int, target: float, scenes: list[
     open_toks = set(tokens(opening))
     hook = 0.0
     if '?' in opening:
-        hook += 6
+        hook += 3   # pergunta ajuda, mas sozinha não faz um bom corte (era o critério que mais pesava)
         reasons.append('Pergunta logo no início (gancho)')
     hook_hits = sorted(open_toks & HOOK_TERMS)
     if hook_hits:
-        hook += 3 * len(hook_hits)
+        hook += 2 * len(hook_hits)
         reasons.append('Termos de gancho no início: ' + ', '.join(hook_hits[:3]))
     if re.search(r'\d', opening):
-        hook += 3
-    hook = min(20.0, hook)
+        hook += 2
+    hook = min(10.0, hook)
+    # Repetição em laço (alucinação do Whisper em música/gritaria): não é fala de verdade.
+    looped = loop_mask(toks)
+    loop_ratio = sum(looped) / max(1, len(toks))
+    real = [t for t, bad in zip(toks, looped) if not bad]
     # Conteúdo e repetição
-    content = _content(toks)
+    content = _content(real)
     unique = set(content)
     relevance = 15 * min(1.0, (len(unique) / dur) / 0.9) if content else 0.0
-    penalty = 0.0
+    interest, game_penalty, interest_reasons = _interest(text, real)
+    reasons += interest_reasons
+    penalty = game_penalty
+    if loop_ratio > 0.1:
+        penalty += min(60.0, 120 * loop_ratio)
+        reasons.append('Repetição sem sentido na transcrição (música ou gritaria)')
     if content and len(unique) / len(content) < 0.45:
         penalty += 8
         reasons.append('Muita repetição de palavras')
@@ -201,14 +339,21 @@ def score_window(units: list[dict], i: int, j: int, target: float, scenes: list[
     if long_pauses:
         penalty += 5 * min(3, long_pauses)
         reasons.append(f'{long_pauses} pausa(s) longa(s) no meio')
-    fit = 10 * (1 - min(1.0, abs(dur - target) / target))
+    fit = 5 * (1 - min(1.0, abs(dur - target) / (target * 1.5)))
     scene = 3.0 if any(abs(s - start) <= 1.0 for s in scenes) else 0.0
     if scene:
         reasons.append('Início coincide com mudança de cena')
-    total = max(0.0, min(100.0, clarity + confidence + completeness + hook + relevance + fit + scene - penalty))
+    # Estrutura (fala clara, começo e fim limpos) quase sempre sai no máximo; o que separa um bom corte de
+    # um corte qualquer é o conteúdo. Por isso a estrutura vale até ~43 pontos e o interesse até 40.
+    clarity, confidence, completeness, relevance = (v * STRUCTURE_WEIGHT for v in
+                                                    (clarity, confidence, completeness, relevance))
+    interest *= INTEREST_WEIGHT
+    total = max(0.0, min(100.0, clarity + confidence + completeness + hook + relevance + interest + fit + scene
+                         - penalty))
     breakdown = {'clareza': round(clarity, 1), 'confianca_transcricao': round(confidence, 1),
                  'inicio_fim': round(completeness, 1), 'gancho': round(hook, 1), 'conteudo': round(relevance, 1),
-                 'duracao': round(fit, 1), 'cena': scene, 'penalidades': -round(penalty, 1)}
+                 'interesse': round(interest, 1), 'duracao': round(fit, 1), 'cena': scene,
+                 'penalidades': -round(penalty, 1)}
     return round(total, 1), breakdown, reasons
 
 
@@ -257,17 +402,23 @@ def temporal_candidates(duration: float, target: float, desired: int, scenes: li
 def select_clips(segments: list[dict], duration: float, target: int, desired_count: int,
                  scenes: list[float] | None = None, fallback_reason: str | None = None) -> tuple[list[dict], dict]:
     target = max(10, min(90, int(target)))
-    desired = max(1, min(15, int(desired_count)))
+    auto = int(desired_count) == AUTO
+    desired = auto_cap(duration) if auto else max(1, min(15, int(desired_count)))
     scenes = scenes or []
     units = build_units(segments or [])
     words = sum(len(tokens(u['text'])) for u in units)
     if not units or words < MIN_WORDS_FOR_ANALYSIS:
         reason = fallback_reason or ('Fala insuficiente para análise de conteúdo' if units else
                                      'Sem transcrição disponível')
-        clips = temporal_candidates(duration, target, desired, scenes, reason)
+        clips = temporal_candidates(duration, target, min(desired, 15), scenes, reason)
         return _finalize(clips), {'mode': 'temporal', 'reason': reason, 'candidates_evaluated': len(clips)}
-    min_len = min(max(6.0, target * 0.6), duration)
-    max_len = min(target * 1.35, config.MAX_CLIP_SECONDS)
+    if auto:
+        # Sem quantidade fixa, o corte acompanha o assunto: pode ser mais curto ou bem mais longo que o alvo.
+        min_len = min(AUTO_MIN_SECONDS, duration)
+        max_len = min(max(target * AUTO_MAX_FACTOR, 45.0), config.MAX_CLIP_SECONDS)
+    else:
+        min_len = min(max(6.0, target * 0.6), duration)
+        max_len = min(target * 1.35, config.MAX_CLIP_SECONDS)
     scored = []
     for i in range(len(units)):
         for j in range(i, len(units)):
@@ -282,8 +433,12 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
         clips = temporal_candidates(duration, target, desired, scenes, reason)
         return _finalize(clips), {'mode': 'temporal', 'reason': reason, 'candidates_evaluated': 0}
     scored.sort(key=lambda x: (-x[0], units[x[1]]['start']))
+    # Automático: só entra quem tem nota boa no absoluto E perto dos melhores deste vídeo.
+    floor = max(AUTO_MIN_SCORE, scored[0][0] - AUTO_RELATIVE) if auto else None
     chosen: list[dict] = []
     for score, i, j, breakdown, reasons in scored:
+        if floor is not None and score < floor and chosen:
+            break
         prev = units[i - 1] if i > 0 else None
         nxt = units[j + 1] if j + 1 < len(units) else None
         start = units[i]['start']
@@ -302,6 +457,9 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
                      '_content': set(_content(tokens(text)))}
         if any(_overlap(candidate, other) > 0.2 for other in chosen):
             continue
+        if auto and any(candidate['start'] < other['end'] + AUTO_GAP and other['start'] < candidate['end'] + AUTO_GAP
+                        for other in chosen):
+            continue
         if any(_similar(candidate['_content'], other['_content']) > 0.5 for other in chosen):
             continue  # conteúdo repetido em outro ponto do vídeo
         chosen.append(candidate)
@@ -309,10 +467,18 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
             break
     for clip in chosen:
         clip.pop('_content', None)
-        text = clip.pop('text')
+        text = collapse_loops(clip.pop('text'))
         clip['title'] = _title_from_text(text) or 'Trecho sem título'
         clip['description'] = text[:600] + ('…' if len(text) > 600 else '')
-    return _finalize(chosen), {'mode': 'transcricao', 'reason': None, 'candidates_evaluated': len(scored)}
+    info = {'mode': 'transcricao', 'reason': None, 'candidates_evaluated': len(scored)}
+    if auto:
+        info.update(count_mode='automatico', min_score=floor, cap=desired)
+    return _finalize(chosen), info
+
+
+def auto_cap(duration: float) -> int:
+    """Limite de segurança do modo automático: até ``AUTO_PER_HOUR`` cortes por hora (mín. 3, máx. 40)."""
+    return max(3, min(AUTO_MAX, math.ceil(duration / 3600 * AUTO_PER_HOUR)))
 
 
 def _finalize(clips: list[dict]) -> list[dict]:

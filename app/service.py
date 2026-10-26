@@ -153,7 +153,9 @@ def validate_options(form: dict) -> dict:
         'license_notes': _clean_text(form.get('license_notes', ''), 2000),
         'recognize_music': str(form.get('recognize_music_opt_in', '')).strip().lower() in truthy,
         'target_seconds': _int_range(form.get('target_seconds', 35), 10, 90, 'Duração por corte deve ficar entre 10 e 90 s.'),
-        'desired_count': _int_range(form.get('desired_count', 5), 1, 15, 'Quantidade de cortes deve ficar entre 1 e 15.'),
+        # 0 = automático: entram os cortes com nota boa, sem número fixo (limite de segurança por hora de vídeo).
+        'desired_count': _int_range(form.get('desired_count', 0), 0, 15,
+                                    'Quantidade de cortes deve ficar entre 1 e 15 (ou 0 = automático).'),
         # Piloto automático: ausente = padrão das Configurações
         'autopilot': (None if str(form.get('autopilot', '')).strip() == '' else
                       str(form.get('autopilot')).strip().lower() in truthy),

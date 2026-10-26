@@ -77,7 +77,7 @@ def choose(clips: list[dict], cfg: dict) -> tuple[list[dict], list[str]]:
             skipped.append(f"Corte {clip['id']:02d}: nota {clip['score']} abaixo do mínimo {cfg['min_score']}.")
             continue
         chosen.append(clip)
-        if len(chosen) >= cfg['max_clips']:
+        if cfg['max_clips'] and len(chosen) >= cfg['max_clips']:   # 0 = todos os aprovados
             break
     return chosen, skipped
 
