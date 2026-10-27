@@ -13,7 +13,7 @@ import shutil
 import threading
 import time
 
-from . import (config, curation, direction, media, music, narration, publish, reframe, rights, selection, settings,
+from . import (config, curation, direction, filters, media, music, narration, publish, reframe, rights, selection, settings,
                storage, subtitles, transcription)
 from .errors import AppError, Cancelled
 from .jobs import JobContext
@@ -343,11 +343,13 @@ def run_export(ctx: JobContext) -> dict:
         ass_text = subtitles.to_ass([], width, height, hook_text=hook_text, clip_len=out_len, report=sub_report,
                                     video_band=band)
     post = audio_extra = ''
+    look = filters.chain(prm.get('filter'))   # filtro de cor escolhido, antes da cor/zoom do plano
     if plan:
         remap = (lambda t: media.remap_time(t, keep)) if keep else (lambda t: t)
         post = direction.video_post_filters(plan, (width, height), media.output_fps(info) or info.get('fps') or 30,
                                             out_len, remap)
         audio_extra = '' if placed else direction.audio_filters(plan, out_len)
+    post = look + post
     preview = bool(prm.get('preview'))
     ctx.stage('renderizando', 'Renderizando a prévia' if preview else 'Renderizando o corte')
     out_dir = folder / ('preview' if preview else 'clips')

@@ -478,6 +478,16 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .dialogbody ul { margin: 8px 0 0; padding-left: 18px; list-style: disc; }
 .dialogbody li { margin: 3px 0; }
 .dialogbody b { color: var(--text); }
+.filterbox { display: grid; gap: 8px; margin-bottom: 16px; }
+.filterbox .hint { margin: 0; }
+.filtergrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.filtertile { display: grid; gap: 4px; padding: 3px; border: 1px solid var(--border-soft); border-radius: 8px; background: none; color: var(--text-2); cursor: pointer; text-align: center; }
+.filtertile:hover { border-color: var(--border); color: var(--text); }
+.filtertile.selected { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); color: var(--text); }
+.filterthumb { display: block; width: 100%; border-radius: 5px; background-color: var(--bg); background-repeat: no-repeat; }
+.filterthumb.loading { opacity: .3; }
+.filterthumb { transition: opacity .2s; }
+.filtername { font-size: 11.5px; line-height: 1.2; }
 .selectionbody { display: grid; gap: 8px; }
 .selectionbody p { margin: 0; }
 .selectionbody .hint.warn { color: var(--danger); }

@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 from starlette.background import BackgroundTask
 
-from . import config, service, timeline
+from . import config, filters, service, timeline
 from .config import ROOT  # noqa: F401  (compatibilidade)
 from .errors import AppError
 from .security import LocalSecurityMiddleware
@@ -242,6 +242,18 @@ def project_filmstrip(project_id: str, n: int = 40):
                         headers={'Cache-Control': 'max-age=86400'})
 
 
+@app.get('/api/filters')
+def list_filters():
+    return {'filters': filters.catalog()}
+
+
+@app.get('/api/projects/{project_id}/filter-samples')
+def filter_samples(project_id: str, t: float = 0.0):
+    """Quadro do instante ``t`` em cada filtro, lado a lado (ordem de ``/api/filters``)."""
+    return FileResponse(filters.sample_strip(project_id, t), media_type='image/jpeg',
+                        headers={'Cache-Control': 'max-age=86400'})
+
+
 @app.get('/api/projects/{project_id}/waveform')
 def project_waveform(project_id: str):
     """Forma de onda do áudio; ``state: pending`` enquanto é gerada em segundo plano."""
@@ -328,6 +340,7 @@ class ExportOptions(BaseModel):
     original_volume: int = Field(default=100, ge=0, le=100)
     subtitle_source: Optional[Literal['fala', 'narracao']] = None
     shorten_pauses: bool = False
+    filter: Optional[str] = Field(default=None, max_length=20)   # filtro de cor (app/filters.py)
     edit_plan: Optional[str] = Field(default=None, pattern=r'^[a-z_]{1,40}$')
 
 

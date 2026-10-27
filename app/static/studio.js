@@ -296,7 +296,10 @@ const setActiveNav = (name) => {
   }
 };
 const showLeft = initTabs(document.querySelector('.leftpanel .tabs'), 'left', (name) => setActiveNav(NAV_FOR_LEFT[name]));
-const showInsp = initTabs(document.querySelector('.inspector .tabs'), 'insp', (name) => setActiveNav(NAV_FOR_INSP[name]));
+const showInsp = initTabs(document.querySelector('.inspector .tabs'), 'insp', (name) => {
+  setActiveNav(NAV_FOR_INSP[name]);
+  if (name === 'effects') loadFilterSamples();
+});
 
 function openLeft(tab) {
   showLeft(tab);
@@ -546,6 +549,7 @@ async function openProject(id) {
     }, 1700);
   } else if (p.status === 'ready') {
     setStatus('Projeto aberto', 'ok');
+    if (filtersVisible()) loadFilterSamples();
     setLoading(video.readyState >= 2 ? null : 'Carregando vídeo…');
   } else {
     setLoading(null);
@@ -821,6 +825,7 @@ function select(id, {seek = true} = {}) {
     if (seek && state.project) video.currentTime = c.start;
   }
   render();
+  if (filtersVisible()) loadFilterSamples();
 }
 
 // ------------------------------------------------------------------ edição de cortes
@@ -1512,9 +1517,75 @@ function exportOptions(format, rights) {
     format, framing: $('framing').value, subtitles: $('subtitles').checked,
     subtitle_style: $('subtitleStyle').value, refine_subtitles: $('refineSubtitles').checked,
     normalize_audio: $('normalize').checked, hook: $('hook').checked, acknowledge_rights: rights,
-    edit_plan: exportPlanName(),
+    edit_plan: exportPlanName(), filter: state.filter === 'nenhum' ? null : state.filter,
   };
 }
+
+// ------------------------------------------------------------------ filtro de cor
+
+// Amostras: um quadro do vídeo em cada filtro, lado a lado numa tira gerada pelo servidor (FFmpeg, exato).
+// O player usa a aproximação em CSS para mostrar o filtro enquanto o vídeo toca.
+state.filters = [];
+state.filter = store.get('filter') || 'nenhum';
+state.filterKey = null;
+
+async function loadFilterCatalog() {
+  try { state.filters = (await api('/api/filters')).filters; } catch { state.filters = []; }
+  if (!state.filters.some((f) => f.id === state.filter)) state.filter = 'nenhum';
+  applyFilter();
+  if (filtersVisible()) loadFilterSamples();
+}
+const filtersVisible = () => !$('panelEffects').hidden;
+
+function applyFilter() {
+  const f = state.filters.find((x) => x.id === state.filter);
+  video.style.filter = f?.css || '';
+  $('filterDesc').textContent = f ? f.label + ': ' + f.desc : '';
+  for (const b of $('filterGrid').querySelectorAll('[data-filter]')) {
+    const on = b.dataset.filter === state.filter;
+    b.classList.toggle('selected', on);
+    b.setAttribute('aria-checked', on);
+  }
+}
+
+function loadFilterSamples(force = false) {
+  const p = state.project;
+  if (!p || p.status !== 'ready' || !state.filters.length) return;
+  const c = current();
+  // Instante: o meio do corte selecionado; com "Ver exemplos no quadro atual", onde o player está.
+  let t = force || !c ? video.currentTime || 0 : (c.start + c.end) / 2;
+  t = Math.round(t * 10) / 10;
+  const key = p.id + ':' + t;
+  if (key === state.filterKey && !force) return;
+  state.filterKey = key;
+  const url = '/api/projects/' + p.id + '/filter-samples?t=' + t;
+  const n = state.filters.length;
+  const ratio = (p.media.width / p.media.height) || 16 / 9;
+  $('filterGrid').innerHTML = state.filters.map((f, k) =>
+    '<button type="button" role="radio" class="filtertile" data-filter="' + f.id + '" title="' + escape(f.desc) + '">' +
+    '<span class="filterthumb loading"></span><span class="filtername">' + escape(f.label) + '</span></button>').join('');
+  // Estilos pelo CSSOM: a CSP da página bloqueia o atributo style escrito no HTML.
+  [...$('filterGrid').querySelectorAll('.filterthumb')].forEach((s, k) => {
+    s.style.aspectRatio = ratio.toFixed(3);
+    s.style.backgroundImage = 'url("' + url + '")';
+    s.style.backgroundSize = (n * 100) + '% 100%';
+    s.style.backgroundPosition = (n > 1 ? (k / (n - 1)) * 100 : 0) + '% 0';
+  });
+  const probe = new Image();
+  probe.onload = () => { for (const s of $('filterGrid').querySelectorAll('.filterthumb')) s.classList.remove('loading'); };
+  probe.onerror = () => toast('Não foi possível gerar os exemplos de filtro.', true);
+  probe.src = url;
+  applyFilter();
+}
+
+$('filterGrid').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-filter]');
+  if (!b) return;
+  state.filter = b.dataset.filter;
+  store.set('filter', state.filter);
+  applyFilter();
+});
+$('filterRefresh').onclick = () => loadFilterSamples(true);
 
 // Estilo da legenda: lembrado entre sessões; com um plano de edição em uso, o plano decide.
 $('subtitleStyle').value = store.get('subtitleStyle') === 'classica' ? 'classica' : 'dinamica';
@@ -1806,6 +1877,7 @@ setFill($('seek'));
 setFill($('editIntensity'));
 hideExport();
 loadProjects();
+loadFilterCatalog();
 updateControls();
 const initial = new URLSearchParams(location.search).get('projeto');
 if (initial) openProject(initial).catch((e) => { setLoading(null); setStatus('Projeto não encontrado', 'error'); toast(e.message, true); });

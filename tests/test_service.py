@@ -100,6 +100,24 @@ class FlowTests(ServiceBase):
         with self.assertRaises(AppError):
             service.project_jobs('0' * 32)
 
+    def test_color_filter_samples_and_export(self):
+        from app import filters
+        res = self.create(self.video)
+        import subprocess
+        strip = filters.sample_strip(res['id'], 5.0)
+        size = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0',
+                               str(strip)], capture_output=True, text=True, check=True).stdout.strip()
+        width, height = (int(v) for v in size.split(','))
+        self.assertEqual(height, filters.SAMPLE_H)
+        self.assertGreater(width, filters.SAMPLE_H * len(filters.FILTERS))   # um quadro por filtro
+        self.assertEqual(filters.sample_strip(res['id'], 5.0), strip)                  # cache
+        job = service.request_export(res['id'], 1, {'format': '9:16', 'subtitles': False, 'filter': 'pb'})
+        self.assertEqual(service.manager.wait(job['id'], 180)['status'], 'done')
+        self.assertEqual(service.manager.get(job['id'])['params']['filter'], 'pb')
+        with self.assertRaises(AppError) as ctx:
+            service.request_export(res['id'], 1, {'format': '9:16', 'filter': 'inexistente'})
+        self.assertEqual(ctx.exception.code, 'bad_filter')
+
     def test_reselect_reuses_the_saved_transcript(self):
         res = self.create(self.video)
         original = transcription.transcribe

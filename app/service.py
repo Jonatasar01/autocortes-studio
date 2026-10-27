@@ -16,7 +16,7 @@ import unicodedata
 from pathlib import Path
 from typing import Iterable
 
-from . import (autopilot, config, curation, direction, downloads, media, music, narration, pipeline, publish, reframe, rights, settings,
+from . import (autopilot, config, curation, direction, downloads, filters, media, music, narration, pipeline, publish, reframe, rights, settings,
                storage, subtitles, transcription, watcher)
 from .errors import AppError
 from .jobs import Handler, JobManager
@@ -612,6 +612,13 @@ def update_edit_plan(project_id: str, clip_id: int, name: str, changes: dict) ->
         return _plans_view(clip)
 
 
+def _filter_id(value) -> str | None:
+    if not value or value == 'nenhum':
+        return None
+    filters.chain(value)   # valida
+    return value
+
+
 def request_export(project_id: str, clip_id: int, options: dict, *, preview: bool = False) -> dict:
     fmt = options.get('format') or ('9:16' if options.get('portrait', True) else '16:9')
     if fmt not in media.FORMATS:
@@ -680,6 +687,7 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
                   'narration': use_narration, 'voice': voice if use_narration else None,
                   'original_volume': _int_range(options.get('original_volume', 100), 0, 100, 'Volume inválido.'),
                   'subtitle_source': subtitle_source,
+                  'filter': _filter_id(options.get('filter')),
                   'shorten_pauses': bool(options.get('shorten_pauses', False)) and not use_narration,
                   'autopilot': bool(options.get('autopilot', False)),
                   'autopilot_run_id': ((p.get('autopilot') or {}).get('run_id')

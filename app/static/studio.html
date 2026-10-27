@@ -282,6 +282,13 @@
             </div>
 
             <div role="tabpanel" id="panelEffects" aria-labelledby="tabEffects" hidden>
+              <section class="filterbox" aria-labelledby="filterTitle">
+                <span class="eyebrow" id="filterTitle">Filtro de cor</span>
+                <p class="hint">Cada miniatura é o quadro atual com o filtro aplicado. O player mostra o filtro escolhido enquanto toca (aproximado); a Prévia e a exportação usam o filtro exato.</p>
+                <div id="filterGrid" class="filtergrid" role="radiogroup" aria-label="Filtro de cor"></div>
+                <p id="filterDesc" class="hint"></p>
+                <button id="filterRefresh" class="btn ghost block" type="button"><svg class="ic"><use href="#i-refresh"/></svg><span>Ver exemplos no quadro atual</span></button>
+              </section>
               <section class="stylebox" aria-labelledby="styleTitle">
                 <span class="eyebrow" id="styleTitle">Estilo de edição</span>
                 <div class="cols">
