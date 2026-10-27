@@ -63,7 +63,7 @@ def _startup() -> JobManager:
         'narration': Handler(pipeline.run_narration, 1, _end_narration,
                              retry_codes=RETRYABLE, max_retries=config.JOB_MAX_RETRIES),
     })
-    manager.start()
+    stale = manager.start()
     watcher.start()
     # Projetos "em análise" sem tarefa ativa (ex.: banco removido) ficam como interrompidos.
     for item in storage.list_projects():
@@ -74,7 +74,14 @@ def _startup() -> JobManager:
             with contextlib.suppress(AppError):
                 with storage.edit_project(item['id']) as p:
                     p['status'] = 'interrupted'
-                    p['error'] = 'A análise foi interrompida. Use "Reprocessar" para tentar novamente.'
+                    p['error'] = 'A análise foi interrompida. Use "Analisar de novo" para tentar novamente.'
+    # Análise cortada pelo fechamento do app (reinício, queda de energia): recomeça sozinha. Numa live longa,
+    # esperar o usuário perceber e clicar custaria horas.
+    for job in stale:
+        if job['kind'] == 'analysis':
+            with contextlib.suppress(AppError):
+                _queue_analysis(job['project_id'], job.get('params') or {}, from_status=('interrupted',))
+                log.info('Análise do projeto %s retomada após o reinício.', job['project_id'])
     return manager
 
 
@@ -827,12 +834,22 @@ def publication_text(project_id: str, clip_id: int, fmt: str) -> tuple[Path, str
 
 
 def reanalyze(project_id: str) -> dict:
+    """Analisa o vídeo de novo, do zero (transcrição, cenas e seleção). Num projeto pronto, os cortes atuais
+    são substituídos ao terminar; se a nova análise falhar ou for cancelada, eles continuam valendo."""
+    if _jobs().for_project(project_id, active_only=True):
+        raise AppError('Aguarde as tarefas em andamento deste projeto terminarem.', 409, 'busy')
+    return _queue_analysis(project_id, {}, from_status=('error', 'cancelled', 'interrupted', 'ready'))
+
+
+def _queue_analysis(project_id: str, params: dict, *, from_status: tuple[str, ...]) -> dict:
     with storage.edit_project(project_id) as p:
-        if p.get('status') not in ('error', 'cancelled', 'interrupted'):
-            raise AppError('Só é possível reprocessar análises com erro, canceladas ou interrompidas.', 409, 'bad_state')
+        if p.get('status') not in from_status:
+            raise AppError('Este projeto não pode ser analisado de novo agora.', 409, 'bad_state')
+        if not (storage.project_dir(project_id) / p['filename']).is_file():
+            raise AppError('O vídeo deste projeto não está mais na pasta; envie o arquivo de novo.', 409, 'no_source')
         p['status'] = 'queued'
         p['error'] = None
-    job, _ = _jobs().submit(project_id, 'analysis', {}, dedupe_key=f'analysis:{project_id}')
+    job, _ = _jobs().submit(project_id, 'analysis', dict(params), dedupe_key=f'analysis:{project_id}')
     with storage.edit_project(project_id) as p:
         p['analysis_job'] = job['id']
     return public_job(job)

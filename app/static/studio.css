@@ -234,6 +234,9 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px co
 .projectrowitem .projectitem { padding-right: 34px; }
 .projdel { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); opacity: 0; color: var(--text-3); }
 .projectrowitem:hover .projdel, .projdel:focus-visible { opacity: 1; }
+/* "Analisar de novo" fica sempre visível: é a ação que o projeto parado pede. */
+.projredo { position: absolute; top: 50%; right: 32px; transform: translateY(-50%); color: var(--focus); }
+.projectrowitem:has(.projredo) .projectitem { padding-right: 62px; }
 .projdel:hover:not(:disabled), #deleteProject:hover:not(:disabled) { color: var(--danger); background: var(--danger-soft); }
 #deleteProject { margin-left: auto; color: var(--text-3); }
 @media (hover: none) { .projdel { opacity: 1; } }
@@ -491,7 +494,8 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .selectionbody { display: grid; gap: 8px; }
 .selectionbody p { margin: 0; }
 .selectionbody .hint.warn { color: var(--danger); }
-#openSelection { margin-top: 10px; }
+#openSelection, #reanalyze { margin-top: 10px; }
+#reanalyze { margin-top: 6px; }
 .dialog footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-soft); }
 .dialog.preview { width: min(860px, calc(100vw - 32px)); }
 .previewbody { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 18px; padding: 16px; min-height: 0; overflow: auto; }

@@ -118,6 +118,42 @@ class FlowTests(ServiceBase):
             service.request_export(res['id'], 1, {'format': '9:16', 'filter': 'inexistente'})
         self.assertEqual(ctx.exception.code, 'bad_filter')
 
+    def test_reanalyze_ready_project_and_keep_clips_on_failure(self):
+        res = self.create(self.video)
+        again = service.reanalyze(res['id'])
+        self.assertEqual(service.manager.wait(again['id'], 180)['status'], 'done')
+        self.assertEqual(storage.read_project(res['id'])['status'], 'ready')
+        original = transcription.transcribe
+
+        def broken(*a, **k):
+            raise RuntimeError('falha simulada')
+        transcription.transcribe = broken
+        try:
+            job = service.reanalyze(res['id'])
+            self.assertEqual(service.manager.wait(job['id'], 180)['status'], 'failed')
+        finally:
+            transcription.transcribe = original
+        p = storage.read_project(res['id'])
+        self.assertEqual(p['status'], 'ready')     # os cortes anteriores continuam valendo
+        self.assertTrue(p['clips'])
+
+    def test_analysis_cut_by_a_restart_resumes_by_itself(self):
+        import sqlite3
+        res = self.create(self.video)
+        job_id = storage.read_project(res['id'])['analysis_job']
+        service.shutdown()
+        try:
+            with sqlite3.connect(config.DATA_DIR / 'autocortes.db') as db:   # como se o app caísse no meio
+                db.execute("UPDATE jobs SET status='running', finished=NULL WHERE id=?", (job_id,))
+            with storage.edit_project(res['id']) as p:
+                p['status'] = 'analyzing'
+        finally:
+            service.startup()
+        p = storage.read_project(res['id'])
+        self.assertNotEqual(p['analysis_job'], job_id)
+        self.assertEqual(service.manager.wait(p['analysis_job'], 180)['status'], 'done')
+        self.assertEqual(storage.read_project(res['id'])['status'], 'ready')
+
     def test_reselect_reuses_the_saved_transcript(self):
         res = self.create(self.video)
         original = transcription.transcribe

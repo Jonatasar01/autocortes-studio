@@ -14,7 +14,7 @@ const ACTIVE_JOB = ['queued', 'running', 'cancelling'];
 const FAILED_JOB = ['failed', 'cancelled', 'interrupted'];
 const PROJECT_STATUS = {
   ready: 'Pronto', queued: 'Na fila', analyzing: 'Analisando', failed: 'Falhou',
-  interrupted: 'Interrompido', cancelled: 'Cancelado',
+  interrupted: 'Interrompido', cancelled: 'Cancelado', error: 'Com erro',
 };
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const narrow = window.matchMedia('(max-width: 1180px)');
@@ -365,7 +365,11 @@ async function loadProjects() {
         escape(p.id) + '"' + (selected ? ' aria-current="true"' : '') + '><strong>' + escape(p.name) + '</strong><small>' +
         '<span class="dot" data-status="' + escape(p.status) + '"></span>' + escape(status) +
         ' · ' + (p.duration ? fmt(p.duration) + ' · ' : '') + p.clips + (p.clips === 1 ? ' corte' : ' cortes') +
-        '</small></button><button class="iconbtn sm projdel" data-del="' + escape(p.id) + '" data-name="' +
+        '</small></button>' + (STOPPED.includes(p.status)
+          ? '<button class="iconbtn sm projredo" data-redo="' + escape(p.id) + '" data-name="' + escape(p.name) +
+            '" title="Analisar de novo" aria-label="Analisar de novo o projeto ' + escape(p.name) +
+            '"><svg class="ic"><use href="#i-refresh"/></svg></button>' : '') +
+        '<button class="iconbtn sm projdel" data-del="' + escape(p.id) + '" data-name="' +
         escape(p.name) + '" title="Excluir projeto" aria-label="Excluir o projeto ' + escape(p.name) +
         '"><svg class="ic"><use href="#i-trash"/></svg></button></div>';
     }).join('') || '<p class="empty">Nenhum projeto ainda. Importe um vídeo no painel de mídia.</p>';
@@ -379,6 +383,8 @@ async function loadProjects() {
 $('projects').onclick = (e) => {
   const del = e.target.closest('.projdel');
   if (del) return deleteProject(del.dataset.del, del.dataset.name);
+  const redo = e.target.closest('.projredo');
+  if (redo) return reanalyzeProject(redo.dataset.redo, {ready: false});
   const item = e.target.closest('.projectitem');
   if (!item) return;
   openProject(item.dataset.id).catch((err) => { setLoading(null); toast(err.message, true); });
@@ -537,6 +543,7 @@ async function openProject(id) {
     .filter(Boolean).join(' · ');
   $('mediaCard').hidden = false;
   $('openSelection').hidden = !(p.status === 'ready' && p.transcription?.state === 'ok');
+  $('reanalyze').hidden = !(p.status === 'ready' || STOPPED.includes(p.status));
   render();
   loadProjects();
   closeDrawers();
@@ -576,6 +583,7 @@ function closeProject() {
   $('noVideo').hidden = false;
   $('mediaCard').hidden = true;
   $('openSelection').hidden = true;
+  $('reanalyze').hidden = true;
   $('projectName').textContent = $('crumb').textContent = 'Nenhum projeto aberto';
   $('projectMeta').textContent = 'Importe um vídeo ou abra um projeto recente';
   document.title = 'AutoCortes Studio — Editor';
@@ -593,6 +601,27 @@ function closeProject() {
   history.replaceState({}, '', '/');
   updateControls();
 }
+
+// Projetos cuja análise parou (interrompida, com erro ou cancelada): a lista oferece "Analisar de novo".
+const STOPPED = ['interrupted', 'failed', 'error', 'cancelled'];
+
+async function reanalyzeProject(id, {ready}) {
+  if (ready && !await askConfirm({
+    title: 'Analisar de novo', yes: 'Analisar de novo',
+    text: 'O vídeo será analisado do zero: transcrição, cenas e escolha dos cortes. Os ' +
+      (state.project?.clips?.length || 0) + ' cortes atuais serão substituídos quando terminar (se a análise ' +
+      'falhar, eles continuam). Para só escolher os cortes de novo, sem transcrever, use “Seleção de cortes e IA”.',
+  })) return;
+  try {
+    await api('/api/projects/' + id + '/reanalyze', 'POST');
+    toast('Análise reiniciada.');
+    loadProjects();
+    await openProject(id);
+  } catch (e) { toast(e.message, true); }
+}
+$('reanalyze').onclick = () => {
+  if (state.project) reanalyzeProject(state.project.id, {ready: state.project.status === 'ready'});
+};
 
 async function deleteProject(id, name) {
   if (!id) return;

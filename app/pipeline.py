@@ -203,8 +203,10 @@ def end_analysis(ctx: JobContext, status: str, error: str | None) -> None:
         with storage.edit_project(ctx.project_id) as p:
             if p.get('analysis_job') not in (None, ctx.id):
                 return
-            if ctx.params.get('reselect') and p.get('clips'):
-                p['status'] = 'ready'  # refazer a seleção não terminou: os cortes anteriores continuam valendo
+            if p.get('clips') and (ctx.params.get('reselect') or status in ('failed', 'cancelled')):
+                # Refazer a seleção ou a análise de um projeto pronto não terminou: os cortes anteriores continuam
+                # valendo. (Interrompida pelo fechamento do app, a análise é retomada sozinha ao reabrir.)
+                p['status'] = 'ready'
                 return
             p['status'] = {'cancelled': 'cancelled', 'interrupted': 'interrupted'}.get(status, 'error')
             p['error'] = error or {'cancelled': 'Análise cancelada pelo usuário.'}.get(status, 'A análise não terminou.')
