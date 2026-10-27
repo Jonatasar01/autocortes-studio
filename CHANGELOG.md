@@ -1,5 +1,19 @@
 ## Não lançado
 
+- Motor de cortes, fase 2 (ver ANALISE_MOTOR_CORTES.md):
+  - **Quantidade automática relativa ao vídeo:** até 4 cortes por hora (mínimo 3), configurável por
+    `AUTOCORTES_AUTO_CLIPS_PER_HOUR`. Na live de 8,5 h: 34 cortes em vez de 170, com o mesmo Recall@18 (0,28) e
+    Recall@30 (0,50) da linha de base.
+  - **Curadoria com IA somada à heurística:** quando a IA funciona, as duas listas são unidas (trechos sobrepostos
+    viram um corte com as duas origens em `sources`); antes a lista da heurística era descartada.
+  - Cada corte traz `sources`, `evidence`, `warnings`, `confidence`, `editorial_score` e `technical_score`
+    (os dois últimos só no motor v2).
+  - **Motor v2 experimental** (`AUTOCORTES_SELECTION_ENGINE=v2`): nota editorial × portão técnico, assunto sustentado,
+    pergunta e resposta no mesmo corte, reação depois do desfecho, pausas de live toleradas. Não superou o v1 na
+    referência de 18 cortes, por isso o padrão continua v1.
+  - `scripts/avaliar_selecao.py`: avaliação reproduzível (Recall@K, erro de limites, duplicação) contra cortes de
+    referência.
+
 - Corrigido: **cancelar uma exportação no Windows** só parava quando a renderização terminava. O FFmpeg instalado por
   Chocolatey/Scoop é um "shim" que executa o `ffmpeg.exe` real como filho, e o cancelamento encerrava só o shim. Agora
   a árvore inteira é encerrada (`taskkill /T` no Windows, grupo de processos no Linux/macOS) e o término não depende
