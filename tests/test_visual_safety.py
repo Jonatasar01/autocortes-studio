@@ -155,6 +155,87 @@ class FaceSafeCropTests(unittest.TestCase):
         self.assertTrue(all(abs(x - 0.5) < 1e-6 for _, x in path))
 
 
+class SpeakerChoiceTests(unittest.TestCase):
+    """Quem fala: falsos positivos que piscam saem; textura que se mexe inteira não vence uma boca."""
+
+    def setUp(self):
+        try:
+            import cv2  # noqa: F401
+            import numpy as np
+        except ImportError:
+            self.skipTest('OpenCV ausente')
+        self.np = np
+        self.rng = np.random.default_rng(7)
+
+    def frames(self, n, face, texture=None, flicker_at=None):
+        np = self.np
+        samples = []
+        base = self.rng.integers(0, 255, (180, 320), dtype='uint8')
+        for i in range(n):
+            gray = base.copy()
+            fx, fy, fw, fh = face
+            # boca (65–95% da altura do rosto) muda a cada quadro; o resto do rosto fica parado
+            y0, y1 = int((fy + fh * 0.65) * 180), int((fy + fh * 0.95) * 180)
+            gray[y0:y1, int(fx * 320):int((fx + fw) * 320)] = self.rng.integers(0, 255, (y1 - y0, int(fw * 320)))
+            faces = [face]
+            if texture:
+                tx, ty, tw, th = texture   # textura: a caixa inteira muda (como papel de parede com a câmera andando)
+                ys, xs = slice(int(ty * 180), int((ty + th) * 180)), slice(int(tx * 320), int((tx + tw) * 320))
+                gray[ys, xs] = self.rng.integers(0, 255, gray[ys, xs].shape)
+                faces.append(texture)
+            if flicker_at is not None and i == flicker_at:
+                faces.append((0.05, 0.05, 0.1, 0.18))
+            samples.append({'t': i / 5, 'gray': np.ascontiguousarray(gray, dtype='uint8'), 'faces': faces})
+        return samples
+
+    def test_textured_false_face_does_not_win(self):
+        face, texture = (0.55, 0.3, 0.12, 0.22), (0.1, 0.25, 0.2, 0.36)   # textura maior que o rosto
+        targets = reframe.speaker_targets(self.frames(20, face, texture))
+        late = [tg[2] for tg in targets[12:]]   # depois da espera mínima de 2 s no falante
+        self.assertTrue(all(box == face for box in late), late)
+
+    def test_static_game_icon_loses_to_moving_real_face(self):
+        # Live de jogo: ícone de agente parado (com animação logo abaixo, que parece "boca") e o rosto real da
+        # webcam, que se mexe. O ícone tem a boca mais "ativa", mas é imagem parada: o rosto real vence.
+        np = self.np
+        icon = (0.6, 0.6, 0.1, 0.18)
+        samples = []
+        base = self.rng.integers(0, 255, (180, 320), dtype='uint8')
+        for i in range(25):
+            gray = base.copy()
+            y0, y1 = int((0.6 + 0.18 * 0.65) * 180), int((0.6 + 0.18 * 0.95) * 180)
+            gray[y0:y1, 192:224] = self.rng.integers(0, 255, (y1 - y0, 32))
+            dx, dy = 0.02 * np.sin(i * 1.3), 0.015 * np.cos(i * 0.9)
+            real = (round(0.15 + dx, 4), round(0.2 + dy, 4), round(0.08 + 0.006 * np.sin(i), 4), 0.15)
+            samples.append({'t': i / 5, 'gray': np.ascontiguousarray(gray), 'faces': [real, icon]})
+        targets = reframe.speaker_targets(samples)
+        self.assertTrue(all(tg[2] != icon for tg in targets))
+        self.assertTrue(all(icon not in tg[3] for tg in targets))   # nem entra no enquadramento conjunto
+
+    def test_flickering_detection_is_dropped(self):
+        face = (0.55, 0.3, 0.12, 0.22)
+        targets = reframe.speaker_targets(self.frames(12, face, flicker_at=5))
+        self.assertEqual(targets[5][3], [face])
+        self.assertTrue(all(tg[2] == face for tg in targets))
+
+
+class YuNetTests(unittest.TestCase):
+    def test_model_is_bundled_and_ignores_texture(self):
+        if not reframe.yunet_available():
+            self.skipTest('OpenCV sem FaceDetectorYN')
+        import numpy as np
+        frame = np.random.default_rng(3).integers(0, 255, (360, 640, 3), dtype='uint8')
+        boxes, marks = reframe.detect_faces_yunet(frame, reframe._yunet((640, 360)))
+        self.assertEqual((boxes, marks), ([], []))
+
+    def test_regions_follow_landmarks(self):
+        box = (0.4, 0.2, 0.2, 0.3)
+        marks = ((0.45, 0.3), (0.55, 0.3), (0.5, 0.36), (0.46, 0.42), (0.54, 0.42))
+        mouth, forehead = reframe.face_regions(box, marks)
+        self.assertLess(mouth[1], 0.42 < mouth[1] + mouth[3])     # contém a linha da boca
+        self.assertLess(forehead[1] + forehead[3], 0.3)            # testa acima dos olhos
+
+
 class PlanFallbackTests(unittest.TestCase):
     def fake_samples(self, box):
         import numpy as np

@@ -27,7 +27,7 @@ def defaults() -> dict:
     return {
         'version': 1,
         'upload_defaults': {
-            'target_seconds': 35, 'desired_count': 5,
+            'target_seconds': 35, 'desired_count': 0,   # 0 = automático
             'source_rights': 'unknown', 'external_audio': 'unknown', 'graphics_rights': 'unknown',
             'third_party_footage': 'unknown', 'monetization': 'unknown', 'license_notes': '',
             'recognize_music_opt_in': False,
@@ -110,7 +110,7 @@ def _choice(value, allowed, label: str):
 def validate(s: dict) -> dict:
     up = s['upload_defaults']
     up['target_seconds'] = _int(up['target_seconds'], 10, 90, 'Segundos por corte')
-    up['desired_count'] = _int(up['desired_count'], 1, 15, 'Número de cortes')
+    up['desired_count'] = _int(up['desired_count'], 0, 15, 'Número de cortes (0 = automático)')
     up['source_rights'] = _choice(up['source_rights'], rights.SOURCE_RIGHTS, 'Origem do vídeo')
     up['external_audio'] = _choice(up['external_audio'], rights.YES_NO_UNKNOWN, 'Áudio de terceiros')
     up['graphics_rights'] = _choice(up['graphics_rights'], rights.GRAPHICS, 'Imagens e gráficos')
@@ -120,7 +120,7 @@ def validate(s: dict) -> dict:
     up['recognize_music_opt_in'] = _bool(up['recognize_music_opt_in'])
     ap = s['autopilot']
     ap['enabled'] = _bool(ap['enabled'])
-    ap['max_clips'] = _int(ap['max_clips'], 1, 15, 'Cortes por vídeo')
+    ap['max_clips'] = _int(ap['max_clips'], 0, 15, 'Cortes por vídeo (0 = todos os aprovados)')
     ap['min_score'] = _int(ap['min_score'], 0, 100, 'Nota mínima')
     ap['include_temporal'] = _bool(ap['include_temporal'])
     formats = ap['formats'] if isinstance(ap['formats'], list) else []

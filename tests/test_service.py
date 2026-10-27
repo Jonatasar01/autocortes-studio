@@ -90,6 +90,107 @@ class FlowTests(ServiceBase):
         self.assertTrue(report['clips'][0]['exports']['9:16']['validado'])
         json.dumps(report)  # serializável
 
+    def test_project_jobs_lists_exports_for_the_queue_panel(self):
+        res = self.create(self.video)
+        job = service.request_export(res['id'], 1, {'format': '16:9', 'subtitles': False})
+        service.manager.wait(job['id'], 180)
+        jobs = service.project_jobs(res['id'])
+        self.assertEqual([j['kind'] for j in jobs], ['export'])  # a análise não entra no painel
+        self.assertEqual((jobs[0]['clip_id'], jobs[0]['format'], jobs[0]['preview']), (1, '16:9', False))
+        with self.assertRaises(AppError):
+            service.project_jobs('0' * 32)
+
+    def test_color_filter_samples_and_export(self):
+        from app import filters
+        res = self.create(self.video)
+        import subprocess
+        strip = filters.sample_strip(res['id'], 5.0)
+        size = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0',
+                               str(strip)], capture_output=True, text=True, check=True).stdout.strip()
+        width, height = (int(v) for v in size.split(','))
+        self.assertEqual(height, filters.SAMPLE_H)
+        self.assertGreater(width, filters.SAMPLE_H * len(filters.FILTERS))   # um quadro por filtro
+        self.assertEqual(filters.sample_strip(res['id'], 5.0), strip)                  # cache
+        job = service.request_export(res['id'], 1, {'format': '9:16', 'subtitles': False, 'filter': 'pb'})
+        self.assertEqual(service.manager.wait(job['id'], 180)['status'], 'done')
+        self.assertEqual(service.manager.get(job['id'])['params']['filter'], 'pb')
+        with self.assertRaises(AppError) as ctx:
+            service.request_export(res['id'], 1, {'format': '9:16', 'filter': 'inexistente'})
+        self.assertEqual(ctx.exception.code, 'bad_filter')
+
+    def test_reanalyze_ready_project_and_keep_clips_on_failure(self):
+        res = self.create(self.video)
+        again = service.reanalyze(res['id'])
+        self.assertEqual(service.manager.wait(again['id'], 180)['status'], 'done')
+        self.assertEqual(storage.read_project(res['id'])['status'], 'ready')
+        original = transcription.transcribe
+
+        def broken(*a, **k):
+            raise RuntimeError('falha simulada')
+        transcription.transcribe = broken
+        try:
+            job = service.reanalyze(res['id'])
+            self.assertEqual(service.manager.wait(job['id'], 180)['status'], 'failed')
+        finally:
+            transcription.transcribe = original
+        p = storage.read_project(res['id'])
+        self.assertEqual(p['status'], 'ready')     # os cortes anteriores continuam valendo
+        self.assertTrue(p['clips'])
+
+    def test_analysis_cut_by_a_restart_resumes_by_itself(self):
+        import sqlite3
+        res = self.create(self.video)
+        job_id = storage.read_project(res['id'])['analysis_job']
+        service.shutdown()
+        try:
+            with sqlite3.connect(config.DATA_DIR / 'autocortes.db') as db:   # como se o app caísse no meio
+                db.execute("UPDATE jobs SET status='running', finished=NULL WHERE id=?", (job_id,))
+            with storage.edit_project(res['id']) as p:
+                p['status'] = 'analyzing'
+        finally:
+            service.startup()
+        p = storage.read_project(res['id'])
+        self.assertNotEqual(p['analysis_job'], job_id)
+        self.assertEqual(service.manager.wait(p['analysis_job'], 180)['status'], 'done')
+        self.assertEqual(storage.read_project(res['id'])['status'], 'ready')
+
+    def test_reselect_reuses_the_saved_transcript(self):
+        res = self.create(self.video)
+        original = transcription.transcribe
+
+        def must_not_run(*a, **k):
+            raise AssertionError('refazer a seleção não pode transcrever de novo')
+        transcription.transcribe = must_not_run
+        try:
+            job = service.reselect(res['id'])
+            done = service.manager.wait(job['id'], 180)
+        finally:
+            transcription.transcribe = original
+        self.assertEqual(done['status'], 'done', done.get('error'))
+        p = storage.read_project(res['id'])
+        self.assertEqual(p['status'], 'ready')
+        self.assertTrue(p['clips'])
+        self.assertEqual(p['curation_profile']['provider'], 'heuristica')
+
+    def test_reselect_requires_a_ready_project_with_transcript(self):
+        res = self.create(self.video)
+        with storage.edit_project(res['id']) as p:
+            p['transcription'] = {'state': 'failed', 'message': 'x'}
+        with self.assertRaises(AppError) as ctx:
+            service.reselect(res['id'])
+        self.assertEqual(ctx.exception.code, 'no_transcript')
+
+    def test_download_clip_with_three_digit_number(self):
+        # Lives longas passam de 99 cortes: o arquivo do corte 164 é clip_164_9x16_v1.mp4.
+        res = self.create(self.video)
+        clips_dir = storage.project_dir(res['id']) / 'clips'
+        clips_dir.mkdir(exist_ok=True)
+        (clips_dir / 'clip_164_9x16_v1.mp4').write_bytes(b'x')
+        with storage.edit_project(res['id']) as p:
+            p['clips'][0]['exports'] = {'9:16': {'file': 'clip_164_9x16_v1.mp4', 'format': '9:16'}}
+        path, _ = service.export_path(res['id'], p['clips'][0]['id'], '9:16')
+        self.assertEqual(path.name, 'clip_164_9x16_v1.mp4')
+
     def test_reexport_replaces_previous_version(self):
         res = self.create(self.video)
         first = service.manager.wait(service.request_export(res['id'], 1, {'format': '16:9', 'subtitles': False})['id'], 180)
@@ -145,6 +246,23 @@ class FlowTests(ServiceBase):
         again = service.reanalyze(res['id'])
         self.assertEqual(service.manager.wait(again['id'], 180)['status'], 'done')
         self.assertEqual(storage.read_project(res['id'])['status'], 'ready')
+
+    def test_scene_detection_failure_keeps_the_analysis(self):
+        # Em vídeos longos a falha das cenas só aparecia depois de horas de transcrição, e descartava tudo.
+        from app import media
+        original = media.detect_scenes
+
+        def broken(*a, **k):
+            raise PermissionError(32, 'O arquivo já está sendo usado por outro processo')
+        media.detect_scenes = broken
+        try:
+            res = self.create(self.video)
+        finally:
+            media.detect_scenes = original
+        p = storage.read_project(res['id'])
+        self.assertEqual(p['status'], 'ready')
+        self.assertEqual(p['selection']['mode'], 'transcricao')
+        self.assertTrue(p['clips'])
 
     def test_transcription_failure_falls_back_honestly(self):
         original = transcription.transcribe

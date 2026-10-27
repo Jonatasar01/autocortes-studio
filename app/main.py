@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 from starlette.background import BackgroundTask
 
-from . import config, service
+from . import config, filters, service, timeline
 from .config import ROOT  # noqa: F401  (compatibilidade)
 from .errors import AppError
 from .security import LocalSecurityMiddleware
@@ -64,7 +64,9 @@ async def unexpected_error(_request: Request, exc: Exception):
 
 @app.get('/', response_class=HTMLResponse)
 def home():
-    return (config.STATIC_DIR / 'studio.html').read_text(encoding='utf-8')
+    # no-cache: sem isso o navegador reaproveita a página antiga depois de uma atualização do app.
+    return HTMLResponse((config.STATIC_DIR / 'studio.html').read_text(encoding='utf-8'),
+                        headers={'Cache-Control': 'no-cache'})
 
 
 @app.get('/classic')
@@ -199,9 +201,15 @@ async def create_project(request: Request):
     return await run_in_threadpool(upload.finish)
 
 
+@app.get('/api/projects/{project_id}/jobs')
+def project_jobs(project_id: str):
+    return {'jobs': service.project_jobs(project_id)}
+
+
 @app.get('/api/projects/{project_id}')
-def get_project(project_id: str):
-    return service.get_project(project_id)
+def get_project(project_id: str, transcript: bool = False):
+    """``?transcript=1`` inclui a transcrição completa (fica de fora por padrão: pode ter vários MB)."""
+    return service.get_project(project_id, include_transcript=transcript)
 
 
 @app.delete('/api/projects/{project_id}')
@@ -215,11 +223,41 @@ def reanalyze(project_id: str):
     return service.reanalyze(project_id)
 
 
+@app.post('/api/projects/{project_id}/reselect')
+def reselect(project_id: str):
+    return service.reselect(project_id)
+
+
 @app.get('/api/projects/{project_id}/source')
 def source_file(project_id: str):
     path, name = service.source_path(project_id)
     return FileResponse(path, media_type='video/mp4' if path.suffix in ('.mp4', '.m4v') else None,
                         filename=name, content_disposition_type='inline')
+
+
+@app.get('/api/projects/{project_id}/filmstrip')
+def project_filmstrip(project_id: str, n: int = 40):
+    """Tira de miniaturas da linha do tempo (gerada uma vez, em cache)."""
+    return FileResponse(timeline.filmstrip(project_id, n), media_type='image/jpeg',
+                        headers={'Cache-Control': 'max-age=86400'})
+
+
+@app.get('/api/filters')
+def list_filters():
+    return {'filters': filters.catalog()}
+
+
+@app.get('/api/projects/{project_id}/filter-samples')
+def filter_samples(project_id: str, t: float = 0.0):
+    """Quadro do instante ``t`` em cada filtro, lado a lado (ordem de ``/api/filters``)."""
+    return FileResponse(filters.sample_strip(project_id, t), media_type='image/jpeg',
+                        headers={'Cache-Control': 'max-age=86400'})
+
+
+@app.get('/api/projects/{project_id}/waveform')
+def project_waveform(project_id: str):
+    """Forma de onda do áudio; ``state: pending`` enquanto é gerada em segundo plano."""
+    return timeline.waveform(project_id)
 
 
 class ClipEdit(BaseModel):
@@ -261,13 +299,38 @@ def edit_clip(project_id: str, clip_id: int, edit: ClipEdit):
     return service.edit_clip(project_id, clip_id, edit.start, edit.end, edit.title)
 
 
+class FramingSegment(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    start: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+    framing: Literal['fit', 'blur', 'track', 'streamer', 'split']
+
+
+class FramingSegments(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    segments: list[FramingSegment] = Field(max_length=200)
+
+
+@app.put('/api/projects/{project_id}/clips/{clip_id}/framing')
+def set_clip_framing(project_id: str, clip_id: int, body: FramingSegments):
+    """Enquadramento por trecho: cada parte do corte com fundo desfocado, quadro inteiro ou seguir rosto."""
+    return service.set_framing_segments(project_id, clip_id, [seg.model_dump() for seg in body.segments])
+
+
+@app.post('/api/projects/{project_id}/clips/{clip_id}/framing/auto')
+def auto_clip_framing(project_id: str, clip_id: int):
+    """Variação automática: alterna seguir rosto e fundo desfocado a cada troca de cena."""
+    return service.set_framing_segments(project_id, clip_id, None, auto=True)
+
+
 class ExportOptions(BaseModel):
     model_config = ConfigDict(extra='forbid')
     format: Optional[Literal['9:16', '16:9', '1:1', 'original']] = None
     portrait: bool = True  # compatibilidade: usado quando "format" não é enviado
-    framing: Literal['fit', 'blur', 'track'] = 'fit'
+    framing: Literal['fit', 'blur', 'track', 'streamer', 'split', 'mix'] = 'fit'   # mix = por trecho
     subtitles: bool = True
     subtitle_style: Literal['classica', 'dinamica'] = 'classica'
+    refine_subtitles: bool = True   # legenda precisa: retranscreve o corte com o modelo maior (GPU)
     hook: bool = False
     normalize_audio: bool = False
     acknowledge_rights: bool = False
@@ -277,6 +340,7 @@ class ExportOptions(BaseModel):
     original_volume: int = Field(default=100, ge=0, le=100)
     subtitle_source: Optional[Literal['fala', 'narracao']] = None
     shorten_pauses: bool = False
+    filter: Optional[str] = Field(default=None, max_length=20)   # filtro de cor (app/filters.py)
     edit_plan: Optional[str] = Field(default=None, pattern=r'^[a-z_]{1,40}$')
 
 
@@ -292,7 +356,7 @@ class PlanToggles(BaseModel):
 
 class PlanRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    style: Literal['auto', 'impacto', 'equilibrado', 'cinematografico', 'podcast'] = 'auto'
+    style: Literal['auto', 'impacto', 'equilibrado', 'cinematografico', 'podcast', 'live_jogo'] = 'auto'
     intensity: float = Field(default=0.6, ge=0, le=1)
     variants: bool = False
     options: PlanToggles = Field(default_factory=PlanToggles)

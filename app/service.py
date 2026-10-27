@@ -16,7 +16,7 @@ import unicodedata
 from pathlib import Path
 from typing import Iterable
 
-from . import (autopilot, config, curation, direction, downloads, media, music, narration, pipeline, publish, reframe, rights, settings,
+from . import (autopilot, config, curation, direction, downloads, filters, media, music, narration, pipeline, publish, reframe, rights, settings,
                storage, subtitles, transcription, watcher)
 from .errors import AppError
 from .jobs import Handler, JobManager
@@ -63,7 +63,7 @@ def _startup() -> JobManager:
         'narration': Handler(pipeline.run_narration, 1, _end_narration,
                              retry_codes=RETRYABLE, max_retries=config.JOB_MAX_RETRIES),
     })
-    manager.start()
+    stale = manager.start()
     watcher.start()
     # Projetos "em análise" sem tarefa ativa (ex.: banco removido) ficam como interrompidos.
     for item in storage.list_projects():
@@ -74,7 +74,14 @@ def _startup() -> JobManager:
             with contextlib.suppress(AppError):
                 with storage.edit_project(item['id']) as p:
                     p['status'] = 'interrupted'
-                    p['error'] = 'A análise foi interrompida. Use "Reprocessar" para tentar novamente.'
+                    p['error'] = 'A análise foi interrompida. Use "Analisar de novo" para tentar novamente.'
+    # Análise cortada pelo fechamento do app (reinício, queda de energia): recomeça sozinha. Numa live longa,
+    # esperar o usuário perceber e clicar custaria horas.
+    for job in stale:
+        if job['kind'] == 'analysis':
+            with contextlib.suppress(AppError):
+                _queue_analysis(job['project_id'], job.get('params') or {}, from_status=('interrupted',))
+                log.info('Análise do projeto %s retomada após o reinício.', job['project_id'])
     return manager
 
 
@@ -153,7 +160,9 @@ def validate_options(form: dict) -> dict:
         'license_notes': _clean_text(form.get('license_notes', ''), 2000),
         'recognize_music': str(form.get('recognize_music_opt_in', '')).strip().lower() in truthy,
         'target_seconds': _int_range(form.get('target_seconds', 35), 10, 90, 'Duração por corte deve ficar entre 10 e 90 s.'),
-        'desired_count': _int_range(form.get('desired_count', 5), 1, 15, 'Quantidade de cortes deve ficar entre 1 e 15.'),
+        # 0 = automático: entram os cortes com nota boa, sem número fixo (limite de segurança por hora de vídeo).
+        'desired_count': _int_range(form.get('desired_count', 0), 0, 15,
+                                    'Quantidade de cortes deve ficar entre 1 e 15 (ou 0 = automático).'),
         # Piloto automático: ausente = padrão das Configurações
         'autopilot': (None if str(form.get('autopilot', '')).strip() == '' else
                       str(form.get('autopilot')).strip().lower() in truthy),
@@ -273,13 +282,26 @@ def public_job(job: dict | None) -> dict | None:
     return {k: job.get(k) for k in ('id', 'kind', 'status', 'stage', 'progress', 'message', 'error',
                                     'created', 'started', 'finished')} | {
         'clip_id': job['params'].get('clip_id'), 'format': job['params'].get('format'),
-        'narration': job['params'].get('narration'),
+        'narration': job['params'].get('narration'), 'preview': bool(job['params'].get('preview')),
         'result': job.get('result')}
 
 
-def get_project(project_id: str) -> dict:
+def project_jobs(project_id: str) -> list[dict]:
+    """Exportações, prévias e narrações do projeto para o painel de exportações. Não lê o project.json:
+    o painel consulta isto a cada 1,5 s enquanto houver algo na fila."""
+    storage.project_dir(project_id)
+    return [public_job(j) for j in _jobs().for_project(project_id, limit=100) if j['kind'] != 'analysis']
+
+
+def get_project(project_id: str, *, include_transcript: bool = False) -> dict:
+    """Projeto para a interface. A transcrição fica de fora por padrão: numa live longa ela passa de 3 MB e
+    o editor não a usa (a tela recarregava tudo isso a cada edição)."""
     p = storage.read_project(project_id)
     p.pop('filename', None)
+    segments = p.get('transcript') or []
+    p['transcript_segments'] = len(segments)
+    if not include_transcript:
+        p.pop('transcript', None)
     jobs = _jobs().for_project(project_id, limit=60)
     p['jobs'] = [public_job(j) for j in jobs]
     analysis = next((j for j in jobs if j['id'] == p.get('analysis_job')), None)
@@ -290,7 +312,15 @@ def get_project(project_id: str) -> dict:
 
 
 def list_projects() -> list[dict]:
-    return storage.list_projects()
+    """Projetos recentes; os que estão em análise trazem a etapa e o andamento para a lista mostrar."""
+    items = storage.list_projects()
+    for item in items:
+        if item.get('status') in ('queued', 'analyzing'):
+            job = next((j for j in _jobs().for_project(item['id'], active_only=True, limit=5)
+                        if j['kind'] == 'analysis'), None)
+            if job:
+                item['analysis'] = {k: job.get(k) for k in ('status', 'stage', 'progress', 'message', 'started')}
+    return items
 
 
 def get_job(job_id: str) -> dict:
@@ -342,6 +372,83 @@ def edit_clip(project_id: str, clip_id: int, start: float, end: float, title: st
             clip['edited_manually'] = True
         return dict(clip)
 
+
+
+# --------------------------------------------------------------------------- enquadramento por trecho
+
+FRAMING_MIN_SEGMENT = 0.5    # trechos menores que isso são absorvidos pelo vizinho
+AUTO_FRAMING_CYCLE = ('track', 'blur')   # variação automática: seguir rosto, depois fundo desfocado…
+AUTO_FRAMING_MIN = 2.5       # trecho automático mínimo (cenas mais curtas se juntam à seguinte)
+AUTO_FRAMING_EVERY = 6.0     # sem trocas de cena no corte, alterna a cada ~6 s
+
+
+def clean_framing_segments(raw: list | None, clip_len: float) -> list[dict]:
+    """Trechos ``{start, end, framing}`` (em segundos do corte) ordenados, sem buracos e sem sobreposição.
+
+    Cobrem o corte inteiro: o primeiro começa em 0 e o último termina no fim; trechos vizinhos com o mesmo
+    enquadramento são unidos. Trechos fora do corte (depois de encurtá-lo) são cortados.
+    """
+    items = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            raise AppError('Trecho de enquadramento inválido.', 400, 'bad_input')
+        framing = item.get('framing')
+        if framing not in media.SEGMENT_FRAMINGS:
+            raise AppError('Enquadramento do trecho inválido (use blur, fit, track, streamer ou split).', 400, 'bad_framing')
+        try:
+            a, b = float(item['start']), float(item['end'])
+        except (KeyError, TypeError, ValueError):
+            raise AppError('Tempos do trecho inválidos.', 400, 'bad_input') from None
+        if not (math.isfinite(a) and math.isfinite(b)):
+            raise AppError('Tempos do trecho inválidos.', 400, 'bad_input')
+        a, b = max(0.0, a), min(clip_len, b)
+        if b - a >= FRAMING_MIN_SEGMENT:
+            items.append({'start': a, 'end': b, 'framing': framing})
+    items.sort(key=lambda s: s['start'])
+    out: list[dict] = []
+    for seg in items:
+        if out and seg['start'] < out[-1]['end']:
+            seg['start'] = out[-1]['end']          # sobreposição: vale o trecho que começou antes
+            if seg['end'] - seg['start'] < FRAMING_MIN_SEGMENT:
+                continue
+        if out:
+            out[-1]['end'] = seg['start']          # buraco: o trecho anterior vai até o próximo
+        if out and out[-1]['framing'] == seg['framing']:
+            out[-1]['end'] = seg['end']
+        else:
+            out.append(seg)
+    if out:
+        out[0]['start'] = 0.0
+        out[-1]['end'] = clip_len
+    return [{'start': round(s['start'], 3), 'end': round(s['end'], 3), 'framing': s['framing']} for s in out]
+
+
+def auto_framing_segments(p: dict, clip: dict) -> list[dict]:
+    """Variação automática: alterna seguir rosto e fundo desfocado a cada troca de cena do corte."""
+    clip_len = clip['end'] - clip['start']
+    cuts = sorted(s - clip['start'] for s in (p.get('scenes') or []) if clip['start'] < s < clip['end'])
+    bounds = [0.0]
+    for c in cuts:
+        if c - bounds[-1] >= AUTO_FRAMING_MIN and clip_len - c >= AUTO_FRAMING_MIN:
+            bounds.append(c)
+    if len(bounds) == 1:   # nenhuma troca de cena útil: alterna em intervalos regulares
+        n = max(1, round(clip_len / AUTO_FRAMING_EVERY))
+        bounds = [clip_len * k / n for k in range(n)]
+    bounds.append(clip_len)
+    raw = [{'start': a, 'end': b, 'framing': AUTO_FRAMING_CYCLE[k % len(AUTO_FRAMING_CYCLE)]}
+           for k, (a, b) in enumerate(zip(bounds, bounds[1:]))]
+    return clean_framing_segments(raw, clip_len)
+
+
+def set_framing_segments(project_id: str, clip_id: int, segments: list | None, *, auto: bool = False) -> dict:
+    """Grava os trechos de enquadramento do corte (``auto``: gera a variação automática)."""
+    with storage.edit_project(project_id) as p:
+        _require_ready(p)
+        clip = _find_clip(p, clip_id)
+        clip_len = clip['end'] - clip['start']
+        clip['framing_segments'] = (auto_framing_segments(p, clip) if auto
+                                    else clean_framing_segments(segments, clip_len))
+        return {'clip_id': clip_id, 'segments': clip['framing_segments']}
 
 
 def create_manual_clip(project_id: str, start: float, end: float, title: str) -> dict:
@@ -512,6 +619,13 @@ def update_edit_plan(project_id: str, clip_id: int, name: str, changes: dict) ->
         return _plans_view(clip)
 
 
+def _filter_id(value) -> str | None:
+    if not value or value == 'nenhum':
+        return None
+    filters.chain(value)   # valida
+    return value
+
+
 def request_export(project_id: str, clip_id: int, options: dict, *, preview: bool = False) -> dict:
     fmt = options.get('format') or ('9:16' if options.get('portrait', True) else '16:9')
     if fmt not in media.FORMATS:
@@ -575,10 +689,12 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
         params = {'clip_id': clip_id, 'format': fmt, 'framing': framing,
                   'subtitles': bool(options.get('subtitles', True)),
                   'subtitle_style': subtitle_style, 'hook': bool(hook_text), 'hook_text': hook_text,
+                  'refine_subtitles': bool(options.get('refine_subtitles', True)),
                   'normalize_audio': bool(options.get('normalize_audio', False)),
                   'narration': use_narration, 'voice': voice if use_narration else None,
                   'original_volume': _int_range(options.get('original_volume', 100), 0, 100, 'Volume inválido.'),
                   'subtitle_source': subtitle_source,
+                  'filter': _filter_id(options.get('filter')),
                   'shorten_pauses': bool(options.get('shorten_pauses', False)) and not use_narration,
                   'autopilot': bool(options.get('autopilot', False)),
                   'autopilot_run_id': ((p.get('autopilot') or {}).get('run_id')
@@ -588,6 +704,11 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
         if plan is not None:
             params['edit_plan'] = copy.deepcopy(plan)
             params['edit_plan_name'] = plan_name
+        if framing == 'mix':
+            # Por trecho: usa os trechos marcados no corte; sem trechos, a variação automática.
+            clip_len = clip['end'] - clip['start']
+            params['framing_segments'] = (clean_framing_segments(clip.get('framing_segments'), clip_len)
+                                          or auto_framing_segments(p, clip))
         if preview:
             params['preview'] = True
         if use_narration:
@@ -602,7 +723,7 @@ def preview_path(project_id: str, clip_id: int) -> Path:
     p = storage.read_project(project_id)
     record = _find_clip(p, clip_id).get('preview') or {}
     name = record.get('file') or ''
-    if not re.fullmatch(r'clip_\d{2}_(9x16|16x9|1x1|orig)_v\d+\.mp4', name):
+    if not re.fullmatch(r'clip_\d{2,}_(9x16|16x9|1x1|orig)_v\d+\.mp4', name):
         raise AppError('Gere a prévia deste corte primeiro.', 404, 'no_preview')
     path = storage.project_dir(project_id) / 'preview' / name
     if not path.is_file():
@@ -704,7 +825,7 @@ def publication_text(project_id: str, clip_id: int, fmt: str) -> tuple[Path, str
     if not record or not record.get('package_file'):
         raise AppError('Pacote de publicação não encontrado. Exporte o corte primeiro.', 404, 'not_found')
     name = record['package_file']
-    if not re.fullmatch(r'clip_\d{2}_(9x16|16x9|1x1|orig)_v\d+\.txt', name):
+    if not re.fullmatch(r'clip_\d{2,}_(9x16|16x9|1x1|orig)_v\d+\.txt', name):
         raise AppError('Arquivo não encontrado.', 404, 'not_found')
     path = storage.project_dir(project_id) / 'clips' / name
     if not path.is_file():
@@ -713,12 +834,41 @@ def publication_text(project_id: str, clip_id: int, fmt: str) -> tuple[Path, str
 
 
 def reanalyze(project_id: str) -> dict:
+    """Analisa o vídeo de novo, do zero (transcrição, cenas e seleção). Num projeto pronto, os cortes atuais
+    são substituídos ao terminar; se a nova análise falhar ou for cancelada, eles continuam valendo."""
+    if _jobs().for_project(project_id, active_only=True):
+        raise AppError('Aguarde as tarefas em andamento deste projeto terminarem.', 409, 'busy')
+    return _queue_analysis(project_id, {}, from_status=('error', 'cancelled', 'interrupted', 'ready'))
+
+
+def _queue_analysis(project_id: str, params: dict, *, from_status: tuple[str, ...]) -> dict:
     with storage.edit_project(project_id) as p:
-        if p.get('status') not in ('error', 'cancelled', 'interrupted'):
-            raise AppError('Só é possível reprocessar análises com erro, canceladas ou interrompidas.', 409, 'bad_state')
+        if p.get('status') not in from_status:
+            raise AppError('Este projeto não pode ser analisado de novo agora.', 409, 'bad_state')
+        if not (storage.project_dir(project_id) / p['filename']).is_file():
+            raise AppError('O vídeo deste projeto não está mais na pasta; envie o arquivo de novo.', 409, 'no_source')
         p['status'] = 'queued'
         p['error'] = None
-    job, _ = _jobs().submit(project_id, 'analysis', {}, dedupe_key=f'analysis:{project_id}')
+    job, _ = _jobs().submit(project_id, 'analysis', dict(params), dedupe_key=f'analysis:{project_id}')
+    with storage.edit_project(project_id) as p:
+        p['analysis_job'] = job['id']
+    return public_job(job)
+
+
+def reselect(project_id: str) -> dict:
+    """Refaz só a escolha dos cortes sobre a transcrição já salva, com as Configurações atuais de curadoria
+    (ex.: IA ativada depois da análise). Os cortes atuais são substituídos ao terminar."""
+    if _jobs().for_project(project_id, active_only=True):
+        raise AppError('Aguarde as tarefas em andamento deste projeto terminarem.', 409, 'busy')
+    with storage.edit_project(project_id) as p:
+        if p.get('status') != 'ready':
+            raise AppError('A seleção só pode ser refeita em projetos prontos.', 409, 'bad_state')
+        if (p.get('transcription') or {}).get('state') != 'ok' or not p.get('transcript'):
+            raise AppError('Este projeto não tem transcrição salva; use Reanalisar.', 409, 'no_transcript')
+        p['curation_profile'] = copy.deepcopy(settings.load()['curation'])
+        p['status'] = 'queued'
+        p['error'] = None
+    job, _ = _jobs().submit(project_id, 'analysis', {'reselect': True}, dedupe_key=f'analysis:{project_id}')
     with storage.edit_project(project_id) as p:
         p['analysis_job'] = job['id']
     return public_job(job)
@@ -754,7 +904,7 @@ def export_path(project_id: str, clip_id: int, fmt: str | None, kind: str = 'mp4
     if not record:
         raise AppError('Exporte o trecho neste formato antes de baixar.', 404, 'not_exported')
     name = record.get('file') if kind == 'mp4' else record.get('srt_file')
-    if not name or not re.fullmatch(r'clip_\d{2}_(9x16|16x9|1x1|orig)_v\d+\.(mp4|srt)', name):
+    if not name or not re.fullmatch(r'clip_\d{2,}_(9x16|16x9|1x1|orig)_v\d+\.(mp4|srt)', name):
         raise AppError('Arquivo não encontrado.', 404, 'not_found')
     path = storage.project_dir(project_id) / 'clips' / name
     if not path.is_file():

@@ -1,13 +1,20 @@
 """Leitura e validação do arquivo de marcação ``cortes.csv``.
 
 Colunas obrigatórias: ``video_origem``, ``tempo_inicio``, ``tempo_fim``, ``layout``.
-Coluna opcional: ``nome`` (base do nome do arquivo de saída).
+Colunas opcionais:
+
+- ``nome``: base do nome do arquivo de saída;
+- ``script``: roteiro de narração. Com ele, a linha vira um vídeo narrado (voz sintética como faixa
+  principal, áudio original bem baixo ao fundo, legenda gerada da narração). Aceita o texto direto
+  (entre aspas, pode ter quebras de linha) ou o caminho de um ``.txt`` (relativo à pasta do CSV);
+- ``voz``: voz neural da narração (padrão ``pt-BR-AntonioNeural``).
 
 Cada linha inválida vira um erro com o número da linha, sem interromper as demais.
 """
 from __future__ import annotations
 
 import csv
+import io
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +36,12 @@ class CutRow:
     end: float
     layout: str
     name: str = ''
+    script: str = ''
+    voice: str = ''
+
+    @property
+    def narrated(self) -> bool:
+        return bool(self.script)
 
     @property
     def duration(self) -> float:
@@ -84,12 +97,13 @@ def parse_csv(path: Path) -> ParseResult:
         raise CsvError(f'Arquivo não encontrado: {path}') from exc
     except UnicodeDecodeError:
         text = path.read_text(encoding='cp1252')  # CSV salvo pelo Excel no Windows
-    reader = csv.DictReader(text.splitlines(), dialect=_sniff_dialect(text[:4096]))
+    # StringIO (e não splitlines): o roteiro pode ter quebras de linha dentro das aspas.
+    reader = csv.DictReader(io.StringIO(text, newline=''), dialect=_sniff_dialect(text[:4096]))
     headers = {h.strip().lower(): h for h in (reader.fieldnames or []) if h}
     missing = [c for c in REQUIRED if c not in headers]
     if missing:
         raise CsvError('Colunas ausentes no CSV: ' + ', '.join(missing) +
-                       '. Esperado: ' + ', '.join(REQUIRED) + ' (e opcionalmente nome).')
+                       '. Esperado: ' + ', '.join(REQUIRED) + ' (e opcionalmente nome, script, voz).')
 
     result = ParseResult()
     base = path.resolve().parent
@@ -121,4 +135,20 @@ def _parse_row(line: int, row: dict, base: Path) -> CutRow:
     layout = _LAYOUT_ALIASES.get(layout, layout)
     if layout not in LAYOUTS:
         raise ValueError(f'layout "{row["layout"]}" desconhecido (use {", ".join(LAYOUTS)})')
-    return CutRow(line=line, video=video, start=start, end=end, layout=layout, name=row.get('nome', ''))
+    return CutRow(line=line, video=video, start=start, end=end, layout=layout, name=row.get('nome', ''),
+                  script=_script(row.get('script', ''), base), voice=row.get('voz', ''))
+
+
+def _script(value: str, base: Path) -> str:
+    """Texto do roteiro; um valor terminado em ``.txt`` é lido do arquivo (relativo à pasta do CSV)."""
+    if not value.lower().endswith('.txt') or '\n' in value:
+        return value
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = base / path
+    try:
+        return path.read_text(encoding='utf-8-sig').strip()
+    except FileNotFoundError as exc:
+        raise ValueError(f'arquivo de script não encontrado: {path}') from exc
+    except UnicodeDecodeError:
+        return path.read_text(encoding='cp1252').strip()

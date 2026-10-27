@@ -9,11 +9,13 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 import shutil
+import threading
 import time
 
-from . import (curation, direction, media, music, narration, publish, reframe, rights, selection, settings, storage,
-               subtitles, transcription)
+from . import (config, curation, direction, filters, media, music, narration, publish, reframe, rights, selection, settings,
+               storage, subtitles, transcription)
 from .errors import AppError, Cancelled
 from .jobs import JobContext
 
@@ -21,6 +23,31 @@ log = logging.getLogger('autocortes.pipeline')
 
 
 # --------------------------------------------------------------------------- análise
+
+class _AnyEvent:
+    """Evento de cancelamento que dispara com o do job ou com um próprio (``set``)."""
+
+    def __init__(self, parent):
+        self.parent, self.own = parent, threading.Event()
+
+    def set(self) -> None:
+        self.own.set()
+
+    def is_set(self) -> bool:
+        return self.own.is_set() or bool(self.parent is not None and self.parent.is_set())
+
+    def wait(self, timeout: float) -> bool:
+        return self.own.wait(timeout) or self.is_set()
+
+
+def _saved_analysis(pid: str) -> tuple[dict, list[dict], dict, list[float]]:
+    """Mídia, transcrição e cenas já gravadas: refazer a seleção não transcreve de novo (horas numa live)."""
+    p = storage.read_project(pid)
+    t_status = p.get('transcription') or {}
+    if not p.get('media') or t_status.get('state') != 'ok' or not p.get('transcript'):
+        raise AppError('Este projeto não tem transcrição salva; use Reanalisar.', 409, 'no_transcript')
+    return p['media'], p['transcript'], t_status, p.get('scenes') or []
+
 
 def run_analysis(ctx: JobContext) -> dict:
     pid = ctx.project_id
@@ -34,49 +61,84 @@ def run_analysis(ctx: JobContext) -> dict:
                                       'third_party_footage', 'monetization', 'recognize_music',
                                       'target_seconds', 'desired_count')}
 
-    ctx.stage('validando', 'Validando o arquivo de vídeo')
-    info = media.probe_media(source)
-    warnings = media.integrity_warnings(source, info)
-    ctx.progress(0.03)
-
-    ctx.stage('musica', 'Verificando música (somente se autorizado)')
-    music_review = music.recognize_music(source, info['duration'], bool(opts['recognize_music']), info['audio'],
-                                         cancel_event=ctx.cancel_event, audio_index=info.get('audio_index'))
-    review = rights.rights_review(opts['source_rights'], opts['external_audio'], opts['license_notes'] or '',
-                                  info['audio'], opts.get('graphics_rights') or 'unknown',
-                                  opts.get('third_party_footage') or 'unknown', opts.get('monetization') or 'unknown',
-                                  music_review)
-    with storage.edit_project(pid) as p:
-        p.update({'media': info, 'rights': review, 'music_review': music_review, 'warnings': warnings})
-    ctx.progress(0.08)
-
-    transcript: list[dict] = []
-    if not info['audio']:
-        t_status = {'state': 'no_audio', 'message': 'Vídeo sem áudio: não há fala para analisar; cortes temporais.'}
-    elif not transcription.available():
-        t_status = {'state': 'not_installed', 'message': 'Transcrição não instalada (faster-whisper). Sem '
-                    'transcrição, os cortes são apenas temporais — não há análise do conteúdo falado.'}
+    saved = _saved_analysis(pid) if ctx.params.get('reselect') else None
+    if saved:  # refazer só a seleção: mídia, transcrição e cenas da análise anterior
+        info, transcript, t_status, scenes = saved
+        ctx.progress(0.88)
     else:
-        work = folder / 'work'
-        try:
-            storage.ensure_free_space(int(info['duration'] * 32_000) + 50 * 1024 ** 2, folder)
-            ctx.stage('extraindo_audio', 'Extraindo áudio para transcrição')
-            wav = media.extract_audio_wav(source, info, work / 'audio.wav', on_progress=ctx.span(0.08, 0.14),
-                                          cancel_event=ctx.cancel_event)
-            ctx.stage('transcrevendo', 'Transcrevendo a fala localmente')
-            transcript, t_status = transcription.transcribe(wav, info['duration'], on_progress=ctx.span(0.14, 0.74),
-                                                            cancel_event=ctx.cancel_event)
-        except media.FFmpegError as exc:
-            t_status = {'state': 'failed', 'message': 'Não foi possível extrair o áudio; cortes temporais. '
-                        + exc.args[0]}
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
-    ctx.progress(0.75)
+        ctx.stage('validando', 'Validando o arquivo de vídeo')
+        info = media.probe_media(source)
+        warnings = media.integrity_warnings(source, info)
+        ctx.progress(0.03)
 
-    ctx.stage('cenas', 'Detectando mudanças de cena')
-    scenes = media.detect_scenes(source, info, folder / 'work', on_progress=ctx.span(0.75, 0.88),
-                                 cancel_event=ctx.cancel_event)
-    shutil.rmtree(folder / 'work', ignore_errors=True)
+        ctx.stage('musica', 'Verificando música (somente se autorizado)')
+        music_review = music.recognize_music(source, info['duration'], bool(opts['recognize_music']), info['audio'],
+                                             cancel_event=ctx.cancel_event, audio_index=info.get('audio_index'))
+        review = rights.rights_review(opts['source_rights'], opts['external_audio'], opts['license_notes'] or '',
+                                      info['audio'], opts.get('graphics_rights') or 'unknown',
+                                      opts.get('third_party_footage') or 'unknown', opts.get('monetization') or 'unknown',
+                                      music_review)
+        with storage.edit_project(pid) as p:
+            p.update({'media': info, 'rights': review, 'music_review': music_review, 'warnings': warnings})
+        ctx.progress(0.08)
+
+        # Cenas em paralelo com a transcrição: na GPU a detecção quase não usa CPU, e em vídeos longos ela
+        # levava quase tanto tempo quanto a transcrição. Pasta própria: a transcrição apaga a sua ao terminar.
+        scene_state: dict = {'fraction': 0.0, 'scenes': [], 'error': None}
+        scene_stop = _AnyEvent(ctx.cancel_event)   # para a detecção se a análise falhar antes dela terminar
+
+        def find_scenes() -> None:
+            try:
+                scene_state['scenes'] = media.detect_scenes(
+                    source, info, folder / 'work_cenas', cancel_event=scene_stop,
+                    on_progress=lambda f, _m='': scene_state.__setitem__('fraction', f))
+            except Cancelled as exc:  # relançado na thread do job
+                scene_state['error'] = exc
+            except Exception:
+                # As cenas só refinam as bordas dos cortes: uma falha aqui não pode descartar horas de
+                # transcrição. Segue sem elas.
+                log.warning('Detecção de cenas falhou; seguindo sem cenas.', exc_info=True)
+
+        scene_thread = threading.Thread(target=find_scenes, name=f'cenas-{pid[:8]}', daemon=True)
+        scene_thread.start()
+
+        transcript: list[dict] = []
+        if not info['audio']:
+            t_status = {'state': 'no_audio', 'message': 'Vídeo sem áudio: não há fala para analisar; cortes temporais.'}
+        elif not transcription.available():
+            t_status = {'state': 'not_installed', 'message': 'Transcrição não instalada (faster-whisper). Sem '
+                        'transcrição, os cortes são apenas temporais — não há análise do conteúdo falado.'}
+        else:
+            work = folder / 'work'
+            try:
+                storage.ensure_free_space(int(info['duration'] * 32_000) + 50 * 1024 ** 2, folder)
+                ctx.stage('extraindo_audio', 'Extraindo áudio para transcrição')
+                wav = media.extract_audio_wav(source, info, work / 'audio.wav', on_progress=ctx.span(0.08, 0.14),
+                                              cancel_event=ctx.cancel_event)
+                ctx.stage('transcrevendo', 'Transcrevendo a fala localmente')
+                transcript, t_status = transcription.transcribe(wav, info['duration'], on_progress=ctx.span(0.14, 0.74),
+                                                                cancel_event=ctx.cancel_event)
+            except media.FFmpegError as exc:
+                t_status = {'state': 'failed', 'message': 'Não foi possível extrair o áudio; cortes temporais. '
+                            + exc.args[0]}
+            except BaseException:
+                scene_stop.set()
+                raise
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        ctx.progress(0.75)
+
+        if scene_thread.is_alive():
+            ctx.stage('cenas', 'Detectando mudanças de cena')
+            while scene_thread.is_alive():
+                scene_thread.join(1.0)
+                ctx.progress(0.75 + 0.13 * scene_state['fraction'])
+        scene_thread.join()
+        shutil.rmtree(folder / 'work_cenas', ignore_errors=True)
+        if scene_state['error'] is not None:
+            raise scene_state['error']
+        scenes = scene_state['scenes']
+        ctx.progress(0.88)
 
     ctx.stage('selecionando', 'Selecionando os melhores trechos')
     fallback = None if t_status['state'] == 'ok' else t_status['message']
@@ -141,6 +203,11 @@ def end_analysis(ctx: JobContext, status: str, error: str | None) -> None:
         with storage.edit_project(ctx.project_id) as p:
             if p.get('analysis_job') not in (None, ctx.id):
                 return
+            if p.get('clips') and (ctx.params.get('reselect') or status in ('failed', 'cancelled')):
+                # Refazer a seleção ou a análise de um projeto pronto não terminou: os cortes anteriores continuam
+                # valendo. (Interrompida pelo fechamento do app, a análise é retomada sozinha ao reabrir.)
+                p['status'] = 'ready'
+                return
             p['status'] = {'cancelled': 'cancelled', 'interrupted': 'interrupted'}.get(status, 'error')
             p['error'] = error or {'cancelled': 'Análise cancelada pelo usuário.'}.get(status, 'A análise não terminou.')
 
@@ -195,7 +262,40 @@ def run_export(ctx: JobContext) -> dict:
         keep = direction.keep_intervals(plan, end - start)
         if keep:
             keep = media.snap_intervals(keep, media.output_fps(info) or info.get('fps') or 30)
+    if prm['format'] != 'original':
+        # Antes da legenda: sem as faixas pretas o vídeo muda de altura na tela, e a legenda se posiciona por ela.
+        ctx.stage('enquadramento', 'Procurando faixas pretas no vídeo')
+        box = media.detect_letterbox(folder / p['filename'], info, start, end, cancel_event=ctx.cancel_event)
+        if box:
+            info = {**info, 'letterbox': box}
+            warnings.append(f"Faixas pretas do vídeo original removidas (área útil {box['w']}×{box['h']}).")
+    narration_subs = bool(placed) and prm.get('subtitle_source', 'narracao') == 'narracao'
+    if prm.get('subtitles') and prm.get('refine_subtitles', True) and not narration_subs:
+        p = _refine_transcript(ctx, folder, p, info, start, end, warnings, title=prm.get('title'))
     width, height = media.target_size(prm['format'], info)
+    segments = prm.get('framing_segments') if prm['framing'] == 'mix' else None
+    kinds = {seg['framing'] for seg in segments or []}
+    # Legenda: no "por trecho" com algum desfocado/quadro inteiro, fica abaixo da faixa do vídeo nesses
+    # trechos; nos de seguir rosto (tela cheia) essa mesma altura continua sobre a imagem, sem borda.
+    track = None
+    if prm['framing'] in ('track', 'streamer', 'split') or kinds & {'track', 'streamer', 'split'}:
+        # Antes da legenda: no "só o streamer" ela se posiciona pela altura da janela da webcam.
+        ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
+        track = _cached_track(folder, p, info, start, end, prm['format'], ctx)
+        if not track['ok']:
+            warnings.append(track['message'])
+        elif 'streamer' in kinds | {prm['framing']} and not track.get('facecam'):
+            warnings.append('Nenhuma janela de webcam encontrada no corte; "só o streamer" seguiu o rosto.')
+        elif 'split' in kinds | {prm['framing']} and not track.get('facecam'):
+            warnings.append('Nenhuma janela de webcam encontrada no corte; "webcam + jogo" seguiu o rosto.')
+        elif 'split' in kinds | {prm['framing']} and prm['format'] != '9:16':
+            warnings.append('"Webcam + jogo" é só para o formato vertical; neste formato o vídeo seguiu o rosto.')
+    if segments:
+        band_framing = ('blur' if kinds & {'blur', 'fit'} else 'split' if 'split' in kinds
+                        else 'streamer' if 'streamer' in kinds else 'track')
+    else:
+        band_framing = prm['framing']
+    band = media.content_band(prm['format'], band_framing, info, (width, height), (track or {}).get('facecam'))
     out_len = sum(b - a for a, b in keep) if keep else end - start
     hook_text = prm.get('hook_text') if prm.get('hook') else None
     sub_report = subtitles._new_report()
@@ -233,7 +333,7 @@ def run_export(ctx: JobContext) -> dict:
                     lines = [line for line in lines if line]
                 if lines:
                     ass_text = subtitles.to_ass_dynamic(lines, width, height, hook_text=hook_text, clip_len=out_len,
-                                                        report=sub_report)
+                                                        report=sub_report, video_band=band)
                 else:
                     warnings.append('Legenda dinâmica indisponível (a transcrição não tem o tempo de cada palavra); '
                                     'usada a legenda clássica.')
@@ -241,27 +341,18 @@ def run_export(ctx: JobContext) -> dict:
                 warnings.append('Legenda dinâmica usa a fala transcrita; com legenda da narração foi usada a clássica.')
             if ass_text is None:
                 ass_text = subtitles.to_ass(cues, width, height, hook_text=hook_text, clip_len=out_len,
-                                            report=sub_report)
+                                            report=sub_report, video_band=band)
     if ass_text is None and hook_text:
-        ass_text = subtitles.to_ass([], width, height, hook_text=hook_text, clip_len=out_len, report=sub_report)
-    if prm['format'] != 'original':
-        ctx.stage('enquadramento', 'Procurando faixas pretas no vídeo')
-        box = media.detect_letterbox(folder / p['filename'], info, start, end, cancel_event=ctx.cancel_event)
-        if box:
-            info = {**info, 'letterbox': box}
-            warnings.append(f"Faixas pretas do vídeo original removidas (área útil {box['w']}×{box['h']}).")
-    track = None
-    if prm['framing'] == 'track':
-        ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
-        track = _cached_track(folder, p, info, start, end, prm['format'], ctx)
-        if not track['ok']:
-            warnings.append(track['message'])
+        ass_text = subtitles.to_ass([], width, height, hook_text=hook_text, clip_len=out_len, report=sub_report,
+                                    video_band=band)
     post = audio_extra = ''
+    look = filters.chain(prm.get('filter'))   # filtro de cor escolhido, antes da cor/zoom do plano
     if plan:
         remap = (lambda t: media.remap_time(t, keep)) if keep else (lambda t: t)
         post = direction.video_post_filters(plan, (width, height), media.output_fps(info) or info.get('fps') or 30,
                                             out_len, remap)
         audio_extra = '' if placed else direction.audio_filters(plan, out_len)
+    post = look + post
     preview = bool(prm.get('preview'))
     ctx.stage('renderizando', 'Renderizando a prévia' if preview else 'Renderizando o corte')
     out_dir = folder / ('preview' if preview else 'clips')
@@ -272,7 +363,8 @@ def run_export(ctx: JobContext) -> dict:
                                on_progress=(ctx.span(0.25, 1.0) if placed else (lambda f, m='': ctx.progress(f))),
                                cancel_event=ctx.cancel_event, narration=placed, keep=keep,
                                original_volume=max(0, min(100, int(prm.get('original_volume', 100)))) / 100,
-                               track=track, post=post, audio_extra=audio_extra, preview=preview)
+                               track=track, post=post, audio_extra=audio_extra, preview=preview,
+                               segments=segments)
     result['warnings'] = warnings + result['warnings']
     # Verificação de qualidade visual registrada na exportação: a legenda cabe e o rosto não foi cortado.
     quality = {'subtitles': sub_report if sub_report['events'] else None,
@@ -328,6 +420,64 @@ def run_export(ctx: JobContext) -> dict:
     for message in record['warnings']:
         ctx.warn(message)
     return record
+
+
+def _refined(p: dict, start: float, end: float) -> bool:
+    model = config.WHISPER_REFINE_MODEL
+    return any(a <= start + 0.05 and end - 0.05 <= b and m == model for a, b, m in p.get('transcript_refined') or [])
+
+
+def _refine_prompt(project_name: str | None, title: str | None) -> str:
+    """Dica de vocabulário para o modelo: nome do vídeo (sem data, resolução e extensão) e título do corte."""
+    name = re.sub(r'\.[A-Za-z0-9]{2,4}$', '', project_name or '')
+    words = [w for w in re.split(r'[\s_\-]+', name) if w and not any(ch.isdigit() for ch in w)]
+    return '. '.join(part for part in (' '.join(words), (title or '').strip()) if part)
+
+
+def _refine_transcript(ctx: JobContext, folder: Path, p: dict, info: dict, start: float, end: float,
+                       warnings: list[str], *, title: str | None = None) -> dict:
+    """Legenda precisa: retranscreve só o áudio do corte com o modelo maior e grava no projeto.
+
+    As frases do projeto cujo meio cai dentro do corte são trocadas pelas novas (1 s de folga em cada ponta
+    para não cortar palavras); o intervalo fica marcado e a próxima prévia/exportação não repete o trabalho.
+    """
+    if _refined(p, start, end) or info.get('audio_index') is None:
+        return p
+    # Mesmo quando a análise já usou o modelo grande vale retranscrever: na análise a live inteira vai em lotes,
+    # sem o contexto da frase anterior e com busca menor (beam 3); só o corte, com contexto e beam 5, erra menos.
+    if not transcription.refine_available():
+        warnings.append('Legenda precisa indisponível (precisa de GPU NVIDIA com requirements-gpu.txt); '
+                        'usada a transcrição da análise.')
+        return p
+    ctx.stage('legenda', f'Refinando a legenda ({config.WHISPER_REFINE_MODEL})')
+    a, b = max(0.0, start - 1.0), min(info['duration'], end + 1.0)
+    work = folder / 'work_legenda'
+    try:
+        work.mkdir(parents=True, exist_ok=True)
+        wav = work / 'trecho.wav'
+        media.run_ffmpeg(['-ss', f'{a:.3f}', '-t', f'{b - a:.3f}', '-i', str(folder / p['filename']),
+                          '-map', f"0:{info['audio_index']}", '-vn', '-ac', '1', '-ar', '16000', str(wav)],
+                         duration=b - a, cancel_event=ctx.cancel_event)
+        segments, status = transcription.refine(wav, prompt=_refine_prompt(p.get('name'), title),
+                                                cancel_event=ctx.cancel_event)
+    except media.FFmpegError:
+        segments, status = [], {'state': 'failed', 'message': 'Não foi possível extrair o áudio do corte.'}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    if status['state'] != 'ok' or not segments:
+        warnings.append(status.get('message') or 'Legenda precisa sem fala reconhecida; usada a da análise.')
+        return p
+    shift = lambda seg: {**seg, 'start': round(seg['start'] + a, 2), 'end': round(seg['end'] + a, 2),  # noqa: E731
+                         'words': [{**w, 'start': round(w['start'] + a, 2), 'end': round(w['end'] + a, 2)}
+                                   for w in seg.get('words') or []]}
+    inside = lambda seg: start <= (seg['start'] + seg['end']) / 2 <= end  # noqa: E731
+    fresh = [seg for seg in map(shift, segments) if inside(seg)]
+    with storage.edit_project(ctx.project_id) as q:
+        kept = [seg for seg in q.get('transcript') or [] if not inside(seg)]
+        q['transcript'] = sorted(kept + fresh, key=lambda seg: seg['start'])
+        q.setdefault('transcript_refined', []).append([round(start, 3), round(end, 3), config.WHISPER_REFINE_MODEL])
+        updated = q
+    return updated
 
 
 def _cached_track(folder: Path, p: dict, info: dict, start: float, end: float, fmt: str, ctx: JobContext) -> dict:

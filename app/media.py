@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import collections
 import json
+import logging
 import math
 import os
 import re
@@ -26,9 +27,14 @@ from typing import Callable
 from . import config, storage
 from .errors import AppError, Cancelled, sanitize
 
+log = logging.getLogger('autocortes.media')
+
 ALLOWED_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'}
 FORMATS = ('9:16', '16:9', '1:1', 'original')
-FRAMINGS = ('fit', 'blur', 'track')  # track = seguir rosto (recorta as laterais)
+# track = seguir rosto (recorta as laterais); streamer = só a janela da webcam, com fundo desfocado;
+# split = tela dividida (webcam em cima, jogo embaixo); mix = por trecho
+FRAMINGS = ('fit', 'blur', 'track', 'streamer', 'split', 'mix')
+SEGMENT_FRAMINGS = ('fit', 'blur', 'track', 'streamer', 'split')  # o que cada trecho do modo "por trecho" pode usar
 FORMAT_SLUG = {'9:16': '9x16', '16:9': '16x9', '1:1': '1x1', 'original': 'orig'}
 
 ProgressFn = Callable[[float, str], None]
@@ -375,22 +381,46 @@ def detect_scenes(source: Path, media: dict, work_dir: Path, *, on_progress: Pro
     if os.getenv('AUTOCORTES_SCENES', '1') == '0':
         return []
     work_dir.mkdir(parents=True, exist_ok=True)
-    out = work_dir / 'scenes.txt'
-    vf = f"fps=4,scale=192:-2,select='gt(scene,{threshold})',metadata=print:file=scenes.txt"
-    try:
-        run_ffmpeg(['-i', str(source), '-map', f"0:{media['video_index']}", '-an', '-vf', vf, '-f', 'null', '-'],
-                   duration=media['duration'], cwd=work_dir, on_progress=on_progress, cancel_event=cancel_event)
-    except FFmpegError:
-        return []
+    # Nome único por execução: um FFmpeg órfão de uma análise interrompida (servidor reiniciado) pode
+    # continuar com o arquivo antigo aberto, e no Windows ele não pode ser apagado nem reescrito.
+    out = work_dir / f'scenes-{secrets.token_hex(4)}.txt'
+    detect = f"select='gt(scene,{threshold})',metadata=print:file={out.name}"
+    # Só 4 quadros/s são comparados, então os quadros que não servem de referência nem precisam ser
+    # decodificados (noref). Na GPU (NVDEC) a decodificação e a redução ficam na placa: ~97% menos CPU,
+    # o que deixa a detecção rodar junto com a transcrição.
+    attempts = []
+    if os.getenv('AUTOCORTES_HWACCEL', '1') != '0':
+        attempts.append(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-skip_frame', 'noref',
+                         '-i', str(source), '-map', f"0:{media['video_index']}", '-an',
+                         '-vf', f'fps=4,scale_cuda=192:-2,hwdownload,format=nv12,{detect}'])
+    attempts.append(['-skip_frame', 'noref', '-i', str(source), '-map', f"0:{media['video_index']}", '-an',
+                     '-vf', f'fps=4,scale=192:-2,{detect}'])
+    for i, args in enumerate(attempts):
+        _unlink_quietly(out)
+        try:
+            run_ffmpeg(args + ['-f', 'null', '-'], duration=media['duration'], cwd=work_dir,
+                       on_progress=on_progress, cancel_event=cancel_event)
+            break
+        except FFmpegError:
+            if i == len(attempts) - 1:
+                return []
+            log.info('Detecção de cenas sem GPU (NVDEC indisponível para este vídeo); usando a CPU.')
     if not out.exists():
         return []
     times = [float(m) for m in re.findall(r'pts_time:([0-9.]+)', out.read_text(errors='replace'))]
-    out.unlink(missing_ok=True)
+    _unlink_quietly(out)
     result: list[float] = []
     for value in sorted(times):
         if 0 < value < media['duration'] and (not result or value - result[-1] >= 1.0):
             result.append(round(value, 2))
     return result
+
+
+def _unlink_quietly(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:  # preso por outro processo no Windows; a pasta de trabalho é apagada depois
+        pass
 
 
 # --------------------------------------------------------------------------- exportação
@@ -464,6 +494,27 @@ def visible_size(media: dict) -> tuple[int, int]:
     """Largura e altura do conteúdo útil (sem as faixas pretas, quando detectadas)."""
     box = media.get('letterbox')
     return (box['w'], box['h']) if box else (media['width'], media['height'])
+
+
+def content_band(fmt: str, framing: str, media: dict, size: tuple[int, int],
+                 facecam: list | None = None) -> tuple[int, int] | None:
+    """Faixa vertical ``(topo, base)`` onde o vídeo aparece nos enquadramentos que não cortam a imagem.
+
+    ``None`` quando o vídeo ocupa a tela inteira (formato original, ou seguir rosto, que recorta).
+    """
+    if fmt == 'original' or framing not in ('blur', 'fit', 'streamer', 'split'):
+        return None
+    W, H = size
+    vw, vh = visible_size(media)
+    if framing == 'split':  # a legenda fica logo abaixo da webcam, no topo do jogo
+        return (0, split_top_height(W, H, media, facecam)) if facecam and H > W else None
+    if framing == 'streamer':
+        if not facecam:
+            return None
+        vw, vh = vw * facecam[2], vh * facecam[3]
+    h = min(H, W * vh / max(1, vw))
+    top = (H - h) / 2
+    return round(top), round(top + h)
 
 
 def source_label(media: dict) -> str:
@@ -610,8 +661,7 @@ def _blur_branch(inp: str, W: int, H: int, out: str) -> str:
 def _track_graph(src: str, pre: str, subs: str, W: int, H: int, track: dict) -> str:
     """Recorte que segue o rosto (expressão de tempo no crop) e fundo desfocado nas cenas sem rosto."""
     from . import reframe
-    x = f"clip(({reframe.crop_x_expression(track['shots'])})*iw-ow/2,0,iw-ow)"
-    crop = f"crop=w='2*trunc(ih*{W}/{H}/2)':h=ih:x='{x}':y=0,scale={W}:{H}:flags=bicubic,setsar=1"
+    crop = _track_crop(W, H, track)
     enable = reframe.fit_enable_expression(track['shots'])
     if not enable:
         return f'{src}{crop},{pre}setsar=1{subs}[vout]'
@@ -620,9 +670,129 @@ def _track_graph(src: str, pre: str, subs: str, W: int, H: int, track: dict) -> 
             f";[trk][fitv]overlay=0:0:enable='{enable}'[mix];[mix]{pre}setsar=1{subs}[vout]")
 
 
+def _track_crop(W: int, H: int, track: dict) -> str:
+    from . import reframe
+    x = f"clip(({reframe.crop_x_expression(track['shots'])})*iw-ow/2,0,iw-ow)"
+    return f"crop=w='2*trunc(ih*{W}/{H}/2)':h=ih:x='{x}':y=0,scale={W}:{H}:flags=bicubic,setsar=1"
+
+
+def _facecam_crop(rect: list) -> str:
+    x, y, w, h = rect
+    return f'crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},'
+
+
+SPLIT_TOP_MIN, SPLIT_TOP_MAX = 0.28, 0.42   # altura da webcam na tela dividida (fração da altura)
+
+
+def split_top_height(W: int, H: int, media: dict, rect: list) -> int:
+    """Altura da faixa da webcam na tela dividida: a janela ocupa a largura toda na sua proporção, dentro
+    de 28–42% da tela (webcam muito larga ou muito alta é recortada para caber)."""
+    vw, vh = visible_size(media)
+    natural = W * (vh * rect[3]) / max(1.0, vw * rect[2])
+    return _even(min(H * SPLIT_TOP_MAX, max(H * SPLIT_TOP_MIN, natural)))
+
+
+def split_game_left(W: int, H: int, media: dict, rect: list, top: int) -> float:
+    """Borda esquerda (fração da largura) do recorte do jogo: o centro da tela, mas sem pegar a janela da
+    webcam, que já aparece em cima. Webcam no meio da tela não tem como evitar: fica o centro."""
+    vw, vh = visible_size(media)
+    cw = min(1.0, vh * W / (H - top) / max(1.0, vw))
+    left = (1 - cw) / 2
+    x0, x1 = rect[0], rect[0] + rect[2]
+    if x1 <= 0.5 and x1 > left:          # webcam à esquerda: o recorte começa depois dela
+        left = min(x1, 1 - cw)
+    elif x0 >= 0.5 and x0 < left + cw:   # webcam à direita: o recorte termina antes dela
+        left = max(0.0, x0 - cw)
+    return round(left, 4)
+
+
+def _split_branch(inp: str, W: int, H: int, rect: list, top: int, out: str, left: float = 0.5) -> str:
+    """Tela dividida: janela da webcam em cima (preenchendo a largura) e o jogo embaixo, a partir de
+    ``left`` (fração da largura; 0.5 = centralizado)."""
+    bottom = H - top
+    x = "'(iw-ow)/2'" if left == 0.5 else f"'iw*{left:.4f}'"
+    game = (f"crop=w='2*trunc(min(iw,ih*{W}/{bottom})/2)':h='2*trunc(min(ih,iw*{bottom}/{W})/2)'"
+            f":x={x}:y='(ih-oh)/2'")
+    return (f'{inp}split=2[sc][sg];'
+            f'[sc]{_facecam_crop(rect)}scale={W}:{top}:force_original_aspect_ratio=increase:flags=bicubic,'
+            f'crop={W}:{top},setsar=1[stop];'
+            f'[sg]{game},scale={W}:{bottom}:flags=bicubic,setsar=1[sbot];'
+            f'[stop][sbot]vstack=inputs=2{out}')
+
+
+def _streamer_graph(src: str, pre: str, subs: str, W: int, H: int, rect: list) -> str:
+    """Só o streamer: recorta a janela da webcam e a encaixa na tela com ela mesma desfocada no fundo."""
+    return _blur_branch(f'{src}{_facecam_crop(rect)}{pre}', W, H, f',setsar=1{subs}[vout]')
+
+
+def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[dict], track: dict | None,
+                 split_top: int | None = None, split_left: float = 0.5) -> str:
+    """Enquadramento por trecho: uma versão do vídeo por enquadramento, ligada no tempo de cada trecho.
+
+    As versões são montadas sobre o vídeo antes de ``pre`` (fps, corte de pausas), então os tempos dos
+    trechos são os do corte original, como no recorte que segue o rosto.
+    """
+    from . import reframe
+    kinds = []
+    has_track = bool(track and track.get('ok'))
+    facecam = (track or {}).get('facecam')
+    for seg in segments:
+        kind = seg['framing']
+        if kind in ('streamer', 'split') and not (facecam and split_top):
+            kind = 'track'      # sem janela de webcam: segue o rosto
+        if kind == 'track' and not has_track:
+            kind = 'blur'
+        seg['_kind'] = kind
+        if kind not in kinds:
+            kinds.append(kind)
+    if len(kinds) == 1:
+        only = kinds[0]
+        if only == 'track':
+            return _track_graph(src, pre, subs, W, H, track)
+        if only == 'blur':
+            return _blur_branch(f'{src}{pre}', W, H, f',setsar=1{subs}[vout]')
+        if only == 'streamer':
+            return _streamer_graph(src, pre, subs, W, H, facecam)
+        if only == 'split':
+            return _split_branch(f'{src}{pre}', W, H, facecam, split_top, f',setsar=1{subs}[vout]', split_left)
+        return (f'{src}{pre}scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'
+                f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1{subs}[vout]')
+    labels = ''.join(f'[mx{k}]' for k in range(len(kinds)))
+    parts = [f'{src}split={len(kinds)}{labels}']
+    for k, kind in enumerate(kinds):
+        if kind == 'blur':
+            parts.append(_blur_branch(f'[mx{k}]', W, H, f',setsar=1[mv{k}]'))
+        elif kind == 'streamer':
+            parts.append(_blur_branch(f'[mx{k}]{_facecam_crop(facecam)}', W, H, f',setsar=1[mv{k}]'))
+        elif kind == 'split':
+            parts.append(_split_branch(f'[mx{k}]', W, H, facecam, split_top, f',setsar=1[mv{k}]', split_left)
+                         .replace('[sc]', f'[sc{k}]').replace('[sg]', f'[sg{k}]')
+                         .replace('[stop]', f'[stop{k}]').replace('[sbot]', f'[sbot{k}]'))
+        elif kind == 'fit':
+            parts.append(f'[mx{k}]scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'
+                         f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[mv{k}]')
+        else:  # seguir rosto, com fundo desfocado nas cenas sem rosto (como no modo "seguir rosto")
+            enable = reframe.fit_enable_expression(track['shots'])
+            if enable:
+                parts.append(f'[mx{k}]split=2[mt{k}][mf{k}];[mt{k}]{_track_crop(W, H, track)}[mtc{k}];'
+                             + _blur_branch(f'[mf{k}]', W, H, f',setsar=1[mtf{k}]')
+                             + f";[mtc{k}][mtf{k}]overlay=0:0:enable='{enable}'[mv{k}]")
+            else:
+                parts.append(f'[mx{k}]{_track_crop(W, H, track)}[mv{k}]')
+    # A primeira versão é a base; as outras entram por cima só nos seus trechos.
+    current = '[mv0]'
+    for k, kind in enumerate(kinds[1:], start=1):
+        spans = [f"between(t,{seg['start']:.3f},{seg['end']:.3f})" for seg in segments if seg['_kind'] == kind]
+        parts.append(f"{current}[mv{k}]overlay=0:0:enable='{expr_sum(spans)}'[mo{k}]")
+        current = f'[mo{k}]'
+    parts.append(f'{current}{pre}setsar=1{subs}[vout]')
+    return ';'.join(parts)
+
+
 def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str | None,
                       keep: list[tuple[float, float]] | None = None,
-                      track: dict | None = None, post: str = '') -> tuple[str, tuple[int, int]]:
+                      track: dict | None = None, post: str = '',
+                      segments: list[dict] | None = None) -> tuple[str, tuple[int, int]]:
     """``post``: filtros extras (começando com vírgula) aplicados no quadro final, antes da legenda."""
     W, H = target_size(fmt, media)
     # Formato original mantém o quadro como está; os demais descartam as faixas pretas embutidas.
@@ -632,11 +802,21 @@ def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str |
         fps = output_fps(media) or media.get('fps') or 30
         pre = f"fps={fps:g},select='{_select_expr(keep)}',setpts=N/FRAME_RATE/TB,"
     subs = post + (f',ass={subtitles_file}' if subtitles_file else '')
+    facecam = (track or {}).get('facecam')
+    # Tela dividida só faz sentido em tela vertical (em 16:9 a webcam e o jogo ficariam espremidos).
+    split_top = split_top_height(W, H, media, facecam) if facecam and H > W else None
+    split_left = split_game_left(W, H, media, facecam, split_top) if split_top else 0.5
     if fmt == 'original':
         graph = f'{src}{pre}scale={W}:{H}:flags=bicubic,setsar=1{subs}[vout]'
-    elif framing == 'track' and track and track.get('ok'):
+    elif framing == 'mix' and segments:
+        graph = _mixed_graph(src, pre, subs, W, H, [dict(s) for s in segments], track, split_top, split_left)
+    elif framing == 'split' and split_top:
+        graph = _split_branch(f'{src}{pre}', W, H, facecam, split_top, f',setsar=1{subs}[vout]', split_left)
+    elif framing == 'streamer' and facecam:
+        graph = _streamer_graph(src, pre, subs, W, H, facecam)
+    elif framing in ('track', 'streamer', 'split') and track and track.get('ok'):  # sem webcam: segue o rosto
         graph = _track_graph(src, pre, subs, W, H, track)
-    elif framing in ('blur', 'track'):  # track sem plano válido: fundo desfocado
+    elif framing in ('blur', 'track', 'streamer', 'split', 'mix'):  # sem plano/trechos válidos: fundo desfocado
         graph = _blur_branch(f'{src}{pre}', W, H, f',setsar=1{subs}[vout]')
     else:  # fit: enquadramento original preservado com barras
         graph = (f'{src}{pre}scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'
@@ -671,8 +851,9 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
                       narration: list[dict] | None = None, original_volume: float = 1.0,
                       keep: list[tuple[float, float]] | None = None,
                       track: dict | None = None, post: str = '',
-                      audio_extra: str = '', preview: bool = False) -> tuple[list[str], tuple[int, int]]:
-    graph, size = build_filtergraph(media, fmt, framing, subtitles_file, keep, track, post)
+                      audio_extra: str = '', preview: bool = False,
+                      segments: list[dict] | None = None) -> tuple[list[str], tuple[int, int]]:
+    graph, size = build_filtergraph(media, fmt, framing, subtitles_file, keep, track, post, segments)
     if preview:
         # Prévia: o mesmo grafo (layout, legenda, efeitos) e só no fim reduz à metade para codificar rápido.
         size = (_even(size[0] / 2), _even(size[1] / 2))
@@ -788,7 +969,8 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                 normalize_audio: bool = False, on_progress: ProgressFn | None = None,
                 cancel_event: threading.Event | None = None, narration: list[dict] | None = None,
                 original_volume: float = 1.0, keep: list[tuple[float, float]] | None = None,
-                track: dict | None = None, post: str = '', audio_extra: str = '', preview: bool = False) -> dict:
+                track: dict | None = None, post: str = '', audio_extra: str = '', preview: bool = False,
+                segments: list[dict] | None = None) -> dict:
     """Renderiza em pasta temporária, valida e só então publica com renomeação atômica.
 
     ``preview``: mesma montagem em meia resolução e codificação rápida, para conferir antes de exportar.
@@ -826,7 +1008,7 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                 raise Cancelled()
             args, size = build_export_args(source, media, start, duration, fmt, framing, subs,
                                            normalize_audio, render, narration, original_volume, keep, track,
-                                           post, audio_extra, preview)
+                                           post, audio_extra, preview, segments)
             run_ffmpeg(args, duration=out_duration, cwd=work, cancel_event=cancel_event,
                        on_progress=lambda p, m: progress(p * 0.85, 'Renderizando'))
             return size

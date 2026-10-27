@@ -80,6 +80,28 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 Projetos ficam em `data/` e reaparecem em **Projetos recentes** após reiniciar.
 
+### Quantidade automática de cortes
+
+No modo **Automático** não há campo de quantidade (`desired_count=0`): entram **todos os trechos válidos para
+clipe**, ou seja, com nota de pelo menos 80, do melhor para o pior. Não há limite por hora (só um teto técnico
+de 500). Numa live de 8,5 h isso deu 144 cortes (71 min somados), entre eles 16 dos 19 melhores momentos
+marcados na leitura completa. A API ainda aceita `desired_count` de 1 a 15 para quem quiser um número fixo.
+Nesse modo:
+
+- cada corte acompanha o assunto, de 15 s até 2x a duração alvo, e fica a pelo menos 30 s do próximo
+  (o mesmo assunto não vira três cortes vizinhos);
+- a nota soma, além de clareza e começo/fim limpos, o **interesse** do trecho: história, notícia ou assunto
+  pessoal, emoção, dinheiro e valores, reação e humor, troca de perguntas e pessoas citadas pelo nome;
+- trechos dominados por instruções de partida ("smoke no meio, drone no mercado") perdem pontos;
+- repetições em laço da transcrição ("bora, bora, bora…" dezenas de vezes, típicas do Whisper em música e
+  gritaria) são descartadas, e a pergunta no início vale menos (sozinha, não faz um bom corte);
+- com curadoria por IA, entram os trechos com nota final de pelo menos 70; no piloto automático,
+  `max_clips: 0` exporta todos os cortes aprovados pela nota mínima.
+
+Numa live de 8,5 h, a seleção encontrou cerca de 14 dos 19 melhores momentos marcados na leitura completa
+da transcrição; a anterior, cerca de 11. Humor de diálogo (piadas que dependem do tom) continua difícil para
+a heurística; a curadoria por IA (Configurações) avalia o conteúdo de fato.
+
 ## Modo autônomo (v2.2)
 
 O app pode trabalhar sozinho, do vídeo bruto até os arquivos prontos para revisão. Abra **⚙ Configurações** e defina:
@@ -135,6 +157,20 @@ pip install -r requirements-ai.txt
 
 - **Transcrição:** `faster-whisper` local. Variáveis: `WHISPER_MODEL` (`small` padrão; `base`/`tiny` para pouca memória),
   `WHISPER_DEVICE` (`auto`, `cpu`, `cuda`), `WHISPER_LANGUAGE` (`pt` padrão; `auto` para detectar). O primeiro uso baixa os pesos.
+- **Legenda precisa** (Legendas → "Legenda precisa", ligada por padrão): na prévia e na exportação, o áudio só do
+  corte é retranscrito com `WHISPER_REFINE_MODEL` (`large-v3-turbo` padrão; `off` desliga) na GPU, e essas frases
+  substituem as da análise no projeto. O `small` da análise errava fala rápida, gíria e nomes: num corte de 95 s,
+  8 trechos ("um curinguinho a júnior ou uma painazinha a júnior" → "um Coringuinha Júnior ou uma Tainazinha
+  Júnior"). A primeira vez baixa ~1,6 GB e leva ~50 s (carregar o modelo); depois o mesmo corte não é refeito.
+  Sem GPU NVIDIA, a legenda usa a transcrição da análise e a exportação avisa.
+- **Vídeos longos:** acima de 20 min, o áudio é transcrito em partes de ~20 min cortadas em pausas. A memória
+  fica fixa (pico de ~1,5 GB) em vez de crescer com a duração; antes, uma live de 8 h falhava por falta de memória.
+- **GPU NVIDIA no Windows:** `pip install -r requirements-gpu.txt` instala o cuBLAS e o cuDNN do CUDA 12 (~1,2 GB)
+  que o CTranslate2 procura; sem eles a GPU falha com `cublas64_12.dll` e tudo roda na CPU. Na GPU a transcrição
+  usa inferência em lote (`WHISPER_BATCH_SIZE`, padrão 8; `0` desliga), redividida em frases.
+- **Detecção de cenas:** decodifica na GPU (NVDEC) quando possível e roda em paralelo com a transcrição;
+  `AUTOCORTES_HWACCEL=0` força a CPU. Numa GTX 1650, uma live de 8,5 h passou de mais de 2 h (e sem
+  transcrição) para 43 min de análise completa.
 - **Sem transcrição** (não instalada, vídeo sem áudio, falha ou fala insuficiente), os cortes são **temporais** e
   aparecem identificados como tal, sem nota — não houve análise do conteúdo.
 - **Ollama:** instale, rode `ollama pull llama3.2` e defina `OLLAMA_ENABLED=1` (opcional `OLLAMA_MODEL`). O app só
@@ -195,6 +231,8 @@ O CSV aceita `,` ou `;` como separador (veja `cortes.exemplo.csv`):
 | `tempo_inicio`, `tempo_fim` | `00:15:30`, `15:30`, `930` ou `00:15:30,5` | |
 | `layout` | `single_speaker`, `split_screen`, `pip` | |
 | `nome` (opcional) | `Melhor momento` | base do nome do arquivo |
+| `script` (opcional) | `"Repare nesta cena…"` ou `roteiros/01.txt` | roteiro de narração; com ele, a linha vira vídeo narrado |
+| `voz` (opcional) | `pt-BR-FranciscaNeural` | voz da narração (padrão `--voz`, que é `pt-BR-AntonioNeural`) |
 
 Para cada linha, numa pasta temporária removida ao fim da iteração:
 
@@ -218,6 +256,38 @@ O código de saída é 0 só quando todas as linhas deram certo.
 Dependências: FFmpeg com libass e as bibliotecas de `requirements-ai.txt` (faster-whisper; OpenCV
 para seguir rosto). Sem faster-whisper, os vídeos saem sem legenda e com aviso. O modelo segue
 `WHISPER_MODEL` (padrão `small`) e `WHISPER_LANGUAGE` (padrão `pt`).
+
+### Vídeos narrados (coluna `script`)
+
+```bash
+pip install -r requirements-tts.txt
+python main.py cortes.csv --musica musicas/lofi.mp3 --voz pt-BR-FranciscaNeural --volume-original 0.08
+```
+
+Numa linha com `script` (texto entre aspas, pode ter quebras de linha, ou o caminho de um `.txt`):
+
+1. **Narração** (`app/audio/tts_generator.py`): o roteiro vira MP3 com voz neural pelo `edge-tts`.
+   Precisa de internet; o `edge-tts` usa o serviço de leitura em voz alta do Microsoft Edge e não é
+   uma API oficial com garantia de funcionamento.
+2. **Duração**: o vídeo final dura o mesmo que a narração. O trecho do corte além dela é descartado;
+   se a narração passar do corte em até 1,5 s, o último quadro congela; acima disso a linha falha e
+   pede para aumentar `tempo_fim` ou encurtar o roteiro.
+3. **Legenda**: o Whisper transcreve só a narração. As falas do vídeo original não entram.
+4. **Áudio, numa única codificação** com o layout escolhido: narração com `acompressor` e `loudnorm`
+   (-14 LUFS, LRA 11, -1 dBTP), áudio original a `0.08` (≈ -22 dB) e música opcional a `0.05`,
+   repetida ou cortada; `amix` termina junto com a narração.
+
+Saída `001_nome_layout_narrado.mp4`. A mesma via existe fora do lote:
+`AudioVisualMastering().render_final_clip(video, musica, legenda, saida, tts_audio_path='voz.mp3')`, com a
+legenda gerada por `captions_from_narration('voz.mp3', pasta)`.
+
+**Sobre monetização.** Narração e roteiro próprios são o que as plataformas pedem para não tratar
+o vídeo como reaproveitado, mas não garantem nada. O YouTube avalia se o resultado tem valor
+original e trata como "conteúdo não autêntico" canais de vídeos em série, quase iguais e produzidos
+em massa. A análise não depende de detalhes técnicos como o volume do áudio original. O Content ID
+continua reconhecendo imagem e som de terceiros, e a narração não dá licença sobre esse material.
+Roteiros que comentam, explicam ou contam algo que a cena sozinha não mostra são os que costumam ser
+aceitos. Se a plataforma pedir, informe que a voz é sintética.
 
 ### Masterização final (`app/batch/mastering.py`)
 
@@ -295,6 +365,37 @@ quando não acha rostos; efeitos sonoros e música não são adicionados automat
 de conteúdo é heurística; a análise roda na requisição (alguns segundos para cortes longos), não na fila.
 Nenhum ganho de retenção é afirmado: não há dados de desempenho.
 
+## Só o streamer (lives de jogo com webcam)
+
+Em **Efeitos > Enquadramento**, **Só o streamer (webcam com fundo desfocado)** mostra apenas a janela da
+webcam: ela é recortada, encaixada na largura da tela vertical e a própria webcam, desfocada, preenche em cima e
+embaixo. A legenda fica logo abaixo da webcam.
+
+A janela é achada sozinha na análise de rostos: a partir do rosto real (o que se mexe; ícones e personagens
+do jogo ficam de fora), procura a borda reta, contínua e presente em todos os quadros mais próxima de cada lado,
+enquanto o jogo atrás muda. Lado sem borda (janela encostada na margem) vai até a margem. Se não houver janela
+(câmera em tela cheia), o modo segue o rosto e avisa. Também pode ser usado em trechos do **Por trecho**.
+
+## Enquadramento por trecho
+
+Na aba **Efeitos**, em **Enquadramento**, a opção **Por trecho (variar no vídeo)** deixa cada parte do corte
+com um enquadramento diferente: **seguir rosto**, **fundo desfocado** ou **quadro inteiro**.
+
+- **Mudar a partir daqui:** pare o vídeo onde quer trocar, escolha o enquadramento e clique; o trecho em que
+  o vídeo está é dividido nesse ponto.
+- **Variar automaticamente:** alterna seguir rosto e fundo desfocado a cada troca de cena do corte (cenas
+  com menos de 2,5 s se juntam à seguinte); sem trocas de cena, alterna a cada ~6 s.
+- Cada trecho da lista pode ter o enquadramento trocado ou ser removido (o vizinho ocupa o espaço);
+  clicar no tempo leva o vídeo ao início do trecho.
+- Sem trechos marcados, a exportação "por trecho" usa a variação automática.
+
+Na exportação, o FFmpeg monta uma versão do vídeo para cada enquadramento usado e liga cada uma no tempo
+do seu trecho, numa única codificação. Seguir rosto sem rosto detectado vira fundo desfocado, como no modo
+normal. A legenda fica abaixo da faixa do vídeo nos trechos com desfoque ou barras; nos de seguir rosto (tela
+cheia), a mesma altura fica sobre a imagem. API: `PUT /api/projects/{id}/clips/{n}/framing` com
+`{"segments": [{"start", "end", "framing"}]}` (segundos do corte) e `POST …/framing/auto`; exportar com
+`"framing": "mix"`.
+
 ## Segurança visual: legenda dentro do quadro e rosto inteiro no recorte
 
 **Legendas (`app/textfit.py`, `app/subtitles.py`).** As quebras de linha são decididas pela largura real
@@ -332,9 +433,42 @@ rosto ficar parcialmente fora.
 "PERIGOS DOS ACAMPAMENTOS" passava das duas bordas); visibilidade do rosto no percentil 5 = 100%, com
 um único close em que o rosto é mais largo que o recorte, mostrado em quadro inteiro por 1 s.
 
-**Limitações:** o detector continua sendo o Haar do OpenCV, que não reconhece rostos de perfil acentuado
-ou olhando para cima; nesses quadros não há caixa para proteger. Não há filtro de Kalman, detector YuNet
-ou MediaPipe, identificação de falante por áudio nem aceleração por GPU (itens P1/P2 do relatório).
+**Quem está falando.** O detector é o YuNet (`cv2.FaceDetectorYN`, modelo de 230 KB em `app/data`,
+licença MIT); o Haar só entra se o OpenCV instalado não tiver o YuNet. O Haar marcava papel de parede,
+mosaicos e roupas como rostos (até 8 por quadro numa cena com 3 pessoas) e o recorte ia parar no
+cenário. Agora:
+
+- detecções que aparecem em menos de 3 amostras (0,6 s) são descartadas;
+- quem fala é quem tem mais movimento na boca do que na testa (pelos marcos de boca e olhos do YuNet);
+  numa textura, ou com a câmera em movimento, tudo se mexe igual e a diferença fica perto de zero;
+- rostos muito menores que o maior da cena (figurantes ao fundo) não concorrem;
+- o falante só muda depois de 1 s e com vantagem clara, e a troca para alguém longe, ou uma troca de
+  câmera que a análise de cenas não viu, vira corte seco em vez de a câmera deslizar pelo cenário.
+
+No corte "Visão, você está cego" (22,7 s), o recorte ficava 0,7 s no papel de parede e 1,5 s no mosaico
+em vez do guarda que falava. Agora todos os trechos mostram um rosto, e a abertura sem pessoas sai em
+quadro inteiro com fundo desfocado.
+
+**Limitações:** quem fala é estimado só pela imagem; a identificação pelo áudio (diarização) não existe.
+Quando duas pessoas mexem a boca ao mesmo tempo, ou quando quem fala está de costas ou fora do
+quadro, o sistema pode escolher a pessoa errada. Não há filtro de Kalman nem aceleração por GPU.
+
+## Linha do tempo do editor
+
+- **Régua:** marcas em h:mm:ss a partir de 1 h (antes uma live de 8 h mostrava "495:00"), com intervalos de
+  1 s a 2 h conforme o zoom e marcas menores entre os rótulos. Os tempos da tela toda (cartões, relógio,
+  campos de início/fim) usam o mesmo formato.
+- **Zoom:** de "vídeo inteiro" até ~60 px por segundo, com quantos níveis forem precisos (17 numa live de 8,5 h).
+  **Ctrl + roda do mouse** amplia mantendo parado o ponto sob o cursor; **dois cliques num corte** ampliam até
+  ele.
+- **Vídeo:** tira de miniaturas gerada pelo servidor (`GET /api/projects/{id}/filmstrip?n=`): o FFmpeg lê um
+  quadro por posição e monta um JPEG em cache. O navegador buscava cada quadro no arquivo original e, num vídeo
+  de vários GB, a faixa ficava escura.
+- **Áudio:** forma de onda real (`GET /api/projects/{id}/waveform`), com picos medidos pelo FFmpeg em segundo
+  plano na primeira abertura (~3 min numa live de 8,5 h, depois em cache) e desenhada só na parte visível, em
+  qualquer zoom.
+- **Cortes:** cor pela nota (verde = melhores), número do ranking sempre visível e título só quando cabe;
+  a dica traz título, tempos, duração e nota.
 
 ## Prévia da edição
 

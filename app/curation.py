@@ -41,6 +41,8 @@ CHUNK_SECONDS = 25 * 60        # transcrições longas vão em blocos
 CHUNK_OVERLAP = 120            # sobreposição entre blocos (s) para não perder trechos na emenda
 JUDGE_BATCH = 8
 AI_WEIGHT = 0.7
+AUTO_MIN_FINAL = 70        # quantidade automática: nota final mínima (a IA pesa 70%)
+AUTO_JUDGE_MAX = 60        # automático: trechos levados ao juiz (cada lote é uma chamada paga à API)
 WEIGHTS = {'gancho': 0.35, 'coerencia': 0.25, 'valor': 0.25, 'tendencia': 0.15}
 
 PROPOSE_SCHEMA = {
@@ -231,13 +233,18 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
            on_progress: Callable[[float, str], None] | None = None) -> tuple[list[dict], dict]:
     """Seleciona e avalia cortes com IA. Levanta AppError em falhas (o chamador mantém a heurística)."""
     target = max(10, min(90, int(target)))
-    desired = max(1, min(15, int(desired)))
+    auto = int(desired) == selection.AUTO
+    desired = AUTO_JUDGE_MAX // 3 if auto else max(1, min(15, int(desired)))
     scenes = scenes or []
     units = selection.build_units(segments or [])
     if not units:
         raise AppError('Sem frases transcritas para a curadoria.', 422, 'curation_no_text')
-    min_len = min(max(6.0, target * 0.6), duration)
-    max_len = min(target * 1.35, config.MAX_CLIP_SECONDS)
+    if auto:  # quantidade automática: o trecho acompanha o assunto e só entram os que a IA aprova
+        min_len = min(selection.AUTO_MIN_SECONDS, duration)
+        max_len = min(max(target * selection.AUTO_MAX_FACTOR, 45.0), config.MAX_CLIP_SECONDS)
+    else:
+        min_len = min(max(6.0, target * 0.6), duration)
+        max_len = min(target * 1.35, config.MAX_CLIP_SECONDS)
     progress = on_progress or (lambda f, m='': None)
 
     def check_cancel():
@@ -320,6 +327,8 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
 
     chosen: list[dict] = []
     for c in candidates:
+        if auto and chosen and c['final'] < AUTO_MIN_FINAL:
+            break  # automático: para quando a nota (70% IA) cai abaixo do mínimo
         i, j = c['i'], c['j']
         prev = units[i - 1] if i > 0 else None
         nxt = units[j + 1] if j + 1 < len(units) else None
@@ -337,6 +346,9 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
         if any(selection._overlap(clip, other) > 0.2 for other in chosen):
             continue
         if any(selection._similar(clip['_content'], other['_content']) > 0.5 for other in chosen):
+            continue
+        if auto and any(clip['start'] < o['end'] + selection.AUTO_GAP and o['start'] < clip['end'] + selection.AUTO_GAP
+                        for o in chosen):
             continue
         item = c['item']
         title = _clean(item.get('title'), 80)
@@ -368,7 +380,7 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
             clip['score_breakdown'] = c['breakdown']
         clip['reasons'] = reasons + [r for r in c['reasons'][:3]]
         chosen.append(clip)
-        if len(chosen) >= desired:
+        if not auto and len(chosen) >= desired:   # automático: entram todos os aprovados
             break
     for clip in chosen:
         clip.pop('_content', None)

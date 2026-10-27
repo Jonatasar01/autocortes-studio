@@ -31,11 +31,15 @@ class CameraTests(unittest.TestCase):
         # alvo colado na borda: o recorte nunca sai do quadro
         path = reframe.camera_path([(i / 5, 0.99) for i in range(40)], crop_frac=0.3)
         self.assertTrue(all(0.15 <= x <= 0.85 for _, x in path))
-        # alvo que salta: a câmera se aproxima aos poucos (suave), sem pular
-        path = reframe.camera_path([(0, 0.3)] + [(i / 5, 0.7) for i in range(1, 30)], crop_frac=0.3)
+        # alvo que anda menos que a largura do recorte: a câmera se aproxima aos poucos (suave)
+        path = reframe.camera_path([(0, 0.4)] + [(i / 5, 0.6) for i in range(1, 30)], crop_frac=0.3)
         steps = [abs(b[1] - a[1]) for a, b in zip(path, path[1:])]
         self.assertLess(max(steps), 0.1)
-        self.assertGreater(path[-1][1], 0.65)
+        self.assertGreater(path[-1][1], 0.55)
+        # salto maior que o recorte (outra pessoa): corte seco, sem deslizar pelo cenário
+        path = reframe.camera_path([(0, 0.3)] + [(i / 5, 0.7) for i in range(1, 30)], crop_frac=0.3)
+        self.assertEqual(path[1], (0.199, 0.3))       # posição antiga até o instante da troca
+        self.assertAlmostEqual(path[2][1], 0.7, delta=0.01)
 
     def test_gaps_hold_last_position(self):
         path = reframe.camera_path([(0, 0.4), (0.2, None), (0.4, None)], crop_frac=0.3)
@@ -93,7 +97,8 @@ class TrackExportTests(unittest.TestCase):
             calls['n'] += 1
             return [(0.62, 0.3, 0.12, 0.22)] if calls['n'] <= 25 else []
 
-        with mock.patch.object(reframe, 'detect_faces', side_effect=faces):
+        with mock.patch.object(reframe, 'detect_faces', side_effect=faces), \
+                mock.patch.object(reframe, 'yunet_available', return_value=False):
             plan = reframe.plan(self.video, self.info, 0, 10, (1080, 1920), scenes=[5.0])
         self.assertTrue(plan['ok'], plan['message'])
         layouts = [(s['layout'], round(s['start'])) for s in plan['shots']]
@@ -103,13 +108,15 @@ class TrackExportTests(unittest.TestCase):
         json.dumps(plan)  # serializável (sem tipos do numpy)
 
     def test_no_face_falls_back(self):
-        with mock.patch.object(reframe, 'detect_faces', return_value=[]):
+        with mock.patch.object(reframe, 'detect_faces', return_value=[]), \
+                mock.patch.object(reframe, 'yunet_available', return_value=False):
             plan = reframe.plan(self.video, self.info, 0, 6, (1080, 1920))
         self.assertFalse(plan['ok'])
         self.assertIn('fundo desfocado', plan['message'])
 
     def test_track_export_is_valid(self):
-        with mock.patch.object(reframe, 'detect_faces', side_effect=self.fake_faces):
+        with mock.patch.object(reframe, 'detect_faces', side_effect=self.fake_faces), \
+                mock.patch.object(reframe, 'yunet_available', return_value=False):
             plan = reframe.plan(self.video, self.info, 1, 7, (1080, 1920), scenes=[4.0])
         result = media.export_clip(self.video, self.info, self.tmp / 'out', 'clip', 1, 7, fmt='9:16',
                                    framing='track', track=plan)
@@ -391,7 +398,8 @@ class PipelineV23Tests(unittest.TestCase):
         self.assertTrue(all(c.get('ai_curation') == 'openai' for c in p['clips']))
         self.assertEqual(p['cloud_consents'][-1]['provider'], 'OpenAI (ChatGPT)')
         clip = p['clips'][0]
-        with mock.patch.object(reframe, 'detect_faces', return_value=[(0.6, 0.3, 0.12, 0.22)]):
+        with mock.patch.object(reframe, 'detect_faces', return_value=[(0.6, 0.3, 0.12, 0.22)]), \
+                mock.patch.object(reframe, 'yunet_available', return_value=False):
             job = service.request_export(pid, clip['id'], {'format': '9:16', 'framing': 'track', 'subtitles': True,
                                                            'subtitle_style': 'dinamica', 'hook': True})
             done = wait_until(lambda: (lambda j: j if j['status'] in ('done', 'error', 'cancelled') else None)(

@@ -155,7 +155,8 @@ class JobManager:
                 (min(200, max(1, limit)),)).fetchall()]
 
     # ------------------------------------------------------------------ ciclo de vida
-    def start(self) -> None:
+    def start(self) -> list[dict]:
+        """Liga os trabalhadores; devolve as tarefas que estavam rodando e viraram ``interrupted``."""
         with self._db_lock:
             stale = [self._row(r) for r in self._conn.execute(
                 "SELECT * FROM jobs WHERE status IN ('running','cancelling')").fetchall()]
@@ -175,6 +176,7 @@ class JobManager:
                 thread = threading.Thread(target=self._worker, args=(kind,), name=f'job-{kind}-{n}', daemon=True)
                 thread.start()
                 self._threads.append(thread)
+        return stale
 
     def stop(self, timeout: float = 10) -> None:
         self._stop.set()

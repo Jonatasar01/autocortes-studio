@@ -134,6 +134,8 @@
             </div>
             <button id="deleteProject" type="button" class="iconbtn sm" title="Excluir este projeto" aria-label="Excluir este projeto"><svg class="ic"><use href="#i-trash"/></svg></button>
           </div>
+          <button id="openSelection" type="button" class="btn ghost block" hidden title="Escolher os cortes de novo com a transcrição já salva (com IA, se ativada)">Seleção de cortes e IA…</button>
+          <button id="reanalyze" type="button" class="btn ghost block" hidden title="Analisar o vídeo do zero: transcrição, cenas e cortes"><svg class="ic"><use href="#i-refresh"/></svg><span>Analisar de novo</span></button>
 
           <form id="uploadForm" novalidate>
             <div class="segmented" role="radiogroup" aria-label="Origem do vídeo">
@@ -159,9 +161,9 @@
               <option value="manual">Manual — eu escolho</option>
               <option value="automatic">Automático — sugestões</option>
             </select>
-            <div id="automaticOptions" class="cols" hidden>
-              <label class="field">Duração (s)<input id="target" type="number" value="35" min="10" max="90"></label>
-              <label class="field">Sugestões<input id="desired" type="number" value="5" min="1" max="15"></label>
+            <div id="automaticOptions" hidden>
+              <label class="field">Duração alvo (s)<input id="target" type="number" value="35" min="10" max="90"></label>
+              <p class="hint">Entram todos os trechos válidos para clipe, do melhor para o pior, sem número fixo.</p>
             </div>
 
             <label class="field" for="sourceRights">Direitos do vídeo</label>
@@ -205,7 +207,7 @@
             <strong>Nenhum vídeo aberto</strong>
             <p>Importe um vídeo no painel de mídia ou abra um projeto recente.</p>
           </div>
-          <div id="loading" class="loading" hidden><span class="spinner" aria-hidden="true"></span><span id="loadingText">Carregando…</span></div>
+          <div id="loading" class="loading" hidden role="status"><span class="spinner" aria-hidden="true"></span><span id="loadingText">Carregando…</span><progress id="loadingBar" max="100" value="0" hidden aria-label="Progresso da análise"></progress><small id="loadingSteps" class="loadingsteps" hidden></small></div>
         </div>
         <div class="controls">
           <input id="seek" class="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Posição do vídeo" disabled>
@@ -271,9 +273,23 @@
             <div role="tabpanel" id="panelSubtitles" aria-labelledby="tabSubtitles" hidden>
               <span class="eyebrow">Legendas</span>
               <label class="switch"><input id="subtitles" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legendas no vídeo</strong><small>Usa a transcrição do projeto quando houver. Gravadas no MP4 exportado.</small></span></label>
+              <label class="field" for="subtitleStyle">Estilo da legenda</label>
+              <select id="subtitleStyle">
+                <option value="dinamica">Animada (palavra falada em destaque)</option>
+                <option value="classica">Clássica (texto simples)</option>
+              </select>
+              <p id="subtitleStyleNote" class="hint" hidden>O plano de edição em uso define o estilo da legenda.</p>
+              <label class="switch"><input id="refineSubtitles" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda precisa</strong><small>Retranscreve só o corte com um modelo maior antes de exportar (GPU). Corrige nomes e gírias; leva alguns segundos a mais na primeira vez.</small></span></label>
             </div>
 
             <div role="tabpanel" id="panelEffects" aria-labelledby="tabEffects" hidden>
+              <section class="filterbox" aria-labelledby="filterTitle">
+                <span class="eyebrow" id="filterTitle">Filtro de cor</span>
+                <p class="hint">Cada miniatura é o quadro atual com o filtro aplicado. O player mostra o filtro escolhido enquanto toca (aproximado); a Prévia e a exportação usam o filtro exato.</p>
+                <div id="filterGrid" class="filtergrid" role="radiogroup" aria-label="Filtro de cor"></div>
+                <p id="filterDesc" class="hint"></p>
+                <button id="filterRefresh" class="btn ghost block" type="button"><svg class="ic"><use href="#i-refresh"/></svg><span>Ver exemplos no quadro atual</span></button>
+              </section>
               <section class="stylebox" aria-labelledby="styleTitle">
                 <span class="eyebrow" id="styleTitle">Estilo de edição</span>
                 <div class="cols">
@@ -284,6 +300,7 @@
                       <option value="equilibrado">Equilibrado</option>
                       <option value="cinematografico">Cinematográfico</option>
                       <option value="podcast">Podcast premium</option>
+                      <option value="live_jogo">Live de jogo (webcam + jogo)</option>
                     </select>
                   </label>
                   <label class="field" for="editIntensity">Intensidade <output id="intensityOut">60%</output>
@@ -321,7 +338,28 @@
                 <option value="blur">Fundo desfocado</option>
                 <option value="fit">Quadro inteiro</option>
                 <option value="track">Seguir rosto (se disponível)</option>
+                <option value="streamer">Só o streamer (webcam com fundo desfocado)</option>
+                <option value="split">Webcam + jogo (tela dividida)</option>
+                <option value="mix">Por trecho (variar no vídeo)</option>
               </select>
+              <div id="mixPanel" class="mixpanel" hidden>
+                <p class="hint">Cada trecho do corte usa um enquadramento. Pare o vídeo onde quer trocar e use “Mudar a partir daqui”.</p>
+                <ol id="mixSegments" class="mixsegments" aria-label="Trechos de enquadramento"></ol>
+                <div class="mixsplit">
+                  <select id="mixFrom" aria-label="Enquadramento a partir da posição atual">
+                    <option value="track">Seguir rosto</option>
+                    <option value="blur">Fundo desfocado</option>
+                    <option value="fit">Quadro inteiro</option>
+                    <option value="streamer">Só o streamer</option>
+                    <option value="split">Webcam + jogo</option>
+                  </select>
+                  <button id="mixSplit" class="btn" type="button">Mudar a partir daqui</button>
+                </div>
+                <div class="planbtns">
+                  <button id="mixAuto" class="btn ghost" type="button" title="Alterna seguir rosto e fundo desfocado a cada troca de cena">Variar automaticamente</button>
+                  <button id="mixClear" class="btn ghost" type="button">Limpar trechos</button>
+                </div>
+              </div>
               <span class="eyebrow spaced">Texto</span>
               <label class="switch"><input id="hook" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Gancho</strong><small>Usa o nome do corte como texto de abertura.</small></span></label>
             </div>
@@ -337,12 +375,13 @@
 
         <div id="exportPanel" class="exportpanel" tabindex="-1" aria-label="Exportação">
           <div class="exporthead">
-            <strong>Exportação</strong>
+            <strong>Exportações</strong>
             <button id="cancelExport" class="linkbtn danger" type="button" hidden>Cancelar</button>
           </div>
           <p id="jobStatus" class="jobstatus" role="status">Selecione um corte e clique em Exportar.</p>
-          <progress id="exportBar" value="0" max="100" hidden aria-label="Progresso da exportação"></progress>
+          <progress id="exportBar" value="0" max="100" hidden aria-label="Progresso da prévia"></progress>
           <div id="downloads"></div>
+          <div id="exportQueue" class="exportqueue" aria-live="polite"></div>
         </div>
       </aside>
     </main>
@@ -357,7 +396,7 @@
         </div>
         <div class="group zoomgroup">
           <button id="zoomOut" class="iconbtn" title="Diminuir zoom (−)" aria-label="Diminuir zoom"><svg class="ic"><use href="#i-zoom-out"/></svg></button>
-          <input id="zoom" type="range" min="1" max="8" value="1" aria-label="Zoom da linha do tempo">
+          <input id="zoom" type="range" min="1" max="8" value="1" aria-label="Zoom da linha do tempo" title="Ctrl + roda do mouse: zoom no ponto do cursor">
           <button id="zoomIn" class="iconbtn" title="Aumentar zoom (+)" aria-label="Aumentar zoom"><svg class="ic"><use href="#i-zoom-in"/></svg></button>
           <button id="fit" class="btn ghost" title="Ajustar o vídeo inteiro à largura"><svg class="ic"><use href="#i-fit"/></svg><span>Ajustar</span></button>
         </div>
@@ -387,6 +426,25 @@
 <dialog id="rightsDialog" class="dialog" aria-labelledby="rightsTitle">
   <header><h2 id="rightsTitle">Revisão de direitos</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
   <div id="rightsDetails" class="dialogbody">Abra um projeto para ver a revisão de direitos.</div>
+</dialog>
+
+<dialog id="selectionDialog" class="dialog" aria-labelledby="selectionTitle">
+  <header><h2 id="selectionTitle">Seleção de cortes</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <div class="dialogbody selectionbody">
+    <p>Quem escolhe os cortes. A heurística local roda só neste computador; a curadoria com IA lê a transcrição e só mantém os trechos que ela avalia bem.</p>
+    <label class="field" for="curationProvider">Curadoria</label>
+    <select id="curationProvider"></select>
+    <p id="curationKeyNote" class="hint" hidden></p>
+    <label class="switch" id="curationConsentRow" hidden><input id="curationConsent" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Autorizo enviar o texto das transcrições</strong><small>Só o texto vai ao provedor, nunca o vídeo ou o áudio. Cada análise usa a API e tem custo.</small></span></label>
+    <label class="field" for="curationPrompt">Foco (opcional)</label>
+    <input id="curationPrompt" type="text" maxlength="300" placeholder="Ex.: momentos engraçados e histórias pessoais">
+    <p id="reselectNote" class="hint"></p>
+  </div>
+  <footer>
+    <button class="btn ghost" type="button" data-close>Fechar</button>
+    <button id="curationSave" class="btn" type="button">Salvar</button>
+    <button id="reselect" class="btn primary" type="button">Salvar e refazer seleção</button>
+  </footer>
 </dialog>
 
 <dialog id="automationDialog" class="dialog" aria-labelledby="automationTitle">

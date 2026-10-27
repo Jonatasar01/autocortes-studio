@@ -10,11 +10,11 @@ from .errors import AppError
 
 PRESETS = {
     'shorts': {'name': 'Shorts automáticos', 'description': '3 melhores cortes verticais, legenda dinâmica e áudio normalizado.',
-               'target': 35, 'count': 5, 'max': 3, 'formats': ['9:16'], 'narration': False},
+               'target': 35, 'count': 0, 'max': 3, 'formats': ['9:16'], 'narration': False},
     'multiformato': {'name': 'Distribuição multiformato', 'description': '3 cortes em vertical, horizontal e quadrado.',
-                     'target': 45, 'count': 5, 'max': 3, 'formats': ['9:16', '16:9', '1:1'], 'narration': False},
+                     'target': 45, 'count': 0, 'max': 3, 'formats': ['9:16', '16:9', '1:1'], 'narration': False},
     'narrado': {'name': 'Recap com IA', 'description': 'Seleção, roteiro e voz quando configurados e autorizados. Fallback local explícito.',
-                'target': 45, 'count': 5, 'max': 3, 'formats': ['9:16'], 'narration': True},
+                'target': 45, 'count': 0, 'max': 3, 'formats': ['9:16'], 'narration': True},
 }
 
 
@@ -25,7 +25,8 @@ def readiness():
     providers = curation.status()
     return [
         {'name': 'Transcrição local', 'ready': transcription.available(),
-         'detail': f'Whisper {config.WHISPER_MODEL}; primeiro uso pode baixar o modelo.'},
+         'detail': f'Whisper {config.WHISPER_MODEL} (auto: large-v3-turbo na GPU, small na CPU); '
+                   'primeiro uso pode baixar o modelo.'},
         {'name': 'Curadoria com IA', 'ready': cu['provider'] != 'heuristica' and cu['consent'] and providers[cu['provider']]['configured'],
          'detail': f"Provedor: {cu['provider']}. Requer chave e consentimento nas Configurações para IA na nuvem."},
         {'name': 'Roteiro e voz', 'ready': nr['enabled'] and nr['consent'] and narration.is_configured(),

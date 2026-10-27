@@ -47,9 +47,12 @@ FFMPEG_PRESET = os.getenv('AUTOCORTES_X264_PRESET', 'veryfast')
 LOW_PRIORITY = _flag('AUTOCORTES_LOW_PRIORITY', True)
 
 # IA local
-WHISPER_MODEL = os.getenv('WHISPER_MODEL', 'small')
+# 'auto': large-v3-turbo na GPU (mais rápido e mais preciso que o small numa GTX 1650) e small na CPU.
+WHISPER_MODEL = os.getenv('WHISPER_MODEL', 'auto')
 WHISPER_DEVICE = os.getenv('WHISPER_DEVICE', 'auto')
 WHISPER_LANGUAGE = os.getenv('WHISPER_LANGUAGE', 'pt')  # 'auto' para detecção automática
+# Legenda de cada corte retranscrita com um modelo maior (só com GPU); 'off' desliga.
+WHISPER_REFINE_MODEL = os.getenv('WHISPER_REFINE_MODEL', 'large-v3-turbo')
 OLLAMA_ENABLED = _flag('OLLAMA_ENABLED', False)
 OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'llama3.2')
 OLLAMA_URL = 'http://127.0.0.1:11434'  # fixo: nunca envia transcrições para fora da máquina

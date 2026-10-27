@@ -7,13 +7,14 @@ const state = {
   project: null, selected: null, format: '9:16', markIn: 0, markOut: 0, scale: 7,
   previewEnd: null, drag: null, stripKey: null, stripToken: 0, rulerKey: null, openVersion: 0,
   exporting: false, exportJob: null, edited: {}, syncedClip: null, dirty: false, seeking: false,
+  queueTimer: null, queueClosed: {},
 };
 const CSRF = {'X-AutoCortes': '1'};
 const ACTIVE_JOB = ['queued', 'running', 'cancelling'];
 const FAILED_JOB = ['failed', 'cancelled', 'interrupted'];
 const PROJECT_STATUS = {
   ready: 'Pronto', queued: 'Na fila', analyzing: 'Analisando', failed: 'Falhou',
-  interrupted: 'Interrompido', cancelled: 'Cancelado',
+  interrupted: 'Interrompido', cancelled: 'Cancelado', error: 'Com erro',
 };
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const narrow = window.matchMedia('(max-width: 1180px)');
@@ -22,15 +23,25 @@ const EXPORT_IDLE = 'Selecione um corte e clique em Exportar.';
 
 const escape = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-// mm:ss.d para rótulos; mm:ss.mmm para os campos de início e fim.
+// mm:ss.d para rótulos; mm:ss.mmm para os campos de início e fim. A partir de 1 h: h:mm:ss (lives longas
+// mostravam "495:00").
 const fmt = (n) => {
   n = Math.max(0, Number(n) || 0);
-  return String(Math.floor(n / 60)).padStart(2, '0') + ':' + (n % 60).toFixed(1).padStart(4, '0');
+  const h = Math.floor(n / 3600), m = Math.floor(n / 60) % 60;
+  const sec = (n % 60).toFixed(1).padStart(4, '0');
+  return h ? h + ':' + String(m).padStart(2, '0') + ':' + sec : String(Math.floor(n / 60)).padStart(2, '0') + ':' + sec;
 };
 const fmtMs = (n) => {
   n = Math.max(0, Math.round((Number(n) || 0) * 1000));
-  const ms = n % 1000, s = Math.floor(n / 1000) % 60, m = Math.floor(n / 60000);
-  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + '.' + String(ms).padStart(3, '0');
+  const ms = n % 1000, s = Math.floor(n / 1000) % 60, m = Math.floor(n / 60000) % 60, h = Math.floor(n / 3600000);
+  const tail = String(s).padStart(2, '0') + '.' + String(ms).padStart(3, '0');
+  return h ? h + ':' + String(m).padStart(2, '0') + ':' + tail : String(m).padStart(2, '0') + ':' + tail;
+};
+// Rótulo da régua: sem décimos e com horas quando o vídeo passa de 1 h.
+const fmtTick = (t, long) => {
+  const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = Math.round(t % 60);
+  return (long ? h + ':' + String(m).padStart(2, '0') : String(Math.floor(t / 60)).padStart(2, '0')) + ':' +
+    String(s).padStart(2, '0');
 };
 // Aceita 75.3, 1:15.3, 01:15.300 e 1:02:03.
 function parseTime(text) {
@@ -78,9 +89,55 @@ function setStatus(text, tone = 'idle') {
   $('status').dataset.tone = tone;
 }
 
-function setLoading(text) {
+function setLoading(text, progress = null, steps = '') {
   $('loading').hidden = !text;
   if (text) $('loadingText').textContent = text;
+  $('loadingBar').hidden = !text || progress === null;
+  if (progress !== null) $('loadingBar').value = Math.round(progress * 100);
+  $('loadingSteps').hidden = !text || !steps;
+  $('loadingSteps').textContent = steps || '';
+}
+
+// Andamento da análise: etapa atual, porcentagem, tempo restante estimado e quanto levou cada etapa.
+const STAGE_NAMES = {validando: 'Validação', musica: 'Música', extraindo_audio: 'Áudio', transcrevendo: 'Transcrição',
+  cenas: 'Cenas', selecionando: 'Seleção', ia_local: 'IA local', curadoria_ia: 'Curadoria IA', fila: 'Fila'};
+// Faixa da barra geral ocupada pelas etapas com progresso real (as outras são rápidas ou sem medida).
+const STAGE_SPANS = {extraindo_audio: [0.08, 0.14], transcrevendo: [0.14, 0.74], cenas: [0.75, 0.88]};
+const fmtDur = (s) => {
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + ' s';
+  if (s < 3600) return Math.floor(s / 60) + ' min' + (s < 600 && s % 60 ? ' ' + (s % 60) + ' s' : '');
+  return Math.floor(s / 3600) + ' h ' + Math.floor((s % 3600) / 60) + ' min';
+};
+function analysisLabel(job, events = []) {
+  if (!job) return {text: 'Analisando vídeo…', progress: null, pct: null, steps: ''};
+  const now = Date.now() / 1000;
+  const pct = Math.round((job.progress || 0) * 100);
+  const stage = job.status === 'queued' ? 'Na fila' : (job.message || 'Analisando vídeo');
+  // Tempo restante da etapa atual pela velocidade dela até agora (transcrição, cenas, extração de áudio).
+  let eta = null;
+  const span = STAGE_SPANS[job.stage];
+  const begun = [...events].reverse().find((e) => e.stage === job.stage)?.ts;
+  if (span && begun) {
+    const done = ((job.progress || 0) - span[0]) / (span[1] - span[0]);
+    const elapsed = now - begun;
+    if (done > 0.03 && elapsed > 20) eta = elapsed * (1 - done) / done;
+  }
+  const total = job.started ? now - job.started : 0;
+  const text = stage + ' · ' + pct + '%' + (eta != null ? ' · ≈ ' + fmtDur(eta) + ' restantes'
+    : total >= 60 ? ' · ' + fmtDur(total) : '');
+  // Etapas concluídas com a duração de cada uma; a atual com ▸.
+  const marks = [];
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (!STAGE_NAMES[e.stage] || (marks.length && marks[marks.length - 1].stage === e.stage)) continue;
+    marks.push({stage: e.stage, ts: e.ts});
+  }
+  const steps = marks.map((m, i) => {
+    const end = marks[i + 1]?.ts;
+    return end ? '✓ ' + STAGE_NAMES[m.stage] + ' ' + fmtDur(end - m.ts) : '▸ ' + STAGE_NAMES[m.stage] + ' ' + fmtDur(now - m.ts);
+  }).join('  ·  ');
+  return {text, progress: job.progress || 0, pct, steps};
 }
 
 async function api(url, method = 'GET', body) {
@@ -162,9 +219,10 @@ function updateControls() {
   $('exportTop').disabled = state.exporting || !c || !ready;
   $('save').disabled = state.exporting || !c || !ready;
   $('saveTop').disabled = state.exporting || !c || !ready;
-  $('exportLabel').textContent = state.exporting === true ? 'Exportando…' : 'Exportar';
+  $('exportLabel').textContent = state.exporting === true ? 'Enviando…' : 'Exportar';
   $('previewTop').disabled = state.exporting || !c || !ready;
   $('previewLabel').textContent = state.exporting === 'preview' ? 'Gerando…' : 'Prévia';
+  syncSubtitleStyle();
 }
 
 function setDirty(on) {
@@ -238,7 +296,10 @@ const setActiveNav = (name) => {
   }
 };
 const showLeft = initTabs(document.querySelector('.leftpanel .tabs'), 'left', (name) => setActiveNav(NAV_FOR_LEFT[name]));
-const showInsp = initTabs(document.querySelector('.inspector .tabs'), 'insp', (name) => setActiveNav(NAV_FOR_INSP[name]));
+const showInsp = initTabs(document.querySelector('.inspector .tabs'), 'insp', (name) => {
+  setActiveNav(NAV_FOR_INSP[name]);
+  if (name === 'effects') loadFilterSamples();
+});
 
 function openLeft(tab) {
   showLeft(tab);
@@ -292,13 +353,23 @@ async function loadProjects() {
   $('projects').setAttribute('aria-busy', 'true');
   try {
     const d = await api('/api/projects');
+    // Em análise: a lista mostra a etapa e o andamento e se atualiza sozinha até terminar.
+    clearTimeout(state.projectsTimer);
+    if (d.projects.some((p) => p.analysis)) state.projectsTimer = setTimeout(loadProjects, 5000);
     $('projects').innerHTML = d.projects.map((p) => {
       const selected = p.id === state.project?.id;
+      const a = p.analysis;
+      const status = a ? (a.status === 'queued' ? 'Na fila' : (STAGE_NAMES[a.stage] || 'Analisando')) + ' · ' +
+        Math.round((a.progress || 0) * 100) + '%' : (PROJECT_STATUS[p.status] || p.status);
       return '<div class="projectrowitem"><button class="projectitem' + (selected ? ' selected' : '') + '" data-id="' +
         escape(p.id) + '"' + (selected ? ' aria-current="true"' : '') + '><strong>' + escape(p.name) + '</strong><small>' +
-        '<span class="dot" data-status="' + escape(p.status) + '"></span>' + escape(PROJECT_STATUS[p.status] || p.status) +
+        '<span class="dot" data-status="' + escape(p.status) + '"></span>' + escape(status) +
         ' · ' + (p.duration ? fmt(p.duration) + ' · ' : '') + p.clips + (p.clips === 1 ? ' corte' : ' cortes') +
-        '</small></button><button class="iconbtn sm projdel" data-del="' + escape(p.id) + '" data-name="' +
+        '</small></button>' + (STOPPED.includes(p.status)
+          ? '<button class="iconbtn sm projredo" data-redo="' + escape(p.id) + '" data-name="' + escape(p.name) +
+            '" title="Analisar de novo" aria-label="Analisar de novo o projeto ' + escape(p.name) +
+            '"><svg class="ic"><use href="#i-refresh"/></svg></button>' : '') +
+        '<button class="iconbtn sm projdel" data-del="' + escape(p.id) + '" data-name="' +
         escape(p.name) + '" title="Excluir projeto" aria-label="Excluir o projeto ' + escape(p.name) +
         '"><svg class="ic"><use href="#i-trash"/></svg></button></div>';
     }).join('') || '<p class="empty">Nenhum projeto ainda. Importe um vídeo no painel de mídia.</p>';
@@ -312,6 +383,8 @@ async function loadProjects() {
 $('projects').onclick = (e) => {
   const del = e.target.closest('.projdel');
   if (del) return deleteProject(del.dataset.del, del.dataset.name);
+  const redo = e.target.closest('.projredo');
+  if (redo) return reanalyzeProject(redo.dataset.redo, {ready: false});
   const item = e.target.closest('.projectitem');
   if (!item) return;
   openProject(item.dataset.id).catch((err) => { setLoading(null); toast(err.message, true); });
@@ -349,7 +422,7 @@ function params() {
     source_rights: $('sourceRights').value, third_party_footage: $('thirdParty').checked ? 'yes' : 'unknown',
     external_audio: $('audioRights').value, graphics_rights: $('graphicsRights').value,
     monetization: $('monetization').value, license_notes: $('licenseNotes').value,
-    editing_mode: $('mode').value, target_seconds: $('target').value, desired_count: $('desired').value,
+    editing_mode: $('mode').value, target_seconds: $('target').value, desired_count: 0,  // 0: todos os trechos válidos
     autopilot: 'false', recognize_music_opt_in: 'false',
   };
 }
@@ -469,17 +542,21 @@ async function openProject(id) {
     m.size_bytes ? fmtSize(m.size_bytes) : null, p.editing_mode === 'manual' ? 'Edição manual' : 'Seleção automática']
     .filter(Boolean).join(' · ');
   $('mediaCard').hidden = false;
+  $('openSelection').hidden = !(p.status === 'ready' && p.transcription?.state === 'ok');
+  $('reanalyze').hidden = !(p.status === 'ready' || STOPPED.includes(p.status));
   render();
   loadProjects();
   closeDrawers();
   if (p.status === 'queued' || p.status === 'analyzing') {
-    setStatus('Analisando vídeo…', 'busy');
-    setLoading('Analisando vídeo…');
+    const a = analysisLabel(p.analysis, p.analysis_events || []);
+    setStatus(a.pct === null ? 'Analisando vídeo…' : 'Analisando vídeo · ' + a.pct + '%', 'busy');
+    setLoading(a.text, a.progress, a.steps);
     setTimeout(() => {
       if (state.openVersion === version) openProject(id).catch((e) => toast(e.message, true));
     }, 1700);
   } else if (p.status === 'ready') {
     setStatus('Projeto aberto', 'ok');
+    if (filtersVisible()) loadFilterSamples();
     setLoading(video.readyState >= 2 ? null : 'Carregando vídeo…');
   } else {
     setLoading(null);
@@ -505,6 +582,8 @@ function closeProject() {
   hideExport();
   $('noVideo').hidden = false;
   $('mediaCard').hidden = true;
+  $('openSelection').hidden = true;
+  $('reanalyze').hidden = true;
   $('projectName').textContent = $('crumb').textContent = 'Nenhum projeto aberto';
   $('projectMeta').textContent = 'Importe um vídeo ou abra um projeto recente';
   document.title = 'AutoCortes Studio — Editor';
@@ -522,6 +601,27 @@ function closeProject() {
   history.replaceState({}, '', '/');
   updateControls();
 }
+
+// Projetos cuja análise parou (interrompida, com erro ou cancelada): a lista oferece "Analisar de novo".
+const STOPPED = ['interrupted', 'failed', 'error', 'cancelled'];
+
+async function reanalyzeProject(id, {ready}) {
+  if (ready && !await askConfirm({
+    title: 'Analisar de novo', yes: 'Analisar de novo',
+    text: 'O vídeo será analisado do zero: transcrição, cenas e escolha dos cortes. Os ' +
+      (state.project?.clips?.length || 0) + ' cortes atuais serão substituídos quando terminar (se a análise ' +
+      'falhar, eles continuam). Para só escolher os cortes de novo, sem transcrever, use “Seleção de cortes e IA”.',
+  })) return;
+  try {
+    await api('/api/projects/' + id + '/reanalyze', 'POST');
+    toast('Análise reiniciada.');
+    loadProjects();
+    await openProject(id);
+  } catch (e) { toast(e.message, true); }
+}
+$('reanalyze').onclick = () => {
+  if (state.project) reanalyzeProject(state.project.id, {ready: state.project.status === 'ready'});
+};
 
 async function deleteProject(id, name) {
   if (!id) return;
@@ -580,6 +680,7 @@ function render() {
   if (!p) return updateControls();
   const c = current();
   $('count').textContent = p.clips.length;
+  renderExports();
   $('cutCards').innerHTML = p.clips.map((x) =>
     '<button class="cutCard' + (x.id === state.selected ? ' selected' : '') + '" data-id="' + x.id + '"' +
     (x.id === state.selected ? ' aria-current="true"' : '') + '><strong>' + escape(x.title) + '</strong><small>' +
@@ -593,9 +694,74 @@ function render() {
   selectionLabel();
   renderRights(p);
   renderPlans();
+  renderMix();
   renderTimeline();
   updateControls();
 }
+
+// ------------------------------------------------------------------ enquadramento por trecho
+
+const FRAMING_LABELS = {track: 'Seguir rosto', blur: 'Fundo desfocado', fit: 'Quadro inteiro',
+  streamer: 'Só o streamer', split: 'Webcam + jogo'};
+function mixSegments(c) {
+  return c?.framing_segments?.length ? c.framing_segments.map((s) => ({...s}))
+    : (c ? [{start: 0, end: c.end - c.start, framing: 'blur'}] : []);
+}
+function renderMix() {
+  const c = current();
+  $('mixPanel').hidden = $('framing').value !== 'mix' || !c;
+  if ($('mixPanel').hidden) return;
+  const at = video.currentTime - c.start;
+  $('mixSegments').innerHTML = mixSegments(c).map((s, i) =>
+    '<li' + (at >= s.start && at < s.end ? ' class="here"' : '') + '>' +
+    '<button type="button" class="t" data-seek="' + s.start + '" title="Ir para o início do trecho">' +
+    fmt(s.start) + '–' + fmt(s.end) + '</button>' +
+    '<select data-seg="' + i + '" aria-label="Enquadramento do trecho ' + (i + 1) + '">' +
+    Object.entries(FRAMING_LABELS).map(([v, l]) => '<option value="' + v + '"' + (v === s.framing ? ' selected' : '') +
+      '>' + l + '</option>').join('') + '</select>' +
+    '<button type="button" class="iconbtn sm" data-del="' + i + '" aria-label="Remover trecho"' +
+    (i === 0 && mixSegments(c).length === 1 ? ' disabled' : '') + '><svg class="ic"><use href="#i-x"/></svg></button></li>').join('');
+}
+async function saveMix(segments, {auto = false} = {}) {
+  const c = current();
+  if (!c) return;
+  const base = '/api/projects/' + state.project.id + '/clips/' + c.id + '/framing';
+  try {
+    await (auto ? api(base + '/auto', 'POST') : api(base, 'PUT', {segments}));
+    await refresh();
+  } catch (e) { toast(e.message, true); }
+}
+$('framing').addEventListener('change', renderMix);
+video.addEventListener('pause', renderMix);
+$('mixSegments').onclick = (e) => {
+  const c = current();
+  const seek = e.target.closest('[data-seek]');
+  if (seek && c) { video.currentTime = c.start + Number(seek.dataset.seek); renderMix(); return; }
+  const del = e.target.closest('[data-del]');
+  if (del) saveMix(mixSegments(c).filter((_, i) => i !== Number(del.dataset.del)));
+};
+$('mixSegments').onchange = (e) => {
+  const sel = e.target.closest('[data-seg]');
+  if (!sel) return;
+  const segs = mixSegments(current());
+  segs[Number(sel.dataset.seg)].framing = sel.value;
+  saveMix(segs);
+};
+$('mixSplit').onclick = () => {
+  const c = current();
+  if (!c) return;
+  const t = video.currentTime - c.start;
+  const segs = mixSegments(c);
+  const k = segs.findIndex((s) => t >= s.start && t < s.end);
+  if (k < 0 || t - segs[k].start < 0.5 || segs[k].end - t < 0.5) {
+    return toast('Pare o vídeo dentro do corte, longe do começo e do fim de um trecho.', true);
+  }
+  // Do ponto atual até o fim do trecho em que ele está.
+  segs.splice(k, 1, {...segs[k], end: t}, {start: t, end: segs[k].end, framing: $('mixFrom').value});
+  saveMix(segs);
+};
+$('mixAuto').onclick = () => saveMix(null, {auto: true});
+$('mixClear').onclick = () => saveMix([]);
 
 function renderRights(p) {
   const r = p.rights;
@@ -620,6 +786,65 @@ async function loadAutomation() {
   }
 }
 
+// ------------------------------------------------------------------ seleção de cortes e curadoria com IA
+
+async function openSelection() {
+  const dlg = $('selectionDialog');
+  try {
+    const [cfg, health] = await Promise.all([api('/api/settings'), api('/api/health')]);
+    const cur = cfg.curation, providers = health.curation || {};
+    $('curationProvider').innerHTML = Object.entries(providers).map(([id, info]) =>
+      '<option value="' + id + '"' + (id === cur.provider ? ' selected' : '') + '>' + escape(info.label) +
+      (id !== 'heuristica' && !info.configured ? ' — sem chave' : '') + '</option>').join('');
+    $('curationProvider').dataset.providers = JSON.stringify(providers);
+    $('curationConsent').checked = !!cur.consent;
+    $('curationPrompt').value = cur.prompt || '';
+    syncCuration();
+    const clips = state.project?.clips || [];
+    const exported = clips.filter((c) => Object.keys(c.exports || {}).length).length;
+    $('reselectNote').textContent = 'Refazer a seleção usa a transcrição já salva (não transcreve de novo) e substitui os ' +
+      clips.length + ' cortes atuais' + (exported ? ', incluindo ' + exported + ' já exportado(s) — baixe-os antes' : '') + '.';
+    dlg.showModal();
+  } catch (e) { toast(e.message, true); }
+}
+
+function syncCuration() {
+  const id = $('curationProvider').value;
+  const info = JSON.parse($('curationProvider').dataset.providers || '{}')[id] || {};
+  const cloud = id !== 'heuristica';
+  $('curationConsentRow').hidden = !cloud;
+  $('curationKeyNote').hidden = !cloud;
+  const env = id === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+  $('curationKeyNote').textContent = info.configured
+    ? 'Chave encontrada. Modelo: ' + (info.model || '—') + '.'
+    : 'Chave não encontrada: defina ' + env + ' no Windows e reinicie o AutoCortes.';
+  $('curationKeyNote').classList.toggle('warn', cloud && !info.configured);
+  $('reselect').disabled = cloud && !info.configured;  // sem chave a IA falharia e voltaria à heurística
+}
+$('curationProvider').addEventListener('change', syncCuration);
+
+async function saveCuration() {
+  const provider = $('curationProvider').value;
+  await api('/api/settings', 'PUT', {curation: {
+    provider, consent: provider !== 'heuristica' && $('curationConsent').checked, prompt: $('curationPrompt').value.trim(),
+  }});
+}
+$('curationSave').onclick = async () => {
+  try { await saveCuration(); toast('Configuração da seleção salva.'); $('selectionDialog').close(); } catch (e) { toast(e.message, true); }
+};
+$('reselect').onclick = async () => {
+  const p = state.project;
+  if (!p) return;
+  try {
+    await saveCuration();
+    await api('/api/projects/' + p.id + '/reselect', 'POST');
+    $('selectionDialog').close();
+    toast('Refazendo a seleção com a transcrição salva…');
+    await openProject(p.id);
+  } catch (e) { toast(e.message, true); }
+};
+$('openSelection').onclick = openSelection;
+
 function select(id, {seek = true} = {}) {
   state.selected = id;
   const c = current();
@@ -629,6 +854,7 @@ function select(id, {seek = true} = {}) {
     if (seek && state.project) video.currentTime = c.start;
   }
   render();
+  if (filtersVisible()) loadFilterSamples();
 }
 
 // ------------------------------------------------------------------ edição de cortes
@@ -764,29 +990,44 @@ function renderTimeline() {
   if (state.rulerKey !== rulerKey) {
     state.rulerKey = rulerKey;
     $('timelineCanvas').style.width = Math.max(640, duration * state.scale + LABEL + 8) + 'px';
-    const minGap = 80 / state.scale;  // mantém os rótulos a ~80 px de distância
-    const step = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600].find((s) => s >= minGap) || 900;
+    const minGap = 90 / state.scale;  // mantém os rótulos a ~90 px de distância
+    const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
+    const step = steps.find((s) => s >= minGap) || 14400;
+    let minor = step / (step % 5 === 0 ? 5 : step % 3 === 0 ? 3 : 2);
+    if (duration / minor > 4000) minor = step;   // zoom máximo numa live longa: só as marcas principais
+    const long = duration >= 3600;
     const ticks = [];
-    for (let t = 0; t <= duration; t += step) ticks.push(el('span', 'tick', {left: t * state.scale}, fmt(t).replace(/\.0$/, '')));
+    for (let t = 0; t <= duration; t += minor) {
+      const major = Math.abs(t / step - Math.round(t / step)) < 1e-6;
+      ticks.push(el('span', major ? 'tick' : 'tick minor', {left: t * state.scale}, major ? fmtTick(t, long) : ''));
+    }
     $('ruler').replaceChildren(...ticks);
   }
   $('clipSegments').replaceChildren(...p.clips.map((c) => {
-    const b = el('button', 'segment' + (c.id === state.selected ? ' selected' : ''),
-      {left: c.start * state.scale, width: Math.max(4, (c.end - c.start) * state.scale)});
+    const width = Math.max(10, (c.end - c.start) * state.scale);
+    const size = width < 34 ? ' tiny' : width < 90 ? ' narrow' : '';
+    const b = el('button', 'segment' + size + (c.id === state.selected ? ' selected' : ''),
+      {left: c.start * state.scale, width});
     b.type = 'button';
     b.dataset.id = c.id;
-    b.title = c.title + ' (' + fmt(c.start) + ' — ' + fmt(c.end) + ')';
+    // Cor pela nota (verde = melhores); cortes manuais/sem nota ficam neutros.
+    if (c.score != null) b.style.setProperty('--hue', String(Math.round(clamp((c.score - 60) * 3.5, 0, 140))));
+    b.title = (c.rank ? '#' + c.rank + ' ' : '') + c.title + '\n' + fmt(c.start) + ' — ' + fmt(c.end) +
+      ' (' + fmt(c.end - c.start) + ')' + (c.score != null ? ' · nota ' + Math.round(c.score) : '') +
+      '\nDois cliques: ampliar até o corte';
     if (c.id === state.selected) b.setAttribute('aria-current', 'true');
     const left = el('i', 'handle left'), right = el('i', 'handle right');
     left.dataset.side = 'start';
     right.dataset.side = 'end';
     left.setAttribute('aria-hidden', 'true');
     right.setAttribute('aria-hidden', 'true');
-    b.append(left, el('b', '', null, c.title), el('small', '', null, fmt(c.end - c.start)), right);
+    b.append(left, el('em', 'num', null, String(c.rank || c.id)), el('b', '', null, c.title),
+      el('small', '', null, fmt(c.end - c.start)), right);
     return b;
   }));
   updatePlayhead();
   buildFilmstrip();
+  drawWave();
 }
 
 // Quadros reais do vídeo, lidos por um segundo elemento <video> oculto. Se o navegador
@@ -805,22 +1046,99 @@ function buildFilmstrip() {
   state.stripKey = key;
   const token = ++state.stripToken;
   const duration = mediaDuration();
-  const n = clamp(Math.ceil(duration / 15), 8, 40);
+  const n = clamp(Math.ceil(duration / 15), 8, 60);
   const gap = duration / n;
   const frames = [];
   for (let i = 0; i < n; i++) {
     const node = document.createElement('canvas');
-    node.className = 'frame';
-    node.width = 128;
-    node.height = 72;
+    node.className = 'frame loading';
+    node.width = 160;
+    node.height = 90;
     frames.push({node, t0: i * gap, t1: (i + 1) * gap});
   }
   state.strip = {frames};
   $('frames').replaceChildren(...frames.map((f) => f.node));
-  $('wave').innerHTML = '<span class="track-info">A forma de onda ainda não está disponível nesta versão</span>';
   layoutFrames();
-  fillFilmstrip(token, p.id, frames);
+  // Tira gerada pelo servidor (FFmpeg, em cache); se falhar, o navegador lê os quadros como antes.
+  const sprite = new Image();
+  sprite.onload = () => {
+    if (token !== state.stripToken) return;
+    frames.forEach((f, i) => {
+      f.node.getContext('2d').drawImage(sprite, i * 160, 0, 160, 90, 0, 0, 160, 90);
+      f.node.classList.remove('loading');
+    });
+    if (!$('projectThumb').querySelector('img')) {
+      try { setThumb(frames[Math.min(2, n - 1)].node.toDataURL('image/jpeg', 0.72)); } catch { /* sem miniatura */ }
+    }
+  };
+  sprite.onerror = () => { if (token === state.stripToken) fillFilmstrip(token, p.id, frames); };
+  sprite.src = '/api/projects/' + p.id + '/filmstrip?n=' + n;
+  loadWave(token, p.id);
 }
+
+// ------------------------------------------------------------------ forma de onda
+
+// Picos do áudio (0–255) gerados pelo servidor; desenhados só na parte visível da linha do tempo, então
+// funcionam em qualquer zoom, mesmo numa live de horas.
+async function loadWave(token, pid) {
+  state.wave = null;
+  setWaveInfo('Gerando a forma de onda…');
+  for (let i = 0; i < 200 && token === state.stripToken; i++) {
+    let d;
+    try { d = await api('/api/projects/' + pid + '/waveform'); } catch { break; }
+    if (token !== state.stripToken) return;
+    if (d.state === 'ready') {
+      const raw = atob(d.peaks);
+      const peaks = new Uint8Array(raw.length);
+      for (let k = 0; k < raw.length; k++) peaks[k] = raw.charCodeAt(k);
+      state.wave = {bucket: d.bucket, peaks};
+      setWaveInfo(null);
+      return drawWave();
+    }
+    if (d.state !== 'pending') break;
+    await sleep(4000);
+  }
+  if (token === state.stripToken) setWaveInfo('Forma de onda indisponível para este vídeo');
+}
+function setWaveInfo(text) {
+  let info = $('wave').querySelector('.track-info');
+  if (!text) { info?.remove(); return; }
+  if (!info) { info = el('span', 'track-info'); $('wave').append(info); }
+  info.textContent = text;
+}
+let waveFrame = 0;
+function drawWave() {
+  cancelAnimationFrame(waveFrame);
+  waveFrame = requestAnimationFrame(() => {
+    const lane = $('wave'), sc = $('timelineScroll'), w = state.wave;
+    let canvas = lane.querySelector('canvas');
+    if (!w) { canvas?.remove(); return; }
+    if (!canvas) { canvas = document.createElement('canvas'); canvas.className = 'wavecanvas'; lane.prepend(canvas); }
+    const width = Math.max(1, Math.min(sc.clientWidth - LABEL, lane.clientWidth));
+    const height = lane.clientHeight || 48;
+    const dpr = window.devicePixelRatio || 1;
+    const left = Math.max(0, Math.min(sc.scrollLeft, lane.clientWidth - width));
+    canvas.style.left = left + 'px';
+    canvas.style.width = width + 'px';
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = getComputedStyle(lane).getPropertyValue('--wave') || '#4f7bd6';
+    const mid = height / 2;
+    for (let x = 0; x < width; x++) {
+      // Maior pico entre as posições cobertas por este pixel.
+      const a = Math.floor((left + x) / state.scale / w.bucket), b = Math.ceil((left + x + 1) / state.scale / w.bucket);
+      let peak = 0;
+      for (let k = a; k < Math.max(a + 1, b) && k < w.peaks.length; k++) peak = Math.max(peak, w.peaks[k]);
+      const h = Math.max(1, (peak / 255) ** 1.6 * (height - 6));   // realça a fala sobre o ruído de fundo
+      ctx.fillRect(x, mid - h / 2, 1, h);
+    }
+  });
+}
+$('timelineScroll').addEventListener('scroll', drawWave, {passive: true});
+// Painel redimensionado (gaveta, janela, tela cheia): a onda acompanha a largura visível.
+if (window.ResizeObserver) new ResizeObserver(drawWave).observe($('timelineScroll'));
 
 async function fillFilmstrip(token, pid, frames) {
   const probe = document.createElement('video');
@@ -878,19 +1196,53 @@ function updatePlayhead() {
 }
 
 // Zoom 1 = vídeo inteiro cabe na largura visível; cada nível amplia a partir daí.
+const ZOOM_STEP = 1.6;
+const ZOOM_MAX_PX = 60;    // zoom máximo: ~60 px por segundo, em qualquer duração de vídeo
 function computeScale() {
   const visible = Math.max(200, $('timelineScroll').clientWidth - LABEL - 8);
   const fit = mediaDuration() ? visible / mediaDuration() : 7;
-  state.scale = Math.min(200, fit * Math.pow(1.6, Number($('zoom').value) - 1));
+  // Quantos níveis cabem entre "vídeo inteiro" e 60 px/s: numa live de horas são bem mais que 8.
+  const levels = clamp(Math.ceil(Math.log(ZOOM_MAX_PX / fit) / Math.log(ZOOM_STEP)) + 1, 8, 40);
+  $('zoom').max = levels;
+  state.scale = Math.min(200, fit * Math.pow(ZOOM_STEP, Number($('zoom').value) - 1));
 }
 
-function setZoom(value) {
-  $('zoom').value = clamp(value, 1, 8);
+// ``anchor``: tempo que deve ficar parado na tela (sob o cursor) durante o zoom.
+function setZoom(value, anchor = null) {
+  const sc = $('timelineScroll');
+  const before = anchor ? anchor.t * state.scale - sc.scrollLeft : 0;
+  computeScale();
+  $('zoom').value = clamp(value, 1, Number($('zoom').max));
   setFill($('zoom'));
   computeScale();
   renderTimeline();
   selectionLabel();
+  if (anchor) sc.scrollLeft = Math.max(0, anchor.t * state.scale - before);
 }
+
+// Amplia até o corte ocupar ~70% da largura visível e rola até ele.
+function zoomToClip(c) {
+  const sc = $('timelineScroll');
+  const visible = Math.max(200, sc.clientWidth - LABEL - 8);
+  const fit = visible / mediaDuration();
+  const want = visible * 0.7 / Math.max(1, c.end - c.start);
+  const level = Math.floor(Math.log(want / fit) / Math.log(ZOOM_STEP)) + 1;
+  setZoom(level);
+  sc.scrollLeft = Math.max(0, (c.start + c.end) / 2 * state.scale - visible / 2);
+}
+
+$('timelineScroll').addEventListener('wheel', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || !state.project) return;   // rolagem normal continua rolando
+  e.preventDefault();
+  const sc = $('timelineScroll');
+  const x = e.clientX - sc.getBoundingClientRect().left - LABEL + sc.scrollLeft;
+  setZoom(Number($('zoom').value) + (e.deltaY < 0 ? 1 : -1), {t: Math.max(0, x / state.scale)});
+}, {passive: false});
+$('clipSegments').addEventListener('dblclick', (e) => {
+  const btn = e.target.closest('.segment');
+  const c = btn && state.project?.clips.find((x) => x.id === Number(btn.dataset.id));
+  if (c) zoomToClip(c);
+});
 let resizeTimer;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
@@ -1089,6 +1441,7 @@ function renderPlans() {
   const plans = c?.edit_plans || {};
   const names = Object.keys(plans);
   $('planResult').hidden = !names.length;
+  syncSubtitleStyle();
   if (!names.length) return;
   const name = selectedPlanName(), plan = plans[name];
   $('planVersions').innerHTML = names.length > 1 ? names.map((n) =>
@@ -1160,14 +1513,19 @@ $('planActions').onchange = (e) => {
   const box = e.target.closest('[data-act]');
   if (box) patchPlan({actions: {[box.dataset.act]: box.checked}});
 };
-const exportPlanName = () => {
+function exportPlanName() {
   const c = current();
   return $('usePlan').checked && c?.edit_plans && !planStale(c) ? selectedPlanName() || null : null;
-};
+}
+$('usePlan').addEventListener('change', syncSubtitleStyle);
 
 // ------------------------------------------------------------------ exportação
 
 function hideExport() {
+  clearTimeout(state.queueTimer);
+  state.queueTimer = null;
+  state.queueClosed = {};
+  $('exportQueue').replaceChildren();
   $('exportPanel').dataset.tone = '';
   $('downloads').replaceChildren();
   $('jobStatus').textContent = EXPORT_IDLE;
@@ -1186,10 +1544,91 @@ function showExport(text, {progress = null, cancellable = false, tone = ''} = {}
 function exportOptions(format, rights) {
   return {
     format, framing: $('framing').value, subtitles: $('subtitles').checked,
+    subtitle_style: $('subtitleStyle').value, refine_subtitles: $('refineSubtitles').checked,
     normalize_audio: $('normalize').checked, hook: $('hook').checked, acknowledge_rights: rights,
-    edit_plan: exportPlanName(),
+    edit_plan: exportPlanName(), filter: state.filter === 'nenhum' ? null : state.filter,
   };
 }
+
+// ------------------------------------------------------------------ filtro de cor
+
+// Amostras: um quadro do vídeo em cada filtro, lado a lado numa tira gerada pelo servidor (FFmpeg, exato).
+// O player usa a aproximação em CSS para mostrar o filtro enquanto o vídeo toca.
+state.filters = [];
+state.filter = store.get('filter') || 'nenhum';
+state.filterKey = null;
+
+async function loadFilterCatalog() {
+  try { state.filters = (await api('/api/filters')).filters; } catch { state.filters = []; }
+  if (!state.filters.some((f) => f.id === state.filter)) state.filter = 'nenhum';
+  applyFilter();
+  if (filtersVisible()) loadFilterSamples();
+}
+const filtersVisible = () => !$('panelEffects').hidden;
+
+function applyFilter() {
+  const f = state.filters.find((x) => x.id === state.filter);
+  video.style.filter = f?.css || '';
+  $('filterDesc').textContent = f ? f.label + ': ' + f.desc : '';
+  for (const b of $('filterGrid').querySelectorAll('[data-filter]')) {
+    const on = b.dataset.filter === state.filter;
+    b.classList.toggle('selected', on);
+    b.setAttribute('aria-checked', on);
+  }
+}
+
+function loadFilterSamples(force = false) {
+  const p = state.project;
+  if (!p || p.status !== 'ready' || !state.filters.length) return;
+  const c = current();
+  // Instante: o meio do corte selecionado; com "Ver exemplos no quadro atual", onde o player está.
+  let t = force || !c ? video.currentTime || 0 : (c.start + c.end) / 2;
+  t = Math.round(t * 10) / 10;
+  const key = p.id + ':' + t;
+  if (key === state.filterKey && !force) return;
+  state.filterKey = key;
+  const url = '/api/projects/' + p.id + '/filter-samples?t=' + t;
+  const n = state.filters.length;
+  const ratio = (p.media.width / p.media.height) || 16 / 9;
+  $('filterGrid').innerHTML = state.filters.map((f, k) =>
+    '<button type="button" role="radio" class="filtertile" data-filter="' + f.id + '" title="' + escape(f.desc) + '">' +
+    '<span class="filterthumb loading"></span><span class="filtername">' + escape(f.label) + '</span></button>').join('');
+  // Estilos pelo CSSOM: a CSP da página bloqueia o atributo style escrito no HTML.
+  [...$('filterGrid').querySelectorAll('.filterthumb')].forEach((s, k) => {
+    s.style.aspectRatio = ratio.toFixed(3);
+    s.style.backgroundImage = 'url("' + url + '")';
+    s.style.backgroundSize = (n * 100) + '% 100%';
+    s.style.backgroundPosition = (n > 1 ? (k / (n - 1)) * 100 : 0) + '% 0';
+  });
+  const probe = new Image();
+  probe.onload = () => { for (const s of $('filterGrid').querySelectorAll('.filterthumb')) s.classList.remove('loading'); };
+  probe.onerror = () => toast('Não foi possível gerar os exemplos de filtro.', true);
+  probe.src = url;
+  applyFilter();
+}
+
+$('filterGrid').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-filter]');
+  if (!b) return;
+  state.filter = b.dataset.filter;
+  store.set('filter', state.filter);
+  applyFilter();
+});
+$('filterRefresh').onclick = () => loadFilterSamples(true);
+
+// Estilo da legenda: lembrado entre sessões; com um plano de edição em uso, o plano decide.
+$('subtitleStyle').value = store.get('subtitleStyle') === 'classica' ? 'classica' : 'dinamica';
+$('subtitleStyle').addEventListener('change', () => store.set('subtitleStyle', $('subtitleStyle').value));
+$('refineSubtitles').checked = store.get('refineSubtitles') !== 'off';
+$('refineSubtitles').addEventListener('change', () => store.set('refineSubtitles',
+  $('refineSubtitles').checked ? 'on' : 'off'));
+function syncSubtitleStyle() {
+  const planned = Boolean(exportPlanName());
+  $('subtitleStyle').disabled = !$('subtitles').checked || planned;
+  $('subtitleStyleNote').hidden = !planned || !$('subtitles').checked;
+  $('refineSubtitles').disabled = !$('subtitles').checked;
+}
+$('subtitles').addEventListener('change', syncSubtitleStyle);
 
 // Prévia: a mesma montagem da exportação (layout, legenda, plano de edição) em meia resolução.
 async function previewEdit() {
@@ -1205,7 +1644,7 @@ async function previewEdit() {
     setStatus('Gerando prévia…', 'busy');
     const j = await api('/api/projects/' + pid + '/clips/' + cid + '/preview', 'POST', exportOptions(format, false));
     state.exportJob = j.id;
-    await monitorJob(j.id, pid, cid, format, {preview: true});
+    await monitorPreview(j.id, pid, cid);
   } catch (e) {
     if (state.project?.id === pid) showExport(e.message, {tone: 'error'});
     setStatus('Prévia não concluída', 'error');
@@ -1273,24 +1712,147 @@ async function exportClip() {
       title: 'Alertas de direitos autorais', yes: 'Confirmo e quero exportar',
       text: 'Este material tem alertas de direitos autorais. Confirma que pode utilizá-lo?',
     })) return;
-    $('downloads').replaceChildren();
-    showExport('Enviando para a fila…', {progress: 0});
-    setStatus('Exportando…', 'busy');
+    // Só envia para a fila: o painel acompanha cada exportação, e outros cortes podem ser enfileirados já.
     const j = await api('/api/projects/' + pid + '/clips/' + cid + '/export', 'POST', exportOptions(format, rights));
-    state.exportJob = j.id;
-    await monitorJob(j.id, pid, cid, format);
+    toast(j.duplicate ? 'Este corte já está na fila de exportação.' : clipLabel(cid) + ' entrou na fila (' + format + ').');
+    setStatus('Exportação na fila', 'busy');
+    if (state.project?.id === pid) {
+      state.project.jobs = [j, ...(state.project.jobs || []).filter((x) => x.id !== j.id)];
+      renderExports();
+    }
   } catch (e) {
-    if (state.project?.id === pid) showExport(e.message, {tone: 'error'});
-    setStatus('Exportação não concluída', 'error');
+    setStatus('Exportação não enviada', 'error');
     toast(e.message, true);
   } finally {
     state.exporting = false;
-    state.exportJob = null;
     updateControls();
   }
 }
 
-async function monitorJob(id, pid, cid, format, {preview = false} = {}) {
+// ------------------------------------------------------------------ fila de exportações
+
+function clipLabel(id) {
+  const i = state.project?.clips.findIndex((c) => c.id === id) ?? -1;
+  return i < 0 ? 'Corte removido' : '#' + (i + 1) + ' ' + state.project.clips[i].title;
+}
+
+function jobLine(j) {
+  const kind = j.kind === 'narration' ? 'Narrado · ' : '';
+  return kind + (j.format || '') + ' · ' + (j.message || 'Processando') + ' · ' + Math.round((j.progress || 0) * 100) + '%';
+}
+
+// Três escopos: o que está renderizando agora, o que espera a vez e o que já pode ser baixado.
+function renderExports() {
+  const p = state.project;
+  const box = $('exportQueue');
+  if (!p) return box.replaceChildren();
+  const jobs = (p.jobs || []).filter((j) => !j.preview);
+  const running = jobs.filter((j) => j.status === 'running' || j.status === 'cancelling');
+  const queued = jobs.filter((j) => j.status === 'queued').sort((a, b) => a.created - b.created);
+  const done = p.clips.flatMap((c) => Object.keys(c.exports || {}).map((format) => ({c, format})));
+  // Falhas só enquanto não houver uma tentativa mais nova do mesmo corte e formato.
+  const latest = new Map();
+  for (const j of jobs) {
+    const key = j.kind + j.clip_id + j.format;
+    if (!latest.has(key) || latest.get(key).created < j.created) latest.set(key, j);
+  }
+  const failed = [...latest.values()].filter((j) => j.status === 'failed' || j.status === 'interrupted').slice(0, 5);
+
+  const row = (title, sub, {progress = null, actions = '', tone = ''} = {}) =>
+    '<li class="qrow ' + tone + '"><div class="qmain"><strong>' + escape(title) + '</strong><small>' + escape(sub) +
+    '</small>' + (progress === null ? '' : '<progress max="100" value="' + Math.round(progress * 100) + '"></progress>') +
+    '</div>' + actions + '</li>';
+  const cancel = (j) => j.status === 'cancelling' ? '' :
+    '<button type="button" class="btn ghost danger qcancel" data-cancel="' + j.id + '" title="Cancelar esta exportação">' +
+    '<svg class="ic"><use href="#i-x"/></svg><span>Cancelar</span></button>';
+  // A escolha de abrir/fechar um grupo vale até trocar de projeto; sem escolha, usa o padrão do grupo.
+  const isOpen = (name, open) => name in state.queueClosed ? !state.queueClosed[name] : open;
+  const group = (name, label, items, body, open = true) => items.length
+    ? '<details class="qgroup" data-group="' + name + '"' + (isOpen(name, open) ? ' open' : '') +
+      '><summary>' + label + ' <b>' + items.length + '</b></summary><ul>' + body + '</ul></details>'
+    : '';
+
+  box.innerHTML =
+    group('running', 'Em andamento', running, running.map((j) =>
+      row(clipLabel(j.clip_id), jobLine(j), {progress: j.progress || 0, actions: cancel(j)})).join('')) +
+    group('queued', 'Na fila', queued, queued.map((j, i) =>
+      row(clipLabel(j.clip_id), (i + 1) + 'º na fila · ' + (j.kind === 'narration' ? 'Narrado · ' : '') + (j.format || ''),
+        {actions: cancel(j)})).join('')) +
+    group('done', 'Concluídas', done, done.map(({c, format}) =>
+      row(clipLabel(c.id), format + (c.exports[format]?.validation?.duration ? ' · ' + fmt(c.exports[format].validation.duration) : ''), {
+        tone: 'ok',
+        actions: '<span class="qactions"><button type="button" class="iconbtn" title="Assistir" aria-label="Assistir" ' +
+          'data-watch="' + c.id + '" data-format="' + escape(format) + '"><svg class="ic"><use href="#i-eye"/></svg></button>' +
+          '<a class="iconbtn" title="Baixar MP4" aria-label="Baixar MP4" href="' + downloadUrl(p.id, c.id, format) +
+          '"><svg class="ic"><use href="#i-download"/></svg></a></span>',
+      })).join(''), done.length <= 3) +
+    group('failed', 'Com erro', failed, failed.map((j) =>
+      row(clipLabel(j.clip_id), (j.format || '') + ' · ' + (j.error || 'A exportação não terminou.') + ' Exporte de novo.',
+        {tone: 'error'})).join(''));
+
+  if (state.exporting !== 'preview') {
+    const parts = [[running, 'em andamento'], [queued, 'na fila'], [done, done.length === 1 ? 'concluída' : 'concluídas']]
+      .filter(([items]) => items.length).map(([items, label]) => items.length + ' ' + label);
+    $('jobStatus').textContent = parts.length ? parts.join(' · ') : EXPORT_IDLE;
+  }
+  if ((running.length || queued.length) && !state.queueTimer) state.queueTimer = setTimeout(pollExports, 1500);
+}
+
+const downloadUrl = (pid, cid, format) =>
+  '/api/projects/' + pid + '/clips/' + cid + '/download?format=' + encodeURIComponent(format);
+
+// Enquanto houver algo na fila, consulta só a lista de tarefas (leve); o projeto inteiro é recarregado
+// apenas quando uma exportação termina, para os cortes mostrarem o arquivo novo.
+async function pollExports() {
+  state.queueTimer = null;
+  const p = state.project;
+  if (!p) return;
+  let jobs;
+  try { jobs = (await api('/api/projects/' + p.id + '/jobs')).jobs; } catch {
+    // Servidor ainda sem a rota leve (não reiniciado desde a atualização): usa o projeto inteiro.
+    try { jobs = (await api('/api/projects/' + p.id)).jobs.filter((j) => j.kind !== 'analysis'); } catch { jobs = null; }
+  }
+  if (state.project !== p) return;
+  if (!jobs) { state.queueTimer = setTimeout(pollExports, 5000); return; }
+  const wasActive = new Set((p.jobs || []).filter((j) => ACTIVE_JOB.includes(j.status)).map((j) => j.id));
+  const finished = jobs.filter((j) => wasActive.has(j.id) && j.status === 'done' && !j.preview);
+  p.jobs = [...jobs, ...(p.jobs || []).filter((j) => j.kind === 'analysis')];
+  if (finished.length) {
+    setStatus('Exportação concluída', 'ok');
+    toast(finished.length === 1 ? clipLabel(finished[0].clip_id) + ' exportado (' + finished[0].format + ').'
+      : finished.length + ' cortes exportados.');
+    await refresh();
+  } else {
+    renderExports();
+  }
+}
+
+$('exportQueue').addEventListener('click', async (e) => {
+  const cancelBtn = e.target.closest('[data-cancel]');
+  if (cancelBtn) {
+    cancelBtn.disabled = true;
+    try {
+      await api('/api/jobs/' + cancelBtn.dataset.cancel + '/cancel', 'POST');
+      toast('Exportação cancelada.');
+      pollExports();
+    } catch (err) { toast(err.message, true); cancelBtn.disabled = false; }
+    return;
+  }
+  const watch = e.target.closest('[data-watch]');
+  if (watch) {
+    const c = state.project.clips.find((x) => String(x.id) === watch.dataset.watch);
+    if (!c) return;
+    const format = watch.dataset.format;
+    openPreview(downloadUrl(state.project.id, c.id, format), c.exports?.[format], {preview: false});
+  }
+});
+$('exportQueue').addEventListener('toggle', (e) => {
+  const d = e.target.closest('details[data-group]');
+  if (d) state.queueClosed = {...state.queueClosed, [d.dataset.group]: !d.open};
+}, true);
+
+// Só a prévia é acompanhada aqui: abre o vídeo ao terminar. As exportações vão para a fila do painel.
+async function monitorPreview(id, pid, cid) {
   for (let i = 0; i < 2400; i++) {
     const j = await api('/api/jobs/' + id);
     const here = state.project?.id === pid;
@@ -1298,7 +1860,7 @@ async function monitorJob(id, pid, cid, format, {preview = false} = {}) {
       showExport((j.message || 'Processando') + ' · ' + Math.round((j.progress || 0) * 100) + '%',
         {progress: j.progress || 0, cancellable: j.status !== 'cancelling'});
     }
-    if (j.status === 'done' && preview) {
+    if (j.status === 'done') {
       setStatus('Prévia pronta', 'ok');
       if (!here) return toast('Prévia pronta em outro projeto.');
       await refresh();
@@ -1314,38 +1876,12 @@ async function monitorJob(id, pid, cid, format, {preview = false} = {}) {
       openPreview(src, j.result);
       return;
     }
-    if (j.status === 'done') {
-      setStatus('Exportação concluída', 'ok');
-      if (!here) return toast('Exportação concluída em outro projeto.');
-      await refresh();
-      showExport('Exportação concluída.', {tone: 'ok'});
-      const a = document.createElement('a');
-      a.className = 'btn primary block';
-      a.href = '/api/projects/' + pid + '/clips/' + cid + '/download?format=' + encodeURIComponent(format);
-      a.innerHTML = '<svg class="ic"><use href="#i-download"/></svg>';
-      a.append('Baixar MP4 (' + format + ')');
-      const watch = document.createElement('button');
-      watch.type = 'button';
-      watch.className = 'btn block';
-      watch.innerHTML = '<svg class="ic"><use href="#i-eye"/></svg>';
-      watch.append('Assistir');
-      watch.onclick = () => openPreview(a.href, j.result, {preview: false});
-      $('downloads').replaceChildren(a, watch);
-      for (const w of j.result?.warnings || []) {
-        const p = document.createElement('p');
-        p.className = 'hint';
-        p.textContent = w;
-        $('downloads').append(p);
-      }
-      toast('Seu vídeo está pronto.');
-      return;
-    }
     if (j.status === 'cancelled') {
-      if (here) showExport('Exportação cancelada. Nenhum arquivo parcial foi mantido.', {tone: 'muted'});
-      setStatus('Exportação cancelada', 'idle');
+      if (here) showExport('Prévia cancelada.', {tone: 'muted'});
+      setStatus('Prévia cancelada', 'idle');
       return;
     }
-    if (FAILED_JOB.includes(j.status)) throw Error(j.error || 'A exportação falhou.');
+    if (FAILED_JOB.includes(j.status)) throw Error(j.error || 'A prévia falhou.');
     await sleep(i < 20 ? 700 : 1500);
   }
   throw Error('O acompanhamento expirou; a tarefa continua no histórico do projeto.');
@@ -1370,6 +1906,7 @@ setFill($('seek'));
 setFill($('editIntensity'));
 hideExport();
 loadProjects();
+loadFilterCatalog();
 updateControls();
 const initial = new URLSearchParams(location.search).get('projeto');
 if (initial) openProject(initial).catch((e) => { setLoading(null); setStatus('Projeto não encontrado', 'error'); toast(e.message, true); });
