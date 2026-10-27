@@ -152,8 +152,30 @@ async function api(url, method = 'GET', body) {
     throw Error('Sem conexão com o AutoCortes. Verifique se o aplicativo ainda está aberto.');
   }
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw Error(typeof data.detail === 'string' ? data.detail : 'Erro ao executar a operação.');
+  if (!r.ok) {
+    const err = Error(withHint(typeof data.detail === 'string' ? data.detail : 'Erro ao executar a operação.', data.code));
+    err.code = data.code;
+    throw err;
+  }
   return data;
+}
+
+// O que fazer quando algo dá errado: a mensagem do servidor diz o problema; aqui entra a saída.
+const ERROR_HINTS = {
+  too_large: 'Use um arquivo menor ou aumente MAX_UPLOAD_GB no iniciar_windows.bat.',
+  too_long: 'Corte o vídeo em partes ou aumente AUTOCORTES_MAX_SOURCE_HOURS no iniciar_windows.bat.',
+  bad_extension: 'Converta para MP4 (H.264) e tente de novo.',
+  no_audio: 'Sem áudio não há fala para analisar: use o modo Manual.',
+  busy: 'Espere a tarefa atual terminar ou cancele em Processamentos.',
+  not_ready: 'Aguarde a análise terminar; o andamento aparece na página inicial.',
+  no_source: 'O vídeo original sumiu da pasta do projeto: crie o projeto de novo com o arquivo.',
+  no_transcript: 'Use "Analisar de novo" para transcrever o vídeo.',
+  disk_full: 'Libere espaço no disco e tente de novo.',
+  rights_ack_required: 'Abra a Revisão de direitos, leia os alertas e confirme na exportação.',
+};
+function withHint(message, code) {
+  const hint = ERROR_HINTS[code];
+  return hint && !message.includes(hint) ? message + ' ' + hint : message;
 }
 
 // ------------------------------------------------------------------ diálogos
@@ -286,8 +308,7 @@ function initTabs(list, attr, onChange) {
   return (name) => activate(tabs.find((t) => t.dataset[attr] === name));
 }
 
-const NAV_FOR_LEFT = {media: 'media', cuts: 'cuts'};
-const NAV_FOR_INSP = {props: 'editor', subtitles: 'subtitles', effects: 'effects', audio: 'audio'};
+// Página inicial ("home") e editor dividem a área principal; o resto abre por cima (diálogos e gavetas).
 const setActiveNav = (name) => {
   for (const b of document.querySelectorAll('button.navitem')) {
     const on = b.dataset.nav === name;
@@ -295,9 +316,24 @@ const setActiveNav = (name) => {
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   }
 };
-const showLeft = initTabs(document.querySelector('.leftpanel .tabs'), 'left', (name) => setActiveNav(NAV_FOR_LEFT[name]));
+function setView(view) {
+  document.body.dataset.view = view;
+  $('homeView').hidden = view !== 'home';
+  setActiveNav(view === 'home' ? (state.projectsAll ? 'projects' : 'home') : 'editor');
+  if (view === 'home') {
+    video.pause();
+    $('crumb').textContent = 'Início';
+    document.title = 'AutoCortes Studio';
+    history.replaceState({}, '', '/');   // recarregar a página volta para o início
+    loadProjects();
+  } else if (state.project) {
+    $('crumb').textContent = state.project.name;
+    document.title = state.project.name + ' — AutoCortes Studio';
+    history.replaceState({}, '', '/?projeto=' + state.project.id);
+  }
+}
+const showLeft = initTabs(document.querySelector('.leftpanel .tabs'), 'left');
 const showInsp = initTabs(document.querySelector('.inspector .tabs'), 'insp', (name) => {
-  setActiveNav(NAV_FOR_INSP[name]);
   if (name === 'effects') loadFilterSamples();
 });
 
@@ -321,65 +357,214 @@ function focusExports() {
   setTimeout(() => panel.classList.remove('flash'), 900);
 }
 const NAV_ACTIONS = {
-  editor() { closeDrawers(); showInsp('props'); $('workspace').focus(); },
-  media() { openLeft('media'); },
-  cuts() { openLeft('cuts'); },
-  subtitles() { showInsp('subtitles'); },
-  audio() { showInsp('audio'); },
-  effects() { showInsp('effects'); },
-  exports: focusExports,
-  auto() {
-    openLeft('media');
-    $('mode').value = 'automatic';
-    toggleMode();
-    $('mode').focus();
+  home() { state.projectsAll = false; setView('home'); },
+  new() { openNewProject(); },
+  projects() {
+    state.projectsAll = true;
+    setView('home');
+    $('projectsSec').scrollIntoView({block: 'start'});
   },
+  editor() {
+    if (!state.project) {
+      toast('Abra um projeto ou crie um novo para usar o editor.');
+      return NAV_ACTIONS.projects();
+    }
+    setView('editor');
+    closeDrawers();
+    $('workspace').focus();
+  },
+  jobs: openJobs,
   automation: openAutomation,
-  rights() { $('rightsDialog').showModal(); },
+  settings: openSettings,
 };
 for (const b of document.querySelectorAll('button.navitem')) {
   b.onclick = () => {
     NAV_ACTIONS[b.dataset.nav]?.();
-    if (phone.matches && !['media', 'cuts'].includes(b.dataset.nav)) closeDrawers();
+    if (phone.matches) closeDrawers();
   };
 }
+// Botões de atalho espalhados pela tela (estados vazios, página inicial): data-go="new|projects|jobs".
+document.addEventListener('click', (e) => {
+  const go = e.target.closest('[data-go]');
+  if (go) NAV_ACTIONS[go.dataset.go]?.();
+});
+$('openCutsTop').onclick = () => openLeft('cuts');
+$('openRights').onclick = () => $('rightsDialog').showModal();
 $('help').onclick = () => $('helpDialog').showModal();
 narrow.addEventListener('change', () => { if (!narrow.matches) document.body.dataset.left = 'closed'; syncScrim(); });
 phone.addEventListener('change', syncScrim);
 
 // ------------------------------------------------------------------ biblioteca e importação
 
+const RECENT_PROJECTS = 8;
+const JOB_STATUS = {queued: 'Na fila', running: 'Em andamento', cancelling: 'Cancelando', done: 'Concluído',
+  failed: 'Falhou', cancelled: 'Cancelado', interrupted: 'Interrompido'};
+
+// Página inicial inteira numa consulta: projetos, tarefas em andamento, exportações e dependências. Enquanto há
+// algo rodando, atualiza sozinha a cada 5 s.
 async function loadProjects() {
   $('projects').setAttribute('aria-busy', 'true');
   try {
-    const d = await api('/api/projects');
-    // Em análise: a lista mostra a etapa e o andamento e se atualiza sozinha até terminar.
+    const d = await api('/api/dashboard');
+    state.dashboard = d;
     clearTimeout(state.projectsTimer);
-    if (d.projects.some((p) => p.analysis)) state.projectsTimer = setTimeout(loadProjects, 5000);
-    $('projects').innerHTML = d.projects.map((p) => {
-      const selected = p.id === state.project?.id;
-      const a = p.analysis;
-      const status = a ? (a.status === 'queued' ? 'Na fila' : (STAGE_NAMES[a.stage] || 'Analisando')) + ' · ' +
-        Math.round((a.progress || 0) * 100) + '%' : (PROJECT_STATUS[p.status] || p.status);
-      return '<div class="projectrowitem"><button class="projectitem' + (selected ? ' selected' : '') + '" data-id="' +
-        escape(p.id) + '"' + (selected ? ' aria-current="true"' : '') + '><strong>' + escape(p.name) + '</strong><small>' +
-        '<span class="dot" data-status="' + escape(p.status) + '"></span>' + escape(status) +
-        ' · ' + (p.duration ? fmt(p.duration) + ' · ' : '') + p.clips + (p.clips === 1 ? ' corte' : ' cortes') +
-        '</small></button>' + (STOPPED.includes(p.status)
-          ? '<button class="iconbtn sm projredo" data-redo="' + escape(p.id) + '" data-name="' + escape(p.name) +
-            '" title="Analisar de novo" aria-label="Analisar de novo o projeto ' + escape(p.name) +
-            '"><svg class="ic"><use href="#i-refresh"/></svg></button>' : '') +
-        '<button class="iconbtn sm projdel" data-del="' + escape(p.id) + '" data-name="' +
-        escape(p.name) + '" title="Excluir projeto" aria-label="Excluir o projeto ' + escape(p.name) +
-        '"><svg class="ic"><use href="#i-trash"/></svg></button></div>';
-    }).join('') || '<p class="empty">Nenhum projeto ainda. Importe um vídeo no painel de mídia.</p>';
+    const busy = d.active_jobs.length || d.projects.some((p) => p.analysis);
+    if (busy) state.projectsTimer = setTimeout(loadProjects, 5000);
+    renderProjects(d.projects);
+    renderHomeJobs(d.active_jobs);
+    renderExportsHome(d.recent_exports, d.output_dir);
+    renderDeps($('homeDeps'), d.dependencies);
+    $('homeLimits').textContent = 'MP4, MOV, MKV, WEBM ou AVI · até ' + d.limits.max_upload_gb + ' GB e ' +
+      d.limits.max_source_hours + ' h';
+    $('jobsBadge').hidden = !d.active_jobs.length;
+    $('jobsBadge').textContent = d.active_jobs.length;
   } catch (e) {
-    $('projects').innerHTML = '<p class="empty error">Não foi possível carregar os projetos.</p>';
+    $('projects').innerHTML = '<p class="empty error">Não foi possível carregar os projetos. ' +
+      'Verifique se o AutoCortes ainda está aberto e clique em atualizar.</p>';
     toast(e.message, true);
   } finally {
     $('projects').removeAttribute('aria-busy');
   }
 }
+
+function renderProjects(projects) {
+  const list = state.projectsAll ? projects : projects.slice(0, RECENT_PROJECTS);
+  $('projectsTitle').textContent = state.projectsAll ? 'Meus projetos' : 'Projetos recentes';
+  $('projectsAll').hidden = state.projectsAll || projects.length <= RECENT_PROJECTS;
+  $('projectsAll').textContent = 'Ver todos (' + projects.length + ')';
+  $('projects').innerHTML = list.map((p) => {
+    const selected = p.id === state.project?.id;
+    const a = p.analysis;
+    const status = a ? (a.status === 'queued' ? 'Na fila' : (STAGE_NAMES[a.stage] || 'Analisando')) + ' · ' +
+      Math.round((a.progress || 0) * 100) + '%' : (PROJECT_STATUS[p.status] || p.status);
+    const thumb = p.duration ? '<img class="projthumb" alt="" loading="lazy" src="/api/projects/' + escape(p.id) + '/thumb">' : '';
+    return '<div class="projectrowitem"><button class="projectitem' + (selected ? ' selected' : '') + '" data-id="' +
+      escape(p.id) + '"' + (selected ? ' aria-current="true"' : '') + '><span class="projmedia">' + thumb +
+      '<svg class="ic"><use href="#i-film"/></svg></span><strong>' + escape(p.name) + '</strong><small>' +
+      '<span class="dot" data-status="' + escape(p.status) + '"></span>' + escape(status) +
+      ' · ' + (p.duration ? fmt(p.duration) + ' · ' : '') + p.clips + (p.clips === 1 ? ' corte' : ' cortes') +
+      '</small></button>' + (STOPPED.includes(p.status)
+        ? '<button class="iconbtn sm projredo" data-redo="' + escape(p.id) + '" data-name="' + escape(p.name) +
+          '" title="Analisar de novo" aria-label="Analisar de novo o projeto ' + escape(p.name) +
+          '"><svg class="ic"><use href="#i-refresh"/></svg></button>' : '') +
+      '<button class="iconbtn sm projdel" data-del="' + escape(p.id) + '" data-name="' +
+      escape(p.name) + '" title="Excluir projeto" aria-label="Excluir o projeto ' + escape(p.name) +
+      '"><svg class="ic"><use href="#i-trash"/></svg></button></div>';
+  }).join('') || '<div class="emptystate wide"><svg class="ic xl"><use href="#i-folder"/></svg><strong>Nenhum projeto ainda</strong>' +
+    '<p>Arraste um vídeo para a área acima ou clique em <b>Criar cortes</b>.</p></div>';
+  // Miniatura que não carregou (vídeo sem quadro legível): fica o ícone.
+  for (const img of $('projects').querySelectorAll('.projthumb')) img.onerror = () => img.remove();
+}
+
+function jobRow(j, {project = true, actions = true} = {}) {
+  const active = ACTIVE_JOB.includes(j.status);
+  const what = j.kind_label + (j.clip_title ? ' · ' + j.clip_title : '') + (j.format ? ' · ' + j.format : '');
+  const elapsed = j.started ? fmtDur((active ? Date.now() / 1000 : j.finished || Date.now() / 1000) - j.started) : '';
+  const detail = active
+    ? (j.status === 'queued' ? 'Aguardando a vez' : (j.message || JOB_STATUS[j.status])) + ' · ' +
+      Math.round((j.progress || 0) * 100) + '%' + (elapsed ? ' · ' + elapsed : '')
+    : JOB_STATUS[j.status] + (elapsed ? ' · ' + elapsed : '') + (j.error ? ' · ' + j.error : '');
+  const buttons = !actions ? '' : (active && j.status !== 'cancelling'
+    ? '<button type="button" class="btn ghost danger qcancel" data-jobcancel="' + j.id + '"><svg class="ic"><use href="#i-x"/></svg><span>Cancelar</span></button>' : '') +
+    (j.project_id && j.kind !== 'download' ? '<button type="button" class="btn ghost" data-jobopen="' + escape(j.project_id) + '">Abrir</button>' : '');
+  return '<li class="jobrow" data-status="' + j.status + '"><div class="qmain"><strong>' + escape(project ? j.project_name : what) +
+    '</strong><small>' + escape(project ? what + ' — ' + detail : detail) + '</small>' +
+    (active ? '<progress max="100" value="' + Math.round((j.progress || 0) * 100) + '"></progress>' : '') +
+    '</div><span class="qactions">' + buttons + '</span></li>';
+}
+
+function renderHomeJobs(jobs) {
+  $('homeJobsSec').hidden = !jobs.length;
+  $('homeJobs').innerHTML = jobs.slice(0, 5).map((j) => jobRow(j)).join('');
+}
+
+function renderExportsHome(items, outputDir) {
+  $('homeExports').innerHTML = items.map((x) =>
+    '<li class="exportrow"><div class="qmain"><strong>' + escape(x.title || 'Corte ' + x.clip_id) + '</strong><small>' +
+    escape(x.project_name) + ' · ' + escape(x.format) + ' · ' + fmt(x.duration) + '</small></div><span class="qactions">' +
+    '<button type="button" class="btn ghost" data-jobopen="' + escape(x.project_id) + '">Abrir</button>' +
+    '<a class="iconbtn" title="Baixar MP4" aria-label="Baixar ' + escape(x.title || '') + '" href="' +
+    downloadUrl(x.project_id, x.clip_id, x.format) + '"><svg class="ic"><use href="#i-download"/></svg></a></span></li>').join('') ||
+    '<li class="emptyline">Os cortes que você exportar aparecem aqui, prontos para baixar.</li>';
+  $('outputDir').textContent = outputDir ? 'Cópias também ficam na pasta de saída: ' + outputDir : '';
+}
+
+function renderDeps(box, deps) {
+  box.innerHTML = deps.map((d) => '<li class="dep' + (d.ok ? ' ok' : ' bad') + '"><svg class="ic"><use href="#' +
+    (d.ok ? 'i-check' : 'i-alert') + '"/></svg><div><strong>' + escape(d.label) + '</strong><small>' + escape(d.detail) +
+    (d.ok ? (d.hint ? ' — ' + escape(d.hint) : '') : ' — ' + escape(d.fix)) + '</small></div></li>').join('');
+}
+
+// Ações das listas de tarefas (página inicial e Processamentos).
+document.addEventListener('click', async (e) => {
+  const cancel = e.target.closest('[data-jobcancel]');
+  if (cancel) {
+    cancel.disabled = true;
+    try {
+      await api('/api/jobs/' + cancel.dataset.jobcancel + '/cancel', 'POST');
+      toast('Tarefa cancelada.');
+    } catch (err) { toast(err.message, true); }
+    loadProjects();
+    if ($('jobsDialog').open) loadJobs();
+    return;
+  }
+  const open = e.target.closest('[data-jobopen]');
+  if (open) {
+    $('jobsDialog').close();
+    openProject(open.dataset.jobopen).catch((err) => { setLoading(null); toast(err.message, true); });
+  }
+});
+
+// ------------------------------------------------------------------ processamentos
+
+async function loadJobs() {
+  try {
+    const d = await api('/api/jobs?limit=40');
+    $('jobsList').innerHTML = d.jobs.map((j) => jobRow(j)).join('') ||
+      '<li class="emptyline">Nenhum processamento ainda. Análises e exportações aparecem aqui.</li>';
+    clearTimeout(state.jobsTimer);
+    if ($('jobsDialog').open && d.jobs.some((j) => ACTIVE_JOB.includes(j.status))) state.jobsTimer = setTimeout(loadJobs, 2000);
+  } catch (e) {
+    $('jobsList').innerHTML = '<li class="emptyline error">' + escape(e.message) + '</li>';
+  }
+}
+function openJobs() {
+  loadJobs();
+  $('jobsDialog').showModal();
+}
+$('jobsDialog').addEventListener('close', () => clearTimeout(state.jobsTimer));
+
+// ------------------------------------------------------------------ configurações
+
+const PREFS = {
+  mode: () => ['automatic', 'manual', 'advanced'].includes(store.get('pref.mode')) ? store.get('pref.mode') : 'automatic',
+  target: () => clamp(Number(store.get('pref.target')) || 35, 10, 90),
+};
+async function openSettings() {
+  $('prefMode').value = PREFS.mode();
+  $('prefTarget').value = PREFS.target();
+  $('prefSubtitle').value = $('subtitleStyle').value;
+  $('prefRefine').checked = $('refineSubtitles').checked;
+  $('settingsDialog').showModal();
+  try {
+    const [cfg, d] = await Promise.all([api('/api/settings'), state.dashboard ? state.dashboard : api('/api/dashboard')]);
+    $('settingsPaths').innerHTML = '<dt>Pasta monitorada (entrada)</dt><dd>' + escape(cfg.paths.watch_dir) + '</dd>' +
+      '<dt>Pasta de saída</dt><dd>' + escape(cfg.paths.output_dir) + '</dd>';
+    renderDeps($('settingsDeps'), d.dependencies);
+  } catch (e) { toast(e.message, true); }
+}
+$('settingsSave').onclick = () => {
+  store.set('pref.mode', $('prefMode').value);
+  store.set('pref.target', String(clamp(Number($('prefTarget').value) || 35, 10, 90)));
+  $('subtitleStyle').value = $('prefSubtitle').value;
+  $('subtitleStyle').dispatchEvent(new Event('change'));
+  $('refineSubtitles').checked = $('prefRefine').checked;
+  $('refineSubtitles').dispatchEvent(new Event('change'));
+  $('settingsDialog').close();
+  toast('Preferências salvas.');
+};
+$('settingsSelection').onclick = () => { $('settingsDialog').close(); openSelection(); };
+
 $('projects').onclick = (e) => {
   const del = e.target.closest('.projdel');
   if (del) return deleteProject(del.dataset.del, del.dataset.name);
@@ -391,38 +576,133 @@ $('projects').onclick = (e) => {
 };
 
 const sourceMode = () => document.querySelector('[name=sourceMode]:checked').value;
-function toggleMode() {
-  const auto = $('mode').value === 'automatic';
-  $('automaticOptions').hidden = !auto;
-  $('importButton').textContent = auto ? 'Analisar e sugerir cortes' : 'Abrir no editor';
-}
-$('mode').onchange = toggleMode;
+const editMode = () => document.querySelector('[name=editMode]:checked')?.value || 'automatic';
 for (const r of document.querySelectorAll('[name=sourceMode]')) {
   r.onchange = () => {
     $('fileWrap').hidden = sourceMode() !== 'file';
     $('urlWrap').hidden = sourceMode() !== 'link';
   };
 }
-$('file').onchange = () => { $('filename').textContent = $('file').files[0]?.name || 'Nenhum arquivo selecionado'; };
+for (const r of document.querySelectorAll('[name=editMode]')) r.onchange = syncMode;
+function syncMode() {
+  const mode = editMode();
+  $('advancedOptions').hidden = mode !== 'advanced';
+  $('importButton').textContent = mode === 'manual' ? 'Abrir no editor' : 'Criar cortes';
+}
 
-const drop = $('dropZone');
-drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
-drop.ondragleave = () => drop.classList.remove('over');
-drop.ondrop = (e) => {
-  e.preventDefault();
-  drop.classList.remove('over');
-  if (e.dataTransfer.files.length) {
-    $('file').files = e.dataTransfer.files;
-    $('file').onchange();
+function wizardStep(n) {
+  $('step1').hidden = n !== 1;
+  $('step2').hidden = n !== 2;
+  $('stepDot1').classList.toggle('on', n === 1);
+  $('stepDot2').classList.toggle('on', n === 2);
+  $('stepBack').hidden = n !== 2;
+  $('stepNext').hidden = n !== 1;
+  $('importButton').hidden = n !== 2;
+  (n === 1 ? $('pickFile') : document.querySelector('[name=editMode]:checked'))?.focus();
+}
+
+// Passo 1: o navegador lê duração e resolução do arquivo sem enviá-lo; os limites vêm do servidor.
+const VIDEO_EXT = ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'];
+function describeFile() {
+  const f = $('file').files[0];
+  $('filename').textContent = f ? f.name : 'Nenhum arquivo selecionado';
+  const box = $('fileInfo');
+  state.fileProblems = [];
+  if (!f) { box.hidden = true; return; }
+  const limits = state.dashboard?.limits || {};
+  const ext = (f.name.split('.').pop() || '').toLowerCase();
+  const problems = state.fileProblems;
+  if (!VIDEO_EXT.includes(ext)) problems.push(['bad', 'Formato .' + ext + ' não é aceito. Converta para MP4 e tente de novo.']);
+  if (limits.max_upload_gb && f.size > limits.max_upload_gb * 1024 ** 3) {
+    problems.push(['bad', 'O arquivo passa de ' + limits.max_upload_gb + ' GB. Aumente MAX_UPLOAD_GB no iniciar_windows.bat.']);
   }
+  const facts = [['Tamanho', fmtSize(f.size)]];
+  const show = (extra = []) => {
+    box.hidden = false;
+    box.innerHTML = '<dl>' + facts.concat(extra).map(([k, v]) => '<dt>' + escape(k) + '</dt><dd>' + escape(v) + '</dd>').join('') +
+      '</dl>' + (problems.length ? '<ul class="fileproblems">' + problems.map(([tone, t]) =>
+        '<li class="' + tone + '">' + escape(t) + '</li>').join('') + '</ul>' : '<p class="fileok">Tudo certo com o arquivo.</p>');
+  };
+  show([['Duração', 'lendo…']]);
+  const probe = document.createElement('video');
+  probe.preload = 'metadata';
+  const url = URL.createObjectURL(f);
+  const done = () => URL.revokeObjectURL(url);
+  probe.onloadedmetadata = () => {
+    const dur = probe.duration;
+    const extra = [['Duração', isFinite(dur) ? fmt(dur) : 'desconhecida'],
+      ['Resolução', probe.videoWidth ? probe.videoWidth + '×' + probe.videoHeight : 'desconhecida']];
+    if (limits.max_source_hours && dur > limits.max_source_hours * 3600) {
+      problems.push(['bad', 'O vídeo passa de ' + limits.max_source_hours + ' h. Aumente AUTOCORTES_MAX_SOURCE_HOURS ou corte em partes.']);
+    }
+    if (probe.videoWidth && Math.min(probe.videoWidth, probe.videoHeight) < 480) {
+      problems.push(['warn', 'Resolução baixa: os cortes verticais podem ficar sem nitidez.']);
+    }
+    if (dur > 2 * 3600) problems.push(['info', 'Vídeo longo: a análise pode levar bastante tempo; o andamento aparece na página inicial.']);
+    const twin = (state.dashboard?.projects || []).find((p) => p.name === f.name && Math.abs((p.duration || 0) - dur) < 2);
+    if (twin) problems.push(['warn', 'Este vídeo parece já estar no projeto "' + twin.name + '". Importar de novo ocupa o espaço do arquivo outra vez.']);
+    show(extra);
+    done();
+  };
+  probe.onerror = () => {
+    show([['Duração', 'o navegador não leu; o AutoCortes verifica ao importar']]);
+    done();
+  };
+  probe.src = url;
+}
+$('file').onchange = describeFile;
+$('pickFile').onclick = () => $('file').click();
+
+function openNewProject(file = null) {
+  $('uploadForm').reset();
+  for (const r of document.querySelectorAll('[name=editMode]')) r.checked = r.value === PREFS.mode();
+  $('target').value = PREFS.target();
+  $('sourceSwitch').hidden = !state.dashboard?.links_enabled;
+  $('fileWrap').hidden = false;
+  $('urlWrap').hidden = true;
+  if (file) {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    $('file').files = dt.files;
+  }
+  describeFile();
+  syncMode();
+  wizardStep(1);
+  $('newDialog').showModal();
+  if (!state.dashboard) loadProjects();
+}
+$('stepNext').onclick = () => {
+  if (sourceMode() === 'file' && !$('file').files[0]) return toast('Selecione um vídeo para continuar.', true);
+  if (sourceMode() === 'link' && !$('videoUrl').value.trim()) return toast('Cole o link do vídeo.', true);
+  if ((state.fileProblems || []).some(([tone]) => tone === 'bad')) return toast('Resolva o problema do arquivo antes de continuar.', true);
+  wizardStep(2);
 };
+$('stepBack').onclick = () => wizardStep(1);
+
+for (const zone of [$('dropZone'), $('homeDrop')]) {
+  zone.ondragover = (e) => { e.preventDefault(); zone.classList.add('over'); };
+  zone.ondragleave = () => zone.classList.remove('over');
+  zone.ondrop = (e) => {
+    e.preventDefault();
+    zone.classList.remove('over');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    if (zone.id === 'homeDrop') return openNewProject(file);
+    $('file').files = e.dataTransfer.files;
+    describeFile();
+  };
+}
+$('homeDrop').onclick = () => { openNewProject(); $('file').click(); };
+$('homeDrop').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('homeDrop').click(); } };
+$('projectsAll').onclick = () => NAV_ACTIONS.projects();
 
 function params() {
   return {
     source_rights: $('sourceRights').value, third_party_footage: $('thirdParty').checked ? 'yes' : 'unknown',
     external_audio: $('audioRights').value, graphics_rights: $('graphicsRights').value,
     monetization: $('monetization').value, license_notes: $('licenseNotes').value,
-    editing_mode: $('mode').value, target_seconds: $('target').value, desired_count: 0,  // 0: todos os trechos válidos
+    editing_mode: editMode() === 'manual' ? 'manual' : 'automatic',  // avançado = automático com os ajustes à mostra
+    target_seconds: $('target').value, desired_count: 0,  // 0: todos os trechos válidos
     autopilot: 'false', recognize_music_opt_in: 'false',
   };
 }
@@ -458,16 +738,20 @@ $('uploadForm').onsubmit = async (e) => {
   if (sourceMode() === 'link' && !$('videoUrl').value.trim()) return toast('Cole o link do vídeo.', true);
   btn.disabled = true;
   btn.setAttribute('aria-busy', 'true');
+  store.set('pref.mode', editMode());
+  if (editMode() === 'advanced') store.set('pref.target', String(clamp(Number($('target').value) || 35, 10, 90)));
   try {
     if (sourceMode() === 'link') {
       setStatus('Baixando vídeo…', 'busy');
       setLoading('Baixando vídeo…');
       const result = await api('/api/imports/link', 'POST', {url: $('videoUrl').value.trim(), options: p});
       toast('Importação adicionada à fila.');
+      $('newDialog').close();
       await waitImport(result.id);
     } else {
       setStatus('Enviando vídeo…', 'busy');
       const d = await uploadFile(f, p);
+      $('newDialog').close();
       await openProject(d.id);
     }
   } catch (err) {
@@ -534,6 +818,9 @@ async function openProject(id) {
     state.selected = p.clips[0]?.id || null;
   }
   $('noVideo').hidden = true;
+  setView('editor');
+  $('mediaEmpty').hidden = true;
+  $('openRights').hidden = false;
   $('projectName').textContent = $('mediaName').textContent = $('crumb').textContent = p.name;
   document.title = p.name + ' — AutoCortes Studio';
   const m = p.media;
@@ -582,6 +869,8 @@ function closeProject() {
   hideExport();
   $('noVideo').hidden = false;
   $('mediaCard').hidden = true;
+  $('mediaEmpty').hidden = false;
+  $('openRights').hidden = true;
   $('openSelection').hidden = true;
   $('reanalyze').hidden = true;
   $('projectName').textContent = $('crumb').textContent = 'Nenhum projeto aberto';
@@ -600,6 +889,7 @@ function closeProject() {
   selectionLabel();
   history.replaceState({}, '', '/');
   updateControls();
+  setView('home');
 }
 
 // Projetos cuja análise parou (interrompida, com erro ou cancelada): a lista oferece "Analisar de novo".
@@ -1909,4 +2199,5 @@ loadProjects();
 loadFilterCatalog();
 updateControls();
 const initial = new URLSearchParams(location.search).get('projeto');
+if (!initial) setView('home');
 if (initial) openProject(initial).catch((e) => { setLoading(null); setStatus('Projeto não encontrado', 'error'); toast(e.message, true); });
