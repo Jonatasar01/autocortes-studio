@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 from starlette.background import BackgroundTask
 
-from . import config, filters, service, timeline
+from . import config, dashboard, filters, service, timeline
 from .config import ROOT  # noqa: F401  (compatibilidade)
 from .errors import AppError
 from .security import LocalSecurityMiddleware
@@ -239,6 +239,24 @@ def source_file(project_id: str):
 def project_filmstrip(project_id: str, n: int = 40):
     """Tira de miniaturas da linha do tempo (gerada uma vez, em cache)."""
     return FileResponse(timeline.filmstrip(project_id, n), media_type='image/jpeg',
+                        headers={'Cache-Control': 'max-age=86400'})
+
+
+@app.get('/api/dashboard')
+def get_dashboard():
+    """Página inicial: projetos, tarefas em andamento, últimas exportações e dependências."""
+    return dashboard.overview()
+
+
+@app.get('/api/jobs')
+def list_jobs(limit: int = 30):
+    """Tarefas de todos os projetos (as ativas primeiro), para o painel de processamentos."""
+    return {'jobs': dashboard.jobs(max(1, min(100, limit)))}
+
+
+@app.get('/api/projects/{project_id}/thumb')
+def project_thumb(project_id: str):
+    return FileResponse(timeline.thumbnail(project_id), media_type='image/jpeg',
                         headers={'Cache-Control': 'max-age=86400'})
 
 

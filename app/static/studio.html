@@ -50,6 +50,10 @@
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .71-1.53l7-6a2 2 0 0 1 2.58 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M3 12h.01M3 18h.01M3 6h.01M8 12h13M8 18h13M8 6h13"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
 </svg>
 
@@ -73,34 +77,18 @@
 
     <nav class="nav" aria-label="Navegação principal">
       <ul>
-        <li><button class="navitem active" data-nav="editor" title="Editor" aria-current="page"><svg class="ic"><use href="#i-layout"/></svg><span>Editor</span></button></li>
-        <li><button class="navitem" data-nav="media" title="Mídia"><svg class="ic"><use href="#i-film"/></svg><span>Mídia</span></button></li>
-        <li><button class="navitem" data-nav="cuts" title="Cortes"><svg class="ic"><use href="#i-scissors"/></svg><span>Cortes</span></button></li>
-        <li><button class="navitem" data-nav="subtitles" title="Legendas"><svg class="ic"><use href="#i-captions"/></svg><span>Legendas</span></button></li>
-        <li><button class="navitem" data-nav="audio" title="Áudio"><svg class="ic"><use href="#i-audio"/></svg><span>Áudio</span></button></li>
-        <li><button class="navitem" data-nav="effects" title="Efeitos"><svg class="ic"><use href="#i-sparkles"/></svg><span>Efeitos</span></button></li>
-        <li><button class="navitem" data-nav="exports" title="Exportações"><svg class="ic"><use href="#i-download"/></svg><span>Exportações</span></button></li>
+        <li><button class="navitem" data-nav="home" title="Início"><svg class="ic"><use href="#i-home"/></svg><span>Início</span></button></li>
+        <li><button class="navitem" data-nav="new" title="Novo projeto"><svg class="ic"><use href="#i-plus"/></svg><span>Novo projeto</span></button></li>
+        <li><button class="navitem" data-nav="projects" title="Meus projetos"><svg class="ic"><use href="#i-folder"/></svg><span>Meus projetos</span></button></li>
+        <li><button class="navitem" data-nav="editor" title="Editor Studio"><svg class="ic"><use href="#i-layout"/></svg><span>Editor Studio</span></button></li>
+        <li><button class="navitem" data-nav="jobs" title="Processamentos"><svg class="ic"><use href="#i-list"/></svg><span>Processamentos</span><em id="jobsBadge" class="navbadge" hidden></em></button></li>
       </ul>
-
-      <h2 class="navgroup">Ferramentas</h2>
+      <h2 class="navgroup">Sistema</h2>
       <ul>
-        <li><button class="navitem" data-nav="auto" title="Cortes automáticos: importe com o modo automático"><svg class="ic"><use href="#i-zap"/></svg><span>Cortes automáticos</span></button></li>
-      </ul>
-
-      <h2 class="navgroup">Revisão</h2>
-      <ul>
-        <li><button class="navitem" data-nav="automation" title="Fila de tarefas e automação"><svg class="ic"><use href="#i-refresh"/></svg><span>Automação</span></button></li>
-        <li><button class="navitem" data-nav="rights" title="Revisão de direitos autorais"><svg class="ic"><use href="#i-shield"/></svg><span>Revisão de direitos</span></button></li>
+        <li><button class="navitem" data-nav="automation" title="Automação"><svg class="ic"><use href="#i-zap"/></svg><span>Automação</span></button></li>
+        <li><button class="navitem" data-nav="settings" title="Configurações"><svg class="ic"><use href="#i-gear"/></svg><span>Configurações</span></button></li>
       </ul>
     </nav>
-
-    <section class="recents" aria-label="Projetos recentes">
-      <div class="recentshead">
-        <h2 class="navgroup">Projetos recentes</h2>
-        <button id="refresh" class="iconbtn sm" title="Atualizar lista" aria-label="Atualizar projetos recentes"><svg class="ic"><use href="#i-refresh"/></svg></button>
-      </div>
-      <div id="projects" class="projects" aria-live="polite"></div>
-    </section>
   </aside>
 
   <div class="main">
@@ -108,13 +96,57 @@
       <button id="navToggle" class="iconbtn" aria-label="Recolher menu" aria-expanded="true" aria-controls="sidebar" title="Recolher ou expandir o menu"><svg class="ic"><use href="#i-panel"/></svg></button>
       <div class="crumb"><span id="crumb">Nenhum projeto aberto</span></div>
       <div class="topright">
+        <button id="openCutsTop" class="btn ghost editoronly narrowonly" title="Lista de cortes"><svg class="ic"><use href="#i-scissors"/></svg><span>Cortes</span></button>
         <span id="status" class="status" role="status" data-tone="idle"><span class="statusdot" aria-hidden="true"></span><span id="statusText">Editor pronto</span></span>
         <button id="help" class="iconbtn" title="Atalhos de teclado (?)" aria-label="Atalhos de teclado"><svg class="ic"><use href="#i-keyboard"/></svg></button>
-        <button id="saveTop" class="btn" disabled title="Salvar alterações do corte (Ctrl+S)"><svg class="ic"><use href="#i-save"/></svg><span>Salvar</span></button>
-        <button id="previewTop" class="btn" disabled title="Ver como o corte vai ficar (renderização rápida em meia resolução)"><svg class="ic"><use href="#i-eye"/></svg><span id="previewLabel">Prévia</span></button>
-        <button id="exportTop" class="btn primary" disabled title="Exportar o corte selecionado"><svg class="ic"><use href="#i-upload"/></svg><span id="exportLabel">Exportar</span></button>
+        <button id="saveTop" class="editoronly btn" disabled title="Salvar alterações do corte (Ctrl+S)"><svg class="ic"><use href="#i-save"/></svg><span>Salvar</span></button>
+        <button id="previewTop" class="editoronly btn" disabled title="Ver como o corte vai ficar (renderização rápida em meia resolução)"><svg class="ic"><use href="#i-eye"/></svg><span id="previewLabel">Prévia</span></button>
+        <button id="exportTop" class="editoronly btn primary" disabled title="Exportar o corte selecionado"><svg class="ic"><use href="#i-upload"/></svg><span id="exportLabel">Exportar</span></button>
       </div>
     </header>
+
+    <section id="homeView" class="home" aria-labelledby="homeTitle" hidden>
+      <div class="homehero">
+        <div class="herotext">
+          <h1 id="homeTitle">Crie cortes do seu vídeo</h1>
+          <p>Importe um vídeo, escolha o modo e revise os cortes sugeridos antes de exportar.</p>
+        </div>
+        <div id="homeDrop" class="herodrop" role="button" tabindex="0" aria-label="Arraste um vídeo para cá ou clique para escolher">
+          <svg class="ic xl"><use href="#i-upload"/></svg>
+          <strong>Arraste um vídeo para cá</strong>
+          <small id="homeLimits">MP4, MOV, MKV, WEBM ou AVI</small>
+        </div>
+        <button id="homeCreate" type="button" class="btn primary lg" data-go="new"><svg class="ic"><use href="#i-scissors"/></svg><span>Criar cortes</span></button>
+      </div>
+
+      <section class="homesec" id="homeJobsSec" aria-labelledby="homeJobsTitle" hidden>
+        <div class="sechead"><h2 id="homeJobsTitle">Em andamento</h2><button type="button" class="linkbtn" data-go="jobs">Ver todos</button></div>
+        <ul id="homeJobs" class="joblist"></ul>
+      </section>
+
+      <section class="homesec" id="projectsSec" aria-labelledby="projectsTitle">
+        <div class="sechead">
+          <h2 id="projectsTitle">Projetos recentes</h2>
+          <div class="secactions">
+            <button id="projectsAll" type="button" class="linkbtn">Ver todos</button>
+            <button id="refresh" class="iconbtn sm" title="Atualizar" aria-label="Atualizar projetos"><svg class="ic"><use href="#i-refresh"/></svg></button>
+          </div>
+        </div>
+        <div id="projects" class="projects" aria-live="polite"></div>
+      </section>
+
+      <div class="homegrid">
+        <section class="homesec" aria-labelledby="exportsTitle">
+          <div class="sechead"><h2 id="exportsTitle">Últimos cortes exportados</h2></div>
+          <ul id="homeExports" class="exportlist"></ul>
+          <p id="outputDir" class="hint"></p>
+        </section>
+        <section class="homesec" aria-labelledby="depsTitle">
+          <div class="sechead"><h2 id="depsTitle">Este computador</h2></div>
+          <ul id="homeDeps" class="deplist"></ul>
+        </section>
+      </div>
+    </section>
 
     <main class="workspace" id="workspace" tabindex="-1">
       <!-- Mídia e cortes -->
@@ -135,62 +167,16 @@
             <button id="deleteProject" type="button" class="iconbtn sm" title="Excluir este projeto" aria-label="Excluir este projeto"><svg class="ic"><use href="#i-trash"/></svg></button>
           </div>
           <button id="openSelection" type="button" class="btn ghost block" hidden title="Escolher os cortes de novo com a transcrição já salva (com IA, se ativada)">Seleção de cortes e IA…</button>
+          <button id="openRights" type="button" class="btn ghost block" hidden title="Riscos de direitos autorais declarados e detectados"><svg class="ic"><use href="#i-shield"/></svg><span>Revisão de direitos</span></button>
+          <div id="mediaEmpty" class="emptystate">
+            <svg class="ic xl"><use href="#i-film"/></svg>
+            <strong>Nenhum projeto aberto</strong>
+            <p>Crie um projeto com um vídeo novo ou abra um dos seus projetos.</p>
+            <button type="button" class="btn primary" data-go="new"><svg class="ic"><use href="#i-plus"/></svg><span>Criar cortes</span></button>
+            <button type="button" class="btn ghost" data-go="projects">Meus projetos</button>
+          </div>
           <button id="reanalyze" type="button" class="btn ghost block" hidden title="Analisar o vídeo do zero: transcrição, cenas e cortes"><svg class="ic"><use href="#i-refresh"/></svg><span>Analisar de novo</span></button>
 
-          <form id="uploadForm" novalidate>
-            <div class="segmented" role="radiogroup" aria-label="Origem do vídeo">
-              <label><input type="radio" name="sourceMode" value="file" checked><span>Arquivo</span></label>
-              <label><input type="radio" name="sourceMode" value="link"><span>Link</span></label>
-            </div>
-            <div id="fileWrap">
-              <label class="drop" for="file" id="dropZone">
-                <svg class="ic xl"><use href="#i-plus"/></svg>
-                <strong>Importar mídia</strong>
-                <small>Escolha ou solte um vídeo · MP4, MOV, MKV, WEBM, AVI</small>
-              </label>
-              <input id="file" type="file" accept="video/*,.mkv,.mov,.avi,.m4v" class="visually-hidden">
-              <div id="filename" class="filehint" aria-live="polite">Nenhum arquivo selecionado</div>
-            </div>
-            <div id="urlWrap" hidden>
-              <label class="field" for="videoUrl">Link público autorizado</label>
-              <input id="videoUrl" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…">
-            </div>
-
-            <label class="field" for="mode">Modo de edição</label>
-            <select id="mode">
-              <option value="manual">Manual — eu escolho</option>
-              <option value="automatic">Automático — sugestões</option>
-            </select>
-            <div id="automaticOptions" hidden>
-              <label class="field">Duração alvo (s)<input id="target" type="number" value="35" min="10" max="90"></label>
-              <p class="hint">Entram todos os trechos válidos para clipe, do melhor para o pior, sem número fixo.</p>
-            </div>
-
-            <label class="field" for="sourceRights">Direitos do vídeo</label>
-            <select id="sourceRights">
-              <option value="unknown">Não verificado</option>
-              <option value="owned">Sou o autor</option>
-              <option value="licensed">Tenho licença</option>
-              <option value="third_party">Material de terceiros</option>
-            </select>
-            <label class="check"><input id="thirdParty" type="checkbox"><span>Contém trechos de terceiros</span></label>
-            <details class="more">
-              <summary>Outras declarações de direitos</summary>
-              <label class="field" for="audioRights">Áudio de terceiros</label>
-              <select id="audioRights"><option value="unknown">Não verificado</option><option value="no">Não</option><option value="yes">Sim</option></select>
-              <label class="field" for="graphicsRights">Imagens e marcas</label>
-              <select id="graphicsRights"><option value="unknown">Não verificado</option><option value="none">Não há</option><option value="owned">Minhas</option><option value="licensed">Licenciadas</option><option value="third_party">De terceiros</option></select>
-              <label class="field" for="monetization">Monetização</label>
-              <select id="monetization"><option value="unknown">Não decidido</option><option value="yes">Sim</option><option value="no">Não</option></select>
-              <label class="field" for="licenseNotes">Notas da licença</label>
-              <textarea id="licenseNotes" rows="2"></textarea>
-            </details>
-
-            <button id="importButton" class="btn primary block" type="submit">Abrir no editor</button>
-            <div id="uploadProgress" class="uploadprogress" hidden>
-              <progress id="uploadBar" value="0" max="100" aria-label="Progresso do envio"></progress><span id="uploadPercent">0%</span>
-            </div>
-          </form>
         </div>
 
         <div class="pane" id="paneCuts" role="tabpanel" aria-labelledby="tabCuts" hidden>
@@ -426,6 +412,105 @@
 <dialog id="rightsDialog" class="dialog" aria-labelledby="rightsTitle">
   <header><h2 id="rightsTitle">Revisão de direitos</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
   <div id="rightsDetails" class="dialogbody">Abra um projeto para ver a revisão de direitos.</div>
+</dialog>
+
+<dialog id="newDialog" class="dialog wizard" aria-labelledby="newTitle">
+  <form id="uploadForm" novalidate>
+  <header><h2 id="newTitle">Novo projeto</h2><ol class="steps" aria-label="Etapas"><li id="stepDot1" class="on">1. Vídeo</li><li id="stepDot2">2. Modo</li></ol><button type="button" class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <div class="dialogbody wizardbody">
+  <section id="step1">
+            <div class="segmented" id="sourceSwitch" role="radiogroup" aria-label="Origem do vídeo" hidden>
+              <label><input type="radio" name="sourceMode" value="file" checked><span>Arquivo</span></label>
+              <label><input type="radio" name="sourceMode" value="link"><span>Link</span></label>
+            </div>
+            <div id="fileWrap">
+              <label class="drop" for="file" id="dropZone">
+                <svg class="ic xl"><use href="#i-plus"/></svg>
+                <strong>Importar mídia</strong>
+                <small>Escolha ou solte um vídeo · MP4, MOV, MKV, WEBM, AVI</small>
+              </label>
+              <input id="file" type="file" accept="video/*,.mkv,.mov,.avi,.m4v" class="visually-hidden">
+              <button id="pickFile" type="button" class="btn block">Selecionar vídeo</button>
+              <div id="filename" class="filehint" aria-live="polite">Nenhum arquivo selecionado</div>
+            </div>
+            <div id="urlWrap" hidden>
+              <label class="field" for="videoUrl">Link público autorizado</label>
+              <input id="videoUrl" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…">
+            </div>
+
+            <div id="fileInfo" class="fileinfo" hidden aria-live="polite"></div>
+  </section>
+  <section id="step2" hidden>
+            <fieldset class="modecards">
+              <legend class="field">Como você quer editar?</legend>
+              <label class="modecard"><input type="radio" name="editMode" value="automatic"><span><svg class="ic"><use href="#i-zap"/></svg><strong>Automático</strong><small>Analisa o vídeo e sugere os melhores trechos, com título e motivo.</small></span></label>
+              <label class="modecard"><input type="radio" name="editMode" value="manual"><span><svg class="ic"><use href="#i-scissors"/></svg><strong>Manual</strong><small>Abre direto no editor para você marcar início e fim.</small></span></label>
+              <label class="modecard"><input type="radio" name="editMode" value="advanced"><span><svg class="ic"><use href="#i-sliders"/></svg><strong>Avançado</strong><small>Análise automática com todos os ajustes à mostra.</small></span></label>
+            </fieldset>
+
+            <label class="field" for="sourceRights">Direitos do vídeo <small class="muted">— revisados de novo antes de exportar</small></label>
+            <select id="sourceRights">
+              <option value="unknown">Não verificado</option>
+              <option value="owned">Sou o autor</option>
+              <option value="licensed">Tenho licença</option>
+              <option value="third_party">Material de terceiros</option>
+            </select>
+            <div id="advancedOptions" class="advanced" hidden>
+              <span class="eyebrow">Ajustes avançados</span>
+              <label class="field">Duração alvo de cada corte (s)<input id="target" type="number" value="35" min="10" max="90"></label>
+              <p class="hint">Entram todos os trechos válidos para clipe, do melhor para o pior, sem número fixo. Curadoria com IA, enquadramento, legendas e áudio ficam no editor e em Configurações.</p>
+              <label class="check"><input id="thirdParty" type="checkbox"><span>Contém trechos de terceiros</span></label>
+              <label class="field" for="audioRights">Áudio de terceiros</label>
+              <select id="audioRights"><option value="unknown">Não verificado</option><option value="no">Não</option><option value="yes">Sim</option></select>
+              <label class="field" for="graphicsRights">Imagens e marcas</label>
+              <select id="graphicsRights"><option value="unknown">Não verificado</option><option value="none">Não há</option><option value="owned">Minhas</option><option value="licensed">Licenciadas</option><option value="third_party">De terceiros</option></select>
+              <label class="field" for="monetization">Monetização</label>
+              <select id="monetization"><option value="unknown">Não decidido</option><option value="yes">Sim</option><option value="no">Não</option></select>
+              <label class="field" for="licenseNotes">Notas da licença</label>
+              <textarea id="licenseNotes" rows="2"></textarea>
+            </div>
+
+            <div id="uploadProgress" class="uploadprogress" hidden>
+              <progress id="uploadBar" value="0" max="100" aria-label="Progresso do envio"></progress><span id="uploadPercent">0%</span>
+            </div>
+  </section>
+  </div>
+  <footer>
+    <button id="stepBack" type="button" class="btn ghost" hidden>Voltar</button>
+    <button id="stepNext" type="button" class="btn primary">Continuar</button>
+    <button id="importButton" class="btn primary" type="submit" hidden>Criar cortes</button>
+  </footer>
+  </form>
+</dialog>
+
+<dialog id="jobsDialog" class="dialog wide" aria-labelledby="jobsTitle">
+  <header><h2 id="jobsTitle">Processamentos</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <div class="dialogbody"><ul id="jobsList" class="joblist"></ul></div>
+</dialog>
+
+<dialog id="settingsDialog" class="dialog" aria-labelledby="settingsTitle">
+  <header><h2 id="settingsTitle">Configurações</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <div class="dialogbody settingsbody">
+    <span class="eyebrow">Novo projeto</span>
+    <label class="field" for="prefMode">Modo que já vem marcado</label>
+    <select id="prefMode"><option value="automatic">Automático</option><option value="manual">Manual</option><option value="advanced">Avançado</option></select>
+    <label class="field" for="prefTarget">Duração alvo de cada corte (s)</label>
+    <input id="prefTarget" type="number" min="10" max="90" value="35">
+    <span class="eyebrow spaced">Exportação</span>
+    <label class="field" for="prefSubtitle">Estilo da legenda</label>
+    <select id="prefSubtitle"><option value="dinamica">Dinâmica (palavra a palavra)</option><option value="classica">Clássica</option></select>
+    <label class="switch"><input id="prefRefine" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda precisa</strong><small>Retranscreve o trecho de cada corte ao exportar (precisa de GPU).</small></span></label>
+    <span class="eyebrow spaced">Escolha dos cortes</span>
+    <button id="settingsSelection" type="button" class="btn ghost block">Curadoria com IA e foco…</button>
+    <span class="eyebrow spaced">Pastas</span>
+    <dl id="settingsPaths" class="paths"></dl>
+    <span class="eyebrow spaced">Este computador</span>
+    <ul id="settingsDeps" class="deplist"></ul>
+  </div>
+  <footer>
+    <button class="btn ghost" type="button" data-close>Fechar</button>
+    <button id="settingsSave" class="btn primary" type="button">Salvar</button>
+  </footer>
 </dialog>
 
 <dialog id="selectionDialog" class="dialog" aria-labelledby="selectionTitle">

@@ -88,6 +88,28 @@ def filmstrip(project_id: str, count: int) -> Path:
     return out
 
 
+def thumbnail(project_id: str) -> Path:
+    """Miniatura do projeto (320×180) para a página inicial: um quadro a 10% do vídeo, gerado uma vez."""
+    source, info, cache = _source(project_id)
+    out = cache / 'thumb.jpg'
+    if out.is_file():
+        return out
+    with _lock(f'{project_id}:thumb'):
+        if out.is_file():
+            return out
+        cache.mkdir(parents=True, exist_ok=True)
+        tmp = cache / '.thumb.tmp.jpg'
+        t = min(max(0.0, info['duration'] - 0.5), max(1.0, info['duration'] * 0.1))
+        try:
+            media.run_ffmpeg(['-ss', f'{t:.3f}', '-i', str(source), '-map', f"0:{info['video_index']}",
+                              '-frames:v', '1', '-vf', 'scale=320:180:force_original_aspect_ratio=increase,crop=320:180',
+                              '-q:v', '5', str(tmp)], duration=1.0)
+            tmp.replace(out)
+        except media.FFmpegError as exc:
+            raise AppError('Não foi possível gerar a miniatura.', 500, 'thumb_failed') from exc
+    return out
+
+
 def waveform(project_id: str) -> dict:
     """``{'state': 'ready', 'bucket': s, 'peaks': base64 de bytes 0–255}`` ou ``{'state': 'pending'}``."""
     source, info, cache = _source(project_id)

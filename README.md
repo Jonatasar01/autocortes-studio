@@ -16,9 +16,27 @@ para a internet.
 
 ## Nova interface Studio — edição manual e automática
 
-A interface fica em `http://127.0.0.1:8000/`, com player, linha do tempo, propriedades
-do corte e biblioteca de projetos. O editor clássico foi removido; `/classic` redireciona
-para o Studio.
+A interface fica em `http://127.0.0.1:8000/` e abre na **página inicial**:
+
+- **Criar cortes:** botão principal e área de arrastar e soltar. O novo projeto tem 2 passos:
+  1. **Vídeo:** escolha ou solte o arquivo. Antes de enviar, o app mostra tamanho, duração e
+     resolução e avisa sobre problemas (formato não aceito, acima do limite de tamanho ou duração,
+     resolução baixa, vídeo que parece já estar em outro projeto).
+  2. **Modo:** *Automático* (sugere os cortes), *Manual* (abre direto no editor) ou *Avançado*
+     (automático com duração alvo e todas as declarações de direitos à mostra). O modo escolhido
+     fica salvo para o próximo projeto. A importação por link só aparece quando o `yt-dlp` está instalado.
+- **Em andamento:** análises e exportações de todos os projetos, com etapa, progresso, tempo e Cancelar.
+- **Projetos recentes / Meus projetos:** miniatura, estado e cortes de cada projeto; projetos parados
+  mostram **Analisar de novo**.
+- **Últimos cortes exportados:** abrir o projeto ou baixar o MP4.
+- **Este computador:** FFmpeg, legendas, reconhecimento de fala (GPU ou CPU), seguir rosto e espaço
+  livre. O que faltar vem com a instrução de como resolver.
+
+Barra lateral: Início · Novo projeto · Meus projetos · Editor Studio · Processamentos · Automação ·
+Configurações. As abas do editor (Propriedades, Legendas, Efeitos, Áudio) ficam só no editor.
+**Configurações** guarda o modo padrão, a duração alvo, o estilo da legenda e a legenda precisa,
+e mostra as pastas de entrada e saída. A **Revisão de direitos** fica no painel de mídia do projeto.
+Erros comuns trazem a solução junto (ex.: arquivo grande demais → aumentar `MAX_UPLOAD_GB`).
 
 - **Modo manual:** importa e valida o vídeo sem executar transcrição, seleção ou IA.
   Posicione o vídeo e use **Marcar I**, **Marcar O** e **Criar corte** para escolher
@@ -78,7 +96,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 5. Exporte. O MP4 só aparece depois de validado (duração, resolução, codec, áudio, sincronia e decodificação).
    Baixe o MP4 e o SRT.
 
-Projetos ficam em `data/` e reaparecem em **Projetos recentes** após reiniciar.
+Projetos ficam em `data/` e reaparecem na página inicial após reiniciar.
 
 ### Quantidade automática de cortes
 
