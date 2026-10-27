@@ -366,7 +366,7 @@ def clean_framing_segments(raw: list | None, clip_len: float) -> list[dict]:
             raise AppError('Trecho de enquadramento inválido.', 400, 'bad_input')
         framing = item.get('framing')
         if framing not in media.SEGMENT_FRAMINGS:
-            raise AppError('Enquadramento do trecho inválido (use blur, fit ou track).', 400, 'bad_framing')
+            raise AppError('Enquadramento do trecho inválido (use blur, fit, track ou streamer).', 400, 'bad_framing')
         try:
             a, b = float(item['start']), float(item['end'])
         except (KeyError, TypeError, ValueError):

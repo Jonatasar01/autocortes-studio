@@ -614,7 +614,8 @@ function render() {
 
 // ------------------------------------------------------------------ enquadramento por trecho
 
-const FRAMING_LABELS = {track: 'Seguir rosto', blur: 'Fundo desfocado', fit: 'Quadro inteiro'};
+const FRAMING_LABELS = {track: 'Seguir rosto', blur: 'Fundo desfocado', fit: 'Quadro inteiro',
+  streamer: 'Só o streamer'};
 function mixSegments(c) {
   return c?.framing_segments?.length ? c.framing_segments.map((s) => ({...s}))
     : (c ? [{start: 0, end: c.end - c.start, framing: 'blur'}] : []);

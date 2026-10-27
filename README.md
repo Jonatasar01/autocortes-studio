@@ -359,6 +359,17 @@ quando não acha rostos; efeitos sonoros e música não são adicionados automat
 de conteúdo é heurística; a análise roda na requisição (alguns segundos para cortes longos), não na fila.
 Nenhum ganho de retenção é afirmado: não há dados de desempenho.
 
+## Só o streamer (lives de jogo com webcam)
+
+Em **Efeitos > Enquadramento**, **Só o streamer (webcam com fundo desfocado)** mostra apenas a janela da
+webcam: ela é recortada, encaixada na largura da tela vertical e a própria webcam, desfocada, preenche em cima e
+embaixo. A legenda fica logo abaixo da webcam.
+
+A janela é achada sozinha na análise de rostos: a partir do rosto real (o que se mexe; ícones e personagens
+do jogo ficam de fora), procura a borda reta, contínua e presente em todos os quadros mais próxima de cada lado,
+enquanto o jogo atrás muda. Lado sem borda (janela encostada na margem) vai até a margem. Se não houver janela
+(câmera em tela cheia), o modo segue o rosto e avisa. Também pode ser usado em trechos do **Por trecho**.
+
 ## Enquadramento por trecho
 
 Na aba **Efeitos**, em **Enquadramento**, a opção **Por trecho (variar no vídeo)** deixa cada parte do corte

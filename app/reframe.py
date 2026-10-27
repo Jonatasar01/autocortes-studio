@@ -41,7 +41,7 @@ SMOOTHING = 0.18             # fração da distância percorrida a cada amostra
 SIMPLIFY_TOLERANCE = 0.004   # erro máximo (fração da largura) ao simplificar o caminho da câmera
 MAX_POINTS_PER_SHOT = 40
 MIN_SHOT_SECONDS = 0.6
-PLAN_VERSION = 4   # muda quando o algoritmo do plano muda (invalida os planos em cache)
+PLAN_VERSION = 5   # muda quando o algoritmo do plano muda (invalida os planos em cache)
 YUNET_MODEL = 'face_detection_yunet_2023mar.onnx'
 YUNET_SCORE = 0.7            # confiança mínima do YuNet
 MIN_TRACK_HITS = 3           # um rosto precisa aparecer em 3 amostras (0,6 s); falsos positivos piscam
@@ -51,6 +51,7 @@ SPEAKER_SWITCH = 1.5         # vantagem para trocar de falante dentro da cena (e
 SPEAKER_MIN_HOLD = 10        # e só depois de 10 amostras (2 s) no falante atual: troca a cada 1 s cansa
 STATIC_FACE_MOTION = 0.05    # rosto que oscila menos que 5% da própria largura: imagem/ícone, não pessoa
 SPEAKER_MOTION_WEIGHT = 12.0 # peso do movimento do rosto na escolha de quem fala
+FACECAM_SAMPLES = 40         # quadros usados para achar a moldura da webcam
 # Segurança do rosto: a caixa do rosto, com margem, precisa caber inteira no recorte.
 FACE_MARGIN_RATIO = 0.20     # margem lateral = 20% da largura do rosto (cabelo, movimento, erro do detector)
 FACE_MIN_MARGIN = 0.015      # e pelo menos 1,5% da largura do quadro
@@ -621,7 +622,66 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
                'face_visibility_p05': round(ordered[int(len(ordered) * 0.05)], 3) if ordered else None,
                'unsafe_samples': sum(1 for v in ordered if v < 0.9),
                'unsafe_shots': unsafe_shots, 'fit_seconds': round(fit_seconds, 2)}
-    return {'ok': True, 'shots': shots, 'crop_frac': round(crop_frac, 4), 'message': message, 'metrics': metrics}
+    return {'ok': True, 'shots': shots, 'crop_frac': round(crop_frac, 4), 'message': message, 'metrics': metrics,
+            'facecam': _visible_rect(detect_facecam(samples, speaker_targets(samples)), media, box)}
+
+
+def _visible_rect(rect, media: dict, box: dict | None):
+    """Retângulo em fração do quadro inteiro → fração da área sem faixas pretas."""
+    if not rect or not box:
+        return list(rect) if rect else None
+    W, H = media['width'], media['height']
+    x0, y0 = (rect[0] * W - box['x']) / box['w'], (rect[1] * H - box['y']) / box['h']
+    x1, y1 = ((rect[0] + rect[2]) * W - box['x']) / box['w'], ((rect[1] + rect[3]) * H - box['y']) / box['h']
+    x0, y0, x1, y1 = (min(1.0, max(0.0, v)) for v in (x0, y0, x1, y1))
+    return [round(x0, 4), round(y0, 4), round(x1 - x0, 4), round(y1 - y0, 4)] if x1 > x0 and y1 > y0 else None
+
+
+def detect_facecam(samples: list[dict], targets: list[tuple]) -> tuple[float, float, float, float] | None:
+    """Janela da webcam (``x, y, largura, altura`` em fração do quadro) em volta do rosto real, ou ``None``.
+
+    Lives de jogo põem a câmera do streamer num retângulo sobre o jogo. A borda dessa janela é uma linha reta,
+    contínua e no mesmo lugar em todos os quadros, enquanto o jogo muda: procura, a partir do rosto, a borda
+    persistente mais próxima de cada lado (lados medidos na altura do rosto; topo e base, na largura achada).
+    Lado sem borda (janela encostada na margem da tela) vai até a margem.
+    """
+    import cv2
+    import numpy as np
+    boxes = [tg[2] for tg in targets if len(tg) > 2 and tg[2]]
+    if len(boxes) < 3:
+        return None
+    fx, fy, fw, fh = (float(v) for v in np.median(np.asarray(boxes), axis=0))
+    picked = samples[::max(1, len(samples) // FACECAM_SAMPLES)]
+    H, W = picked[0]['gray'].shape
+    kernel = np.ones((3, 3), np.uint8)
+    edges = np.mean([cv2.dilate(cv2.Canny(s['gray'], 60, 160), kernel) > 0 for s in picked], axis=0)
+    persist = edges >= 0.8
+    fl, ft, fr, fb = int(fx * W), int(fy * H), int((fx + fw) * W), int((fy + fh) * H)
+
+    def scan(line, positions, need):
+        for i in positions:
+            if line(i).mean() >= need:
+                return i
+        return None
+
+    y0, y1 = max(0, ft - (fb - ft)), min(H, fb + (fb - ft))
+    right = scan(lambda x: persist[y0:y1, x], range(fr + 2, W), 0.85)
+    left = scan(lambda x: persist[y0:y1, x], range(fl - 2, -1, -1), 0.85)
+    L, R = left if left is not None else 0, right if right is not None else W - 1
+    row = lambda y: persist[y, L + 3:max(L + 4, R - 3)]  # noqa: E731
+    top = scan(row, range(ft - 2, -1, -1), 0.6)
+    if top is None:
+        top = scan(row, range(ft - 2, -1, -1), 0.45)
+    bottom = scan(row, range(fb + 2, H), 0.6)
+    T, B = top if top is not None else 0, bottom if bottom is not None else H - 1
+    if sum(v is not None for v in (left, right, top, bottom)) < 2:
+        return None   # sem moldura: não é uma janela de webcam
+    rect = (L / W, T / H, (R - L) / W, (B - T) / H)
+    face_area, area = fw * fh, rect[2] * rect[3]
+    aspect = (rect[2] * W) / max(1.0, rect[3] * H)
+    if not (face_area * 3 <= area <= 0.6 and 0.6 <= aspect <= 2.6):
+        return None   # grande demais (a "janela" é a tela) ou formato estranho
+    return tuple(round(v, 4) for v in rect)
 
 
 def _to_visible(targets: list[tuple], media: dict, box: dict | None) -> list[tuple]:

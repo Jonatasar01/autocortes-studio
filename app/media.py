@@ -31,8 +31,10 @@ log = logging.getLogger('autocortes.media')
 
 ALLOWED_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'}
 FORMATS = ('9:16', '16:9', '1:1', 'original')
-FRAMINGS = ('fit', 'blur', 'track', 'mix')  # track = seguir rosto (recorta as laterais); mix = por trecho
-SEGMENT_FRAMINGS = ('fit', 'blur', 'track')  # o que cada trecho do modo "por trecho" pode usar
+# track = seguir rosto (recorta as laterais); streamer = só a janela da webcam, com fundo desfocado;
+# mix = por trecho
+FRAMINGS = ('fit', 'blur', 'track', 'streamer', 'mix')
+SEGMENT_FRAMINGS = ('fit', 'blur', 'track', 'streamer')  # o que cada trecho do modo "por trecho" pode usar
 FORMAT_SLUG = {'9:16': '9x16', '16:9': '16x9', '1:1': '1x1', 'original': 'orig'}
 
 ProgressFn = Callable[[float, str], None]
@@ -485,15 +487,20 @@ def visible_size(media: dict) -> tuple[int, int]:
     return (box['w'], box['h']) if box else (media['width'], media['height'])
 
 
-def content_band(fmt: str, framing: str, media: dict, size: tuple[int, int]) -> tuple[int, int] | None:
+def content_band(fmt: str, framing: str, media: dict, size: tuple[int, int],
+                 facecam: list | None = None) -> tuple[int, int] | None:
     """Faixa vertical ``(topo, base)`` onde o vídeo aparece nos enquadramentos que não cortam a imagem.
 
     ``None`` quando o vídeo ocupa a tela inteira (formato original, ou seguir rosto, que recorta).
     """
-    if fmt == 'original' or framing not in ('blur', 'fit'):
+    if fmt == 'original' or framing not in ('blur', 'fit', 'streamer'):
         return None
     W, H = size
     vw, vh = visible_size(media)
+    if framing == 'streamer':
+        if not facecam:
+            return None
+        vw, vh = vw * facecam[2], vh * facecam[3]
     h = min(H, W * vh / max(1, vw))
     top = (H - h) / 2
     return round(top), round(top + h)
@@ -658,6 +665,16 @@ def _track_crop(W: int, H: int, track: dict) -> str:
     return f"crop=w='2*trunc(ih*{W}/{H}/2)':h=ih:x='{x}':y=0,scale={W}:{H}:flags=bicubic,setsar=1"
 
 
+def _facecam_crop(rect: list) -> str:
+    x, y, w, h = rect
+    return f'crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},'
+
+
+def _streamer_graph(src: str, pre: str, subs: str, W: int, H: int, rect: list) -> str:
+    """Só o streamer: recorta a janela da webcam e a encaixa na tela com ela mesma desfocada no fundo."""
+    return _blur_branch(f'{src}{_facecam_crop(rect)}{pre}', W, H, f',setsar=1{subs}[vout]')
+
+
 def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[dict], track: dict | None) -> str:
     """Enquadramento por trecho: uma versão do vídeo por enquadramento, ligada no tempo de cada trecho.
 
@@ -666,8 +683,14 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
     """
     from . import reframe
     kinds = []
+    has_track = bool(track and track.get('ok'))
+    facecam = (track or {}).get('facecam')
     for seg in segments:
-        kind = seg['framing'] if seg['framing'] != 'track' or (track and track.get('ok')) else 'blur'
+        kind = seg['framing']
+        if kind == 'streamer' and not facecam:
+            kind = 'track'      # sem janela de webcam: segue o rosto
+        if kind == 'track' and not has_track:
+            kind = 'blur'
         seg['_kind'] = kind
         if kind not in kinds:
             kinds.append(kind)
@@ -677,6 +700,8 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
             return _track_graph(src, pre, subs, W, H, track)
         if only == 'blur':
             return _blur_branch(f'{src}{pre}', W, H, f',setsar=1{subs}[vout]')
+        if only == 'streamer':
+            return _streamer_graph(src, pre, subs, W, H, facecam)
         return (f'{src}{pre}scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'
                 f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1{subs}[vout]')
     labels = ''.join(f'[mx{k}]' for k in range(len(kinds)))
@@ -684,6 +709,8 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
     for k, kind in enumerate(kinds):
         if kind == 'blur':
             parts.append(_blur_branch(f'[mx{k}]', W, H, f',setsar=1[mv{k}]'))
+        elif kind == 'streamer':
+            parts.append(_blur_branch(f'[mx{k}]{_facecam_crop(facecam)}', W, H, f',setsar=1[mv{k}]'))
         elif kind == 'fit':
             parts.append(f'[mx{k}]scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'
                          f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[mv{k}]')
@@ -722,9 +749,11 @@ def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str |
         graph = f'{src}{pre}scale={W}:{H}:flags=bicubic,setsar=1{subs}[vout]'
     elif framing == 'mix' and segments:
         graph = _mixed_graph(src, pre, subs, W, H, [dict(s) for s in segments], track)
-    elif framing == 'track' and track and track.get('ok'):
+    elif framing == 'streamer' and (track or {}).get('facecam'):
+        graph = _streamer_graph(src, pre, subs, W, H, track['facecam'])
+    elif framing in ('track', 'streamer') and track and track.get('ok'):  # sem webcam: segue o rosto
         graph = _track_graph(src, pre, subs, W, H, track)
-    elif framing in ('blur', 'track', 'mix'):  # sem plano/trechos válidos: fundo desfocado
+    elif framing in ('blur', 'track', 'streamer', 'mix'):  # sem plano/trechos válidos: fundo desfocado
         graph = _blur_branch(f'{src}{pre}', W, H, f',setsar=1{subs}[vout]')
     else:  # fit: enquadramento original preservado com barras
         graph = (f'{src}{pre}scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'

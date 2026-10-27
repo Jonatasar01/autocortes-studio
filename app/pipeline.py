@@ -250,8 +250,20 @@ def run_export(ctx: JobContext) -> dict:
     kinds = {seg['framing'] for seg in segments or []}
     # Legenda: no "por trecho" com algum desfocado/quadro inteiro, fica abaixo da faixa do vídeo nesses
     # trechos; nos de seguir rosto (tela cheia) essa mesma altura continua sobre a imagem, sem borda.
-    band_framing = ('blur' if kinds & {'blur', 'fit'} else 'track') if segments else prm['framing']
-    band = media.content_band(prm['format'], band_framing, info, (width, height))
+    track = None
+    if prm['framing'] in ('track', 'streamer') or kinds & {'track', 'streamer'}:
+        # Antes da legenda: no "só o streamer" ela se posiciona pela altura da janela da webcam.
+        ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
+        track = _cached_track(folder, p, info, start, end, prm['format'], ctx)
+        if not track['ok']:
+            warnings.append(track['message'])
+        elif 'streamer' in kinds | {prm['framing']} and not track.get('facecam'):
+            warnings.append('Nenhuma janela de webcam encontrada no corte; "só o streamer" seguiu o rosto.')
+    if segments:
+        band_framing = 'blur' if kinds & {'blur', 'fit'} else 'streamer' if 'streamer' in kinds else 'track'
+    else:
+        band_framing = prm['framing']
+    band = media.content_band(prm['format'], band_framing, info, (width, height), (track or {}).get('facecam'))
     out_len = sum(b - a for a, b in keep) if keep else end - start
     hook_text = prm.get('hook_text') if prm.get('hook') else None
     sub_report = subtitles._new_report()
@@ -301,12 +313,6 @@ def run_export(ctx: JobContext) -> dict:
     if ass_text is None and hook_text:
         ass_text = subtitles.to_ass([], width, height, hook_text=hook_text, clip_len=out_len, report=sub_report,
                                     video_band=band)
-    track = None
-    if prm['framing'] == 'track' or 'track' in kinds:
-        ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
-        track = _cached_track(folder, p, info, start, end, prm['format'], ctx)
-        if not track['ok']:
-            warnings.append(track['message'])
     post = audio_extra = ''
     if plan:
         remap = (lambda t: media.remap_time(t, keep)) if keep else (lambda t: t)

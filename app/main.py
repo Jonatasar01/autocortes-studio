@@ -267,7 +267,7 @@ class FramingSegment(BaseModel):
     model_config = ConfigDict(extra='forbid')
     start: float = Field(ge=0, allow_inf_nan=False)
     end: float = Field(gt=0, allow_inf_nan=False)
-    framing: Literal['fit', 'blur', 'track']
+    framing: Literal['fit', 'blur', 'track', 'streamer']
 
 
 class FramingSegments(BaseModel):
@@ -291,7 +291,7 @@ class ExportOptions(BaseModel):
     model_config = ConfigDict(extra='forbid')
     format: Optional[Literal['9:16', '16:9', '1:1', 'original']] = None
     portrait: bool = True  # compatibilidade: usado quando "format" não é enviado
-    framing: Literal['fit', 'blur', 'track', 'mix'] = 'fit'   # mix = enquadramento por trecho
+    framing: Literal['fit', 'blur', 'track', 'streamer', 'mix'] = 'fit'   # mix = por trecho
     subtitles: bool = True
     subtitle_style: Literal['classica', 'dinamica'] = 'classica'
     hook: bool = False
