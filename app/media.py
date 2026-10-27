@@ -381,8 +381,10 @@ def detect_scenes(source: Path, media: dict, work_dir: Path, *, on_progress: Pro
     if os.getenv('AUTOCORTES_SCENES', '1') == '0':
         return []
     work_dir.mkdir(parents=True, exist_ok=True)
-    out = work_dir / 'scenes.txt'
-    detect = f"select='gt(scene,{threshold})',metadata=print:file=scenes.txt"
+    # Nome único por execução: um FFmpeg órfão de uma análise interrompida (servidor reiniciado) pode
+    # continuar com o arquivo antigo aberto, e no Windows ele não pode ser apagado nem reescrito.
+    out = work_dir / f'scenes-{secrets.token_hex(4)}.txt'
+    detect = f"select='gt(scene,{threshold})',metadata=print:file={out.name}"
     # Só 4 quadros/s são comparados, então os quadros que não servem de referência nem precisam ser
     # decodificados (noref). Na GPU (NVDEC) a decodificação e a redução ficam na placa: ~97% menos CPU,
     # o que deixa a detecção rodar junto com a transcrição.
@@ -394,7 +396,7 @@ def detect_scenes(source: Path, media: dict, work_dir: Path, *, on_progress: Pro
     attempts.append(['-skip_frame', 'noref', '-i', str(source), '-map', f"0:{media['video_index']}", '-an',
                      '-vf', f'fps=4,scale=192:-2,{detect}'])
     for i, args in enumerate(attempts):
-        out.unlink(missing_ok=True)
+        _unlink_quietly(out)
         try:
             run_ffmpeg(args + ['-f', 'null', '-'], duration=media['duration'], cwd=work_dir,
                        on_progress=on_progress, cancel_event=cancel_event)
@@ -406,12 +408,19 @@ def detect_scenes(source: Path, media: dict, work_dir: Path, *, on_progress: Pro
     if not out.exists():
         return []
     times = [float(m) for m in re.findall(r'pts_time:([0-9.]+)', out.read_text(errors='replace'))]
-    out.unlink(missing_ok=True)
+    _unlink_quietly(out)
     result: list[float] = []
     for value in sorted(times):
         if 0 < value < media['duration'] and (not result or value - result[-1] >= 1.0):
             result.append(round(value, 2))
     return result
+
+
+def _unlink_quietly(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:  # preso por outro processo no Windows; a pasta de trabalho é apagada depois
+        pass
 
 
 # --------------------------------------------------------------------------- exportação

@@ -146,6 +146,23 @@ class FlowTests(ServiceBase):
         self.assertEqual(service.manager.wait(again['id'], 180)['status'], 'done')
         self.assertEqual(storage.read_project(res['id'])['status'], 'ready')
 
+    def test_scene_detection_failure_keeps_the_analysis(self):
+        # Em vídeos longos a falha das cenas só aparecia depois de horas de transcrição, e descartava tudo.
+        from app import media
+        original = media.detect_scenes
+
+        def broken(*a, **k):
+            raise PermissionError(32, 'O arquivo já está sendo usado por outro processo')
+        media.detect_scenes = broken
+        try:
+            res = self.create(self.video)
+        finally:
+            media.detect_scenes = original
+        p = storage.read_project(res['id'])
+        self.assertEqual(p['status'], 'ready')
+        self.assertEqual(p['selection']['mode'], 'transcricao')
+        self.assertTrue(p['clips'])
+
     def test_transcription_failure_falls_back_honestly(self):
         original = transcription.transcribe
         transcription.transcribe = lambda *a, **k: ([], {'state': 'failed', 'message': 'Falha simulada na transcrição.'})

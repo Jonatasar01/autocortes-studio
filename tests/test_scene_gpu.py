@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,7 +26,8 @@ class SceneFallbackTests(unittest.TestCase):
             outcome = outcomes[len(calls) - 1]
             if outcome == 'fail':
                 raise media.FFmpegError('NVDEC indisponível', 'erro')
-            (Path(cwd) / 'scenes.txt').write_text('frame:1 pts_time:2.5\nframe:2 pts_time:7.25\n')
+            name = re.search(r'print:file=([\w.-]+)', ' '.join(args)).group(1)
+            (Path(cwd) / name).write_text('frame:1 pts_time:2.5\nframe:2 pts_time:7.25\n')
             return ''
 
         with mock.patch.object(media, 'run_ffmpeg', side_effect=fake), \
@@ -48,6 +50,13 @@ class SceneFallbackTests(unittest.TestCase):
     def test_both_fail_returns_no_scenes(self):
         scenes, _ = self.run_with(['fail', 'fail'])
         self.assertEqual(scenes, [])
+
+    def test_locked_leftover_file_is_ignored(self):
+        # Um FFmpeg órfão de uma análise interrompida ainda prende o arquivo antigo.
+        (self.dir / 'scenes.txt').write_text('frame:9 pts_time:9.0\n')
+        with mock.patch.object(Path, 'unlink', side_effect=PermissionError(32, 'em uso')):
+            scenes, _ = self.run_with(['ok'])
+        self.assertEqual(scenes, [2.5, 7.25])
 
     @unittest.skipUnless(HAS_FFMPEG, 'FFmpeg ausente')
     def test_real_video_finds_the_cut(self):

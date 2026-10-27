@@ -77,8 +77,12 @@ def run_analysis(ctx: JobContext) -> dict:
             scene_state['scenes'] = media.detect_scenes(
                 source, info, folder / 'work_cenas', cancel_event=scene_stop,
                 on_progress=lambda f, _m='': scene_state.__setitem__('fraction', f))
-        except BaseException as exc:  # inclusive Cancelled: relançado na thread do job
+        except Cancelled as exc:  # relançado na thread do job
             scene_state['error'] = exc
+        except Exception:
+            # As cenas só refinam as bordas dos cortes: uma falha aqui não pode descartar horas de
+            # transcrição. Segue sem elas.
+            log.warning('Detecção de cenas falhou; seguindo sem cenas.', exc_info=True)
 
     scene_thread = threading.Thread(target=find_scenes, name=f'cenas-{pid[:8]}', daemon=True)
     scene_thread.start()
