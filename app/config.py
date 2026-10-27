@@ -38,6 +38,11 @@ MAX_SOURCE_SECONDS = _int('AUTOCORTES_MAX_SOURCE_HOURS', 6, 1, 48) * 3600
 MAX_DIMENSION = _int('AUTOCORTES_MAX_DIMENSION', 8192, 640, 16384)
 MIN_FREE_BYTES = _int('AUTOCORTES_MIN_FREE_MB', 1024, 100) * 1024 ** 2
 MAX_CLIP_SECONDS = 900
+# Motor de seleção. v1 (padrão): a pontuação validada. v2: nota editorial × técnica com contexto (pergunta antes,
+# reação depois), ainda experimental: na referência de 18 cortes não superou a v1 (ANALISE_MOTOR_CORTES.md).
+SELECTION_ENGINE = os.getenv('AUTOCORTES_SELECTION_ENGINE', 'v1').strip().lower()
+# Quantidade automática: até N cortes por hora de vídeo (mínimo 3), só os melhores do próprio vídeo.
+AUTO_CLIPS_PER_HOUR = max(0.5, min(30.0, float(os.getenv('AUTOCORTES_AUTO_CLIPS_PER_HOUR', '4') or 4)))
 
 # Fila e recursos
 ANALYSIS_WORKERS = _int('AUTOCORTES_ANALYSIS_WORKERS', 1, 1, 4)

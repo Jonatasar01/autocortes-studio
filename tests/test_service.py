@@ -264,6 +264,26 @@ class FlowTests(ServiceBase):
         self.assertEqual(p['selection']['mode'], 'transcricao')
         self.assertTrue(p['clips'])
 
+    def test_ai_curation_is_merged_with_the_heuristic(self):
+        # A curadoria trouxe um corte; os da heurística que não se sobrepõem a ele continuam na lista.
+        from unittest import mock
+        from app import curation, settings
+        ai_clip = {'start': 0.5, 'end': 9.0, 'score': 88.0, 'title': 'Escolhido pela IA', 'description': 'x',
+                   'reasons': ['IA'], 'selection_mode': 'transcricao', 'ai_curation': 'anthropic'}
+        settings.update({'curation': {'provider': 'anthropic', 'consent': True}})
+        try:
+            with mock.patch.object(curation, 'curate', return_value=([ai_clip], {'state': 'ok', 'provider': 'anthropic',
+                                                                               'message': 'ok'})):
+                res = self.create(self.video)
+        finally:
+            settings.update({'curation': {'provider': 'heuristica', 'consent': False}})
+        p = storage.read_project(res['id'])
+        self.assertEqual(p['curation']['state'], 'ok')
+        sources = [c['sources'] for c in p['clips']]
+        self.assertTrue(any('ia' in s for s in sources), sources)
+        self.assertTrue(any(s == ['heuristica'] for s in sources), sources)   # a heurística não sumiu
+        self.assertEqual([c['rank'] for c in p['clips']], list(range(1, len(p['clips']) + 1)))
+
     def test_transcription_failure_falls_back_honestly(self):
         original = transcription.transcribe
         transcription.transcribe = lambda *a, **k: ([], {'state': 'failed', 'message': 'Falha simulada na transcrição.'})

@@ -377,7 +377,7 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
                                        'heuristica': c['heuristic']}
         else:
             reasons.append('Sem avaliação da IA para este trecho; nota heurística local.')
-            clip['score_breakdown'] = c['breakdown']
+            clip['score_breakdown'], _extra = selection.split_breakdown(c['breakdown'])
         clip['reasons'] = reasons + [r for r in c['reasons'][:3]]
         chosen.append(clip)
         if not auto and len(chosen) >= desired:   # automático: entram todos os aprovados

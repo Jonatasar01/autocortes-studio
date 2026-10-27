@@ -100,19 +100,32 @@ class AutoSelectionTests(unittest.TestCase):
         self.assertEqual(len(clips), 2)
         self.assertNotIn('count_mode', info)
 
-    def test_automatic_keeps_every_valid_clip_without_count_limit(self):
-        # 12 blocos bons e diferentes entre si: todos entram (antes havia teto por hora e margem do melhor).
+    def _twelve_blocks(self):
         topics = ['futebol', 'cozinha', 'viagem', 'faculdade', 'academia', 'musica', 'cinema', 'praia',
                   'trabalho', 'cachorro', 'mercado', 'aniversario']
         blocks = [[f'Deixa eu contar uma historia sobre {t}{k} que aconteceu comigo, mano.' if k == 0 else
                    f'Foi a primeira vez com {t}{k} {t}x{k} {t}y{k}, eu fiquei muito feliz, que loucura.'
                    for k in range(6)] for t in topics]
-        segments, duration = build(blocks)
+        return build(blocks)
+
+    def test_automatic_count_is_capped_per_hour_of_video(self):
+        # 12 blocos bons num vídeo curto: entram os melhores até o teto do vídeo (4 por hora, mínimo 3).
+        segments, duration = self._twelve_blocks()
         clips, info = selection.select_clips(segments, duration, 30, selection.AUTO)
-        self.assertGreaterEqual(len(clips), 12)
+        self.assertEqual(len(clips), selection.auto_limit(duration))
         self.assertTrue(all(c['score'] >= selection.AUTO_MIN_SCORE for c in clips))
-        self.assertEqual(info['min_score'], selection.AUTO_MIN_SCORE)
+        self.assertEqual((info['min_score'], info['limit']), (selection.AUTO_MIN_SCORE, selection.auto_limit(duration)))
         self.assertEqual([c['rank'] for c in clips], list(range(1, len(clips) + 1)))
+        scores = [c['score'] for c in clips]
+        self.assertEqual(scores, sorted(scores, reverse=True))   # do melhor para o pior
+
+    def test_high_per_hour_limit_keeps_every_valid_clip(self):
+        # Comportamento anterior ("todos os válidos") volta com um teto alto.
+        segments, duration = self._twelve_blocks()
+        with mock.patch.object(selection, 'AUTO_CLIPS_PER_HOUR', 30.0), \
+                mock.patch.object(selection, 'AUTO_MIN_CLIPS', 50):
+            clips, _ = selection.select_clips(segments, duration, 30, selection.AUTO)
+        self.assertGreaterEqual(len(clips), 12)
 
 
 class AutopilotTests(unittest.TestCase):
