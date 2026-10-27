@@ -298,7 +298,15 @@ def get_project(project_id: str, *, include_transcript: bool = False) -> dict:
 
 
 def list_projects() -> list[dict]:
-    return storage.list_projects()
+    """Projetos recentes; os que estão em análise trazem a etapa e o andamento para a lista mostrar."""
+    items = storage.list_projects()
+    for item in items:
+        if item.get('status') in ('queued', 'analyzing'):
+            job = next((j for j in _jobs().for_project(item['id'], active_only=True, limit=5)
+                        if j['kind'] == 'analysis'), None)
+            if job:
+                item['analysis'] = {k: job.get(k) for k in ('status', 'stage', 'progress', 'message', 'started')}
+    return items
 
 
 def get_job(job_id: str) -> dict:

@@ -405,6 +405,8 @@ def _refine_transcript(ctx: JobContext, folder: Path, p: dict, info: dict, start
     """
     if _refined(p, start, end) or info.get('audio_index') is None:
         return p
+    if (p.get('transcription') or {}).get('model') == config.WHISPER_REFINE_MODEL:
+        return p   # a análise já usou o modelo grande: retranscrever o corte não mudaria nada
     if not transcription.refine_available():
         warnings.append('Legenda precisa indisponível (precisa de GPU NVIDIA com requirements-gpu.txt); '
                         'usada a transcrição da análise.')

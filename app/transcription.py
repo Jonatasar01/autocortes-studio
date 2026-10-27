@@ -52,16 +52,28 @@ def _cuda_dll_dirs() -> None:
             os.environ['PATH'] = str(bin_dir) + os.pathsep + os.environ.get('PATH', '')
 
 
+GPU_MODEL, CPU_MODEL = 'large-v3-turbo', 'small'
+
+
+def model_name(device: str) -> str:
+    """Modelo da análise. ``auto``: o turbo na GPU (20 min de áudio em 81 s contra 118 s do small, e com
+    menos erros de nomes e gírias); na CPU o turbo seria lento demais, então fica o small."""
+    if config.WHISPER_MODEL.lower() != 'auto':
+        return config.WHISPER_MODEL
+    return CPU_MODEL if device == 'cpu' else GPU_MODEL
+
+
 def _load_model(device: str):
     from faster_whisper import WhisperModel
     if device != 'cpu':
         _cuda_dll_dirs()
-    compute = 'int8' if device == 'cpu' else 'default'
-    key = (config.WHISPER_MODEL, device, compute)
+    name = model_name(device)
+    compute = 'int8' if device == 'cpu' else ('int8_float16' if name == GPU_MODEL else 'default')
+    key = (name, device, compute)
     with _lock:
         if key not in _cache:
             _cache.clear()  # mantém só um modelo em memória
-            _cache[key] = WhisperModel(config.WHISPER_MODEL, device=device, compute_type=compute)
+            _cache[key] = WhisperModel(name, device=device, compute_type=compute)
         return _cache[key]
 
 
@@ -254,9 +266,9 @@ def transcribe(audio_path: Path, duration: float, *, on_progress: Callable[[floa
                     for p_start, p_end, p_text, p_words in split_sentences(item['words']):
                         result.append({**item, 'start': p_start, 'end': p_end, 'text': p_text, 'words': p_words})
             detected = detected or language or '?'
-            return result, {'state': 'ok' if result else 'no_speech', 'model': config.WHISPER_MODEL,
+            return result, {'state': 'ok' if result else 'no_speech', 'model': model_name(device),
                             'device': device, 'language': detected,
-                            'message': (f'Transcrição local ({config.WHISPER_MODEL}, {device}, idioma {detected}).'
+                            'message': (f'Transcrição local ({model_name(device)}, {device}, idioma {detected}).'
                                         if result else 'Nenhuma fala reconhecida no áudio.')}
         except Cancelled:
             raise

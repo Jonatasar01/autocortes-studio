@@ -22,15 +22,25 @@ const EXPORT_IDLE = 'Selecione um corte e clique em Exportar.';
 
 const escape = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-// mm:ss.d para rótulos; mm:ss.mmm para os campos de início e fim.
+// mm:ss.d para rótulos; mm:ss.mmm para os campos de início e fim. A partir de 1 h: h:mm:ss (lives longas
+// mostravam "495:00").
 const fmt = (n) => {
   n = Math.max(0, Number(n) || 0);
-  return String(Math.floor(n / 60)).padStart(2, '0') + ':' + (n % 60).toFixed(1).padStart(4, '0');
+  const h = Math.floor(n / 3600), m = Math.floor(n / 60) % 60;
+  const sec = (n % 60).toFixed(1).padStart(4, '0');
+  return h ? h + ':' + String(m).padStart(2, '0') + ':' + sec : String(Math.floor(n / 60)).padStart(2, '0') + ':' + sec;
 };
 const fmtMs = (n) => {
   n = Math.max(0, Math.round((Number(n) || 0) * 1000));
-  const ms = n % 1000, s = Math.floor(n / 1000) % 60, m = Math.floor(n / 60000);
-  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + '.' + String(ms).padStart(3, '0');
+  const ms = n % 1000, s = Math.floor(n / 1000) % 60, m = Math.floor(n / 60000) % 60, h = Math.floor(n / 3600000);
+  const tail = String(s).padStart(2, '0') + '.' + String(ms).padStart(3, '0');
+  return h ? h + ':' + String(m).padStart(2, '0') + ':' + tail : String(m).padStart(2, '0') + ':' + tail;
+};
+// Rótulo da régua: sem décimos e com horas quando o vídeo passa de 1 h.
+const fmtTick = (t, long) => {
+  const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = Math.round(t % 60);
+  return (long ? h + ':' + String(m).padStart(2, '0') : String(Math.floor(t / 60)).padStart(2, '0')) + ':' +
+    String(s).padStart(2, '0');
 };
 // Aceita 75.3, 1:15.3, 01:15.300 e 1:02:03.
 function parseTime(text) {
@@ -78,21 +88,55 @@ function setStatus(text, tone = 'idle') {
   $('status').dataset.tone = tone;
 }
 
-function setLoading(text, progress = null) {
+function setLoading(text, progress = null, steps = '') {
   $('loading').hidden = !text;
   if (text) $('loadingText').textContent = text;
   $('loadingBar').hidden = !text || progress === null;
   if (progress !== null) $('loadingBar').value = Math.round(progress * 100);
+  $('loadingSteps').hidden = !text || !steps;
+  $('loadingSteps').textContent = steps || '';
 }
 
-// Andamento da análise: etapa atual, porcentagem e há quanto tempo está rodando.
-function analysisLabel(job) {
-  if (!job) return {text: 'Analisando vídeo…', progress: null, pct: null};
+// Andamento da análise: etapa atual, porcentagem, tempo restante estimado e quanto levou cada etapa.
+const STAGE_NAMES = {validando: 'Validação', musica: 'Música', extraindo_audio: 'Áudio', transcrevendo: 'Transcrição',
+  cenas: 'Cenas', selecionando: 'Seleção', ia_local: 'IA local', curadoria_ia: 'Curadoria IA', fila: 'Fila'};
+// Faixa da barra geral ocupada pelas etapas com progresso real (as outras são rápidas ou sem medida).
+const STAGE_SPANS = {extraindo_audio: [0.08, 0.14], transcrevendo: [0.14, 0.74], cenas: [0.75, 0.88]};
+const fmtDur = (s) => {
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + ' s';
+  if (s < 3600) return Math.floor(s / 60) + ' min' + (s < 600 && s % 60 ? ' ' + (s % 60) + ' s' : '');
+  return Math.floor(s / 3600) + ' h ' + Math.floor((s % 3600) / 60) + ' min';
+};
+function analysisLabel(job, events = []) {
+  if (!job) return {text: 'Analisando vídeo…', progress: null, pct: null, steps: ''};
+  const now = Date.now() / 1000;
   const pct = Math.round((job.progress || 0) * 100);
-  const mins = job.started ? Math.floor((Date.now() / 1000 - job.started) / 60) : null;
   const stage = job.status === 'queued' ? 'Na fila' : (job.message || 'Analisando vídeo');
-  const text = stage + ' · ' + pct + '%' + (mins ? ' · ' + mins + ' min' : '');
-  return {text, progress: job.progress || 0, pct};
+  // Tempo restante da etapa atual pela velocidade dela até agora (transcrição, cenas, extração de áudio).
+  let eta = null;
+  const span = STAGE_SPANS[job.stage];
+  const begun = [...events].reverse().find((e) => e.stage === job.stage)?.ts;
+  if (span && begun) {
+    const done = ((job.progress || 0) - span[0]) / (span[1] - span[0]);
+    const elapsed = now - begun;
+    if (done > 0.03 && elapsed > 20) eta = elapsed * (1 - done) / done;
+  }
+  const total = job.started ? now - job.started : 0;
+  const text = stage + ' · ' + pct + '%' + (eta != null ? ' · ≈ ' + fmtDur(eta) + ' restantes'
+    : total >= 60 ? ' · ' + fmtDur(total) : '');
+  // Etapas concluídas com a duração de cada uma; a atual com ▸.
+  const marks = [];
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (!STAGE_NAMES[e.stage] || (marks.length && marks[marks.length - 1].stage === e.stage)) continue;
+    marks.push({stage: e.stage, ts: e.ts});
+  }
+  const steps = marks.map((m, i) => {
+    const end = marks[i + 1]?.ts;
+    return end ? '✓ ' + STAGE_NAMES[m.stage] + ' ' + fmtDur(end - m.ts) : '▸ ' + STAGE_NAMES[m.stage] + ' ' + fmtDur(now - m.ts);
+  }).join('  ·  ');
+  return {text, progress: job.progress || 0, pct, steps};
 }
 
 async function api(url, method = 'GET', body) {
@@ -305,11 +349,17 @@ async function loadProjects() {
   $('projects').setAttribute('aria-busy', 'true');
   try {
     const d = await api('/api/projects');
+    // Em análise: a lista mostra a etapa e o andamento e se atualiza sozinha até terminar.
+    clearTimeout(state.projectsTimer);
+    if (d.projects.some((p) => p.analysis)) state.projectsTimer = setTimeout(loadProjects, 5000);
     $('projects').innerHTML = d.projects.map((p) => {
       const selected = p.id === state.project?.id;
+      const a = p.analysis;
+      const status = a ? (a.status === 'queued' ? 'Na fila' : (STAGE_NAMES[a.stage] || 'Analisando')) + ' · ' +
+        Math.round((a.progress || 0) * 100) + '%' : (PROJECT_STATUS[p.status] || p.status);
       return '<div class="projectrowitem"><button class="projectitem' + (selected ? ' selected' : '') + '" data-id="' +
         escape(p.id) + '"' + (selected ? ' aria-current="true"' : '') + '><strong>' + escape(p.name) + '</strong><small>' +
-        '<span class="dot" data-status="' + escape(p.status) + '"></span>' + escape(PROJECT_STATUS[p.status] || p.status) +
+        '<span class="dot" data-status="' + escape(p.status) + '"></span>' + escape(status) +
         ' · ' + (p.duration ? fmt(p.duration) + ' · ' : '') + p.clips + (p.clips === 1 ? ' corte' : ' cortes') +
         '</small></button><button class="iconbtn sm projdel" data-del="' + escape(p.id) + '" data-name="' +
         escape(p.name) + '" title="Excluir projeto" aria-label="Excluir o projeto ' + escape(p.name) +
@@ -486,9 +536,9 @@ async function openProject(id) {
   loadProjects();
   closeDrawers();
   if (p.status === 'queued' || p.status === 'analyzing') {
-    const a = analysisLabel(p.analysis);
+    const a = analysisLabel(p.analysis, p.analysis_events || []);
     setStatus(a.pct === null ? 'Analisando vídeo…' : 'Analisando vídeo · ' + a.pct + '%', 'busy');
-    setLoading(a.text, a.progress);
+    setLoading(a.text, a.progress, a.steps);
     setTimeout(() => {
       if (state.openVersion === version) openProject(id).catch((e) => toast(e.message, true));
     }, 1700);
@@ -843,29 +893,44 @@ function renderTimeline() {
   if (state.rulerKey !== rulerKey) {
     state.rulerKey = rulerKey;
     $('timelineCanvas').style.width = Math.max(640, duration * state.scale + LABEL + 8) + 'px';
-    const minGap = 80 / state.scale;  // mantém os rótulos a ~80 px de distância
-    const step = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600].find((s) => s >= minGap) || 900;
+    const minGap = 90 / state.scale;  // mantém os rótulos a ~90 px de distância
+    const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
+    const step = steps.find((s) => s >= minGap) || 14400;
+    let minor = step / (step % 5 === 0 ? 5 : step % 3 === 0 ? 3 : 2);
+    if (duration / minor > 4000) minor = step;   // zoom máximo numa live longa: só as marcas principais
+    const long = duration >= 3600;
     const ticks = [];
-    for (let t = 0; t <= duration; t += step) ticks.push(el('span', 'tick', {left: t * state.scale}, fmt(t).replace(/\.0$/, '')));
+    for (let t = 0; t <= duration; t += minor) {
+      const major = Math.abs(t / step - Math.round(t / step)) < 1e-6;
+      ticks.push(el('span', major ? 'tick' : 'tick minor', {left: t * state.scale}, major ? fmtTick(t, long) : ''));
+    }
     $('ruler').replaceChildren(...ticks);
   }
   $('clipSegments').replaceChildren(...p.clips.map((c) => {
-    const b = el('button', 'segment' + (c.id === state.selected ? ' selected' : ''),
-      {left: c.start * state.scale, width: Math.max(4, (c.end - c.start) * state.scale)});
+    const width = Math.max(10, (c.end - c.start) * state.scale);
+    const size = width < 34 ? ' tiny' : width < 90 ? ' narrow' : '';
+    const b = el('button', 'segment' + size + (c.id === state.selected ? ' selected' : ''),
+      {left: c.start * state.scale, width});
     b.type = 'button';
     b.dataset.id = c.id;
-    b.title = c.title + ' (' + fmt(c.start) + ' — ' + fmt(c.end) + ')';
+    // Cor pela nota (verde = melhores); cortes manuais/sem nota ficam neutros.
+    if (c.score != null) b.style.setProperty('--hue', String(Math.round(clamp((c.score - 60) * 3.5, 0, 140))));
+    b.title = (c.rank ? '#' + c.rank + ' ' : '') + c.title + '\n' + fmt(c.start) + ' — ' + fmt(c.end) +
+      ' (' + fmt(c.end - c.start) + ')' + (c.score != null ? ' · nota ' + Math.round(c.score) : '') +
+      '\nDois cliques: ampliar até o corte';
     if (c.id === state.selected) b.setAttribute('aria-current', 'true');
     const left = el('i', 'handle left'), right = el('i', 'handle right');
     left.dataset.side = 'start';
     right.dataset.side = 'end';
     left.setAttribute('aria-hidden', 'true');
     right.setAttribute('aria-hidden', 'true');
-    b.append(left, el('b', '', null, c.title), el('small', '', null, fmt(c.end - c.start)), right);
+    b.append(left, el('em', 'num', null, String(c.rank || c.id)), el('b', '', null, c.title),
+      el('small', '', null, fmt(c.end - c.start)), right);
     return b;
   }));
   updatePlayhead();
   buildFilmstrip();
+  drawWave();
 }
 
 // Quadros reais do vídeo, lidos por um segundo elemento <video> oculto. Se o navegador
@@ -884,22 +949,99 @@ function buildFilmstrip() {
   state.stripKey = key;
   const token = ++state.stripToken;
   const duration = mediaDuration();
-  const n = clamp(Math.ceil(duration / 15), 8, 40);
+  const n = clamp(Math.ceil(duration / 15), 8, 60);
   const gap = duration / n;
   const frames = [];
   for (let i = 0; i < n; i++) {
     const node = document.createElement('canvas');
-    node.className = 'frame';
-    node.width = 128;
-    node.height = 72;
+    node.className = 'frame loading';
+    node.width = 160;
+    node.height = 90;
     frames.push({node, t0: i * gap, t1: (i + 1) * gap});
   }
   state.strip = {frames};
   $('frames').replaceChildren(...frames.map((f) => f.node));
-  $('wave').innerHTML = '<span class="track-info">A forma de onda ainda não está disponível nesta versão</span>';
   layoutFrames();
-  fillFilmstrip(token, p.id, frames);
+  // Tira gerada pelo servidor (FFmpeg, em cache); se falhar, o navegador lê os quadros como antes.
+  const sprite = new Image();
+  sprite.onload = () => {
+    if (token !== state.stripToken) return;
+    frames.forEach((f, i) => {
+      f.node.getContext('2d').drawImage(sprite, i * 160, 0, 160, 90, 0, 0, 160, 90);
+      f.node.classList.remove('loading');
+    });
+    if (!$('projectThumb').querySelector('img')) {
+      try { setThumb(frames[Math.min(2, n - 1)].node.toDataURL('image/jpeg', 0.72)); } catch { /* sem miniatura */ }
+    }
+  };
+  sprite.onerror = () => { if (token === state.stripToken) fillFilmstrip(token, p.id, frames); };
+  sprite.src = '/api/projects/' + p.id + '/filmstrip?n=' + n;
+  loadWave(token, p.id);
 }
+
+// ------------------------------------------------------------------ forma de onda
+
+// Picos do áudio (0–255) gerados pelo servidor; desenhados só na parte visível da linha do tempo, então
+// funcionam em qualquer zoom, mesmo numa live de horas.
+async function loadWave(token, pid) {
+  state.wave = null;
+  setWaveInfo('Gerando a forma de onda…');
+  for (let i = 0; i < 200 && token === state.stripToken; i++) {
+    let d;
+    try { d = await api('/api/projects/' + pid + '/waveform'); } catch { break; }
+    if (token !== state.stripToken) return;
+    if (d.state === 'ready') {
+      const raw = atob(d.peaks);
+      const peaks = new Uint8Array(raw.length);
+      for (let k = 0; k < raw.length; k++) peaks[k] = raw.charCodeAt(k);
+      state.wave = {bucket: d.bucket, peaks};
+      setWaveInfo(null);
+      return drawWave();
+    }
+    if (d.state !== 'pending') break;
+    await sleep(4000);
+  }
+  if (token === state.stripToken) setWaveInfo('Forma de onda indisponível para este vídeo');
+}
+function setWaveInfo(text) {
+  let info = $('wave').querySelector('.track-info');
+  if (!text) { info?.remove(); return; }
+  if (!info) { info = el('span', 'track-info'); $('wave').append(info); }
+  info.textContent = text;
+}
+let waveFrame = 0;
+function drawWave() {
+  cancelAnimationFrame(waveFrame);
+  waveFrame = requestAnimationFrame(() => {
+    const lane = $('wave'), sc = $('timelineScroll'), w = state.wave;
+    let canvas = lane.querySelector('canvas');
+    if (!w) { canvas?.remove(); return; }
+    if (!canvas) { canvas = document.createElement('canvas'); canvas.className = 'wavecanvas'; lane.prepend(canvas); }
+    const width = Math.max(1, Math.min(sc.clientWidth - LABEL, lane.clientWidth));
+    const height = lane.clientHeight || 48;
+    const dpr = window.devicePixelRatio || 1;
+    const left = Math.max(0, Math.min(sc.scrollLeft, lane.clientWidth - width));
+    canvas.style.left = left + 'px';
+    canvas.style.width = width + 'px';
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = getComputedStyle(lane).getPropertyValue('--wave') || '#4f7bd6';
+    const mid = height / 2;
+    for (let x = 0; x < width; x++) {
+      // Maior pico entre as posições cobertas por este pixel.
+      const a = Math.floor((left + x) / state.scale / w.bucket), b = Math.ceil((left + x + 1) / state.scale / w.bucket);
+      let peak = 0;
+      for (let k = a; k < Math.max(a + 1, b) && k < w.peaks.length; k++) peak = Math.max(peak, w.peaks[k]);
+      const h = Math.max(1, (peak / 255) ** 1.6 * (height - 6));   // realça a fala sobre o ruído de fundo
+      ctx.fillRect(x, mid - h / 2, 1, h);
+    }
+  });
+}
+$('timelineScroll').addEventListener('scroll', drawWave, {passive: true});
+// Painel redimensionado (gaveta, janela, tela cheia): a onda acompanha a largura visível.
+if (window.ResizeObserver) new ResizeObserver(drawWave).observe($('timelineScroll'));
 
 async function fillFilmstrip(token, pid, frames) {
   const probe = document.createElement('video');
@@ -957,19 +1099,53 @@ function updatePlayhead() {
 }
 
 // Zoom 1 = vídeo inteiro cabe na largura visível; cada nível amplia a partir daí.
+const ZOOM_STEP = 1.6;
+const ZOOM_MAX_PX = 60;    // zoom máximo: ~60 px por segundo, em qualquer duração de vídeo
 function computeScale() {
   const visible = Math.max(200, $('timelineScroll').clientWidth - LABEL - 8);
   const fit = mediaDuration() ? visible / mediaDuration() : 7;
-  state.scale = Math.min(200, fit * Math.pow(1.6, Number($('zoom').value) - 1));
+  // Quantos níveis cabem entre "vídeo inteiro" e 60 px/s: numa live de horas são bem mais que 8.
+  const levels = clamp(Math.ceil(Math.log(ZOOM_MAX_PX / fit) / Math.log(ZOOM_STEP)) + 1, 8, 40);
+  $('zoom').max = levels;
+  state.scale = Math.min(200, fit * Math.pow(ZOOM_STEP, Number($('zoom').value) - 1));
 }
 
-function setZoom(value) {
-  $('zoom').value = clamp(value, 1, 8);
+// ``anchor``: tempo que deve ficar parado na tela (sob o cursor) durante o zoom.
+function setZoom(value, anchor = null) {
+  const sc = $('timelineScroll');
+  const before = anchor ? anchor.t * state.scale - sc.scrollLeft : 0;
+  computeScale();
+  $('zoom').value = clamp(value, 1, Number($('zoom').max));
   setFill($('zoom'));
   computeScale();
   renderTimeline();
   selectionLabel();
+  if (anchor) sc.scrollLeft = Math.max(0, anchor.t * state.scale - before);
 }
+
+// Amplia até o corte ocupar ~70% da largura visível e rola até ele.
+function zoomToClip(c) {
+  const sc = $('timelineScroll');
+  const visible = Math.max(200, sc.clientWidth - LABEL - 8);
+  const fit = visible / mediaDuration();
+  const want = visible * 0.7 / Math.max(1, c.end - c.start);
+  const level = Math.floor(Math.log(want / fit) / Math.log(ZOOM_STEP)) + 1;
+  setZoom(level);
+  sc.scrollLeft = Math.max(0, (c.start + c.end) / 2 * state.scale - visible / 2);
+}
+
+$('timelineScroll').addEventListener('wheel', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || !state.project) return;   // rolagem normal continua rolando
+  e.preventDefault();
+  const sc = $('timelineScroll');
+  const x = e.clientX - sc.getBoundingClientRect().left - LABEL + sc.scrollLeft;
+  setZoom(Number($('zoom').value) + (e.deltaY < 0 ? 1 : -1), {t: Math.max(0, x / state.scale)});
+}, {passive: false});
+$('clipSegments').addEventListener('dblclick', (e) => {
+  const btn = e.target.closest('.segment');
+  const c = btn && state.project?.clips.find((x) => x.id === Number(btn.dataset.id));
+  if (c) zoomToClip(c);
+});
 let resizeTimer;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);

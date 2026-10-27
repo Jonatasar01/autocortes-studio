@@ -25,7 +25,8 @@ def readiness():
     providers = curation.status()
     return [
         {'name': 'Transcrição local', 'ready': transcription.available(),
-         'detail': f'Whisper {config.WHISPER_MODEL}; primeiro uso pode baixar o modelo.'},
+         'detail': f'Whisper {config.WHISPER_MODEL} (auto: large-v3-turbo na GPU, small na CPU); '
+                   'primeiro uso pode baixar o modelo.'},
         {'name': 'Curadoria com IA', 'ready': cu['provider'] != 'heuristica' and cu['consent'] and providers[cu['provider']]['configured'],
          'detail': f"Provedor: {cu['provider']}. Requer chave e consentimento nas Configurações para IA na nuvem."},
         {'name': 'Roteiro e voz', 'ready': nr['enabled'] and nr['consent'] and narration.is_configured(),

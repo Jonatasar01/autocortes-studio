@@ -453,6 +453,23 @@ quadro inteiro com fundo desfocado.
 Quando duas pessoas mexem a boca ao mesmo tempo, ou quando quem fala está de costas ou fora do
 quadro, o sistema pode escolher a pessoa errada. Não há filtro de Kalman nem aceleração por GPU.
 
+## Linha do tempo do editor
+
+- **Régua:** marcas em h:mm:ss a partir de 1 h (antes uma live de 8 h mostrava "495:00"), com intervalos de
+  1 s a 2 h conforme o zoom e marcas menores entre os rótulos. Os tempos da tela toda (cartões, relógio,
+  campos de início/fim) usam o mesmo formato.
+- **Zoom:** de "vídeo inteiro" até ~60 px por segundo, com quantos níveis forem precisos (17 numa live de 8,5 h).
+  **Ctrl + roda do mouse** amplia mantendo parado o ponto sob o cursor; **dois cliques num corte** ampliam até
+  ele.
+- **Vídeo:** tira de miniaturas gerada pelo servidor (`GET /api/projects/{id}/filmstrip?n=`): o FFmpeg lê um
+  quadro por posição e monta um JPEG em cache. O navegador buscava cada quadro no arquivo original e, num vídeo
+  de vários GB, a faixa ficava escura.
+- **Áudio:** forma de onda real (`GET /api/projects/{id}/waveform`), com picos medidos pelo FFmpeg em segundo
+  plano na primeira abertura (~3 min numa live de 8,5 h, depois em cache) e desenhada só na parte visível, em
+  qualquer zoom.
+- **Cortes:** cor pela nota (verde = melhores), número do ranking sempre visível e título só quando cabe;
+  a dica traz título, tempos, duração e nota.
+
 ## Prévia da edição
 
 O botão **Prévia** (barra superior) mostra como o corte vai ficar antes de exportar. É a mesma montagem

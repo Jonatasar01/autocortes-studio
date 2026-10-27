@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 from starlette.background import BackgroundTask
 
-from . import config, service
+from . import config, service, timeline
 from .config import ROOT  # noqa: F401  (compatibilidade)
 from .errors import AppError
 from .security import LocalSecurityMiddleware
@@ -223,6 +223,19 @@ def source_file(project_id: str):
     path, name = service.source_path(project_id)
     return FileResponse(path, media_type='video/mp4' if path.suffix in ('.mp4', '.m4v') else None,
                         filename=name, content_disposition_type='inline')
+
+
+@app.get('/api/projects/{project_id}/filmstrip')
+def project_filmstrip(project_id: str, n: int = 40):
+    """Tira de miniaturas da linha do tempo (gerada uma vez, em cache)."""
+    return FileResponse(timeline.filmstrip(project_id, n), media_type='image/jpeg',
+                        headers={'Cache-Control': 'max-age=86400'})
+
+
+@app.get('/api/projects/{project_id}/waveform')
+def project_waveform(project_id: str):
+    """Forma de onda do áudio; ``state: pending`` enquanto é gerada em segundo plano."""
+    return timeline.waveform(project_id)
 
 
 class ClipEdit(BaseModel):

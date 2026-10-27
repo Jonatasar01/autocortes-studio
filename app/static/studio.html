@@ -205,7 +205,7 @@
             <strong>Nenhum vídeo aberto</strong>
             <p>Importe um vídeo no painel de mídia ou abra um projeto recente.</p>
           </div>
-          <div id="loading" class="loading" hidden role="status"><span class="spinner" aria-hidden="true"></span><span id="loadingText">Carregando…</span><progress id="loadingBar" max="100" value="0" hidden aria-label="Progresso da análise"></progress></div>
+          <div id="loading" class="loading" hidden role="status"><span class="spinner" aria-hidden="true"></span><span id="loadingText">Carregando…</span><progress id="loadingBar" max="100" value="0" hidden aria-label="Progresso da análise"></progress><small id="loadingSteps" class="loadingsteps" hidden></small></div>
         </div>
         <div class="controls">
           <input id="seek" class="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Posição do vídeo" disabled>
@@ -383,7 +383,7 @@
         </div>
         <div class="group zoomgroup">
           <button id="zoomOut" class="iconbtn" title="Diminuir zoom (−)" aria-label="Diminuir zoom"><svg class="ic"><use href="#i-zoom-out"/></svg></button>
-          <input id="zoom" type="range" min="1" max="8" value="1" aria-label="Zoom da linha do tempo">
+          <input id="zoom" type="range" min="1" max="8" value="1" aria-label="Zoom da linha do tempo" title="Ctrl + roda do mouse: zoom no ponto do cursor">
           <button id="zoomIn" class="iconbtn" title="Aumentar zoom (+)" aria-label="Aumentar zoom"><svg class="ic"><use href="#i-zoom-in"/></svg></button>
           <button id="fit" class="btn ghost" title="Ajustar o vídeo inteiro à largura"><svg class="ic"><use href="#i-fit"/></svg><span>Ajustar</span></button>
         </div>
