@@ -279,9 +279,15 @@ def public_job(job: dict | None) -> dict | None:
         'result': job.get('result')}
 
 
-def get_project(project_id: str) -> dict:
+def get_project(project_id: str, *, include_transcript: bool = False) -> dict:
+    """Projeto para a interface. A transcrição fica de fora por padrão: numa live longa ela passa de 3 MB e
+    o editor não a usa (a tela recarregava tudo isso a cada edição)."""
     p = storage.read_project(project_id)
     p.pop('filename', None)
+    segments = p.get('transcript') or []
+    p['transcript_segments'] = len(segments)
+    if not include_transcript:
+        p.pop('transcript', None)
     jobs = _jobs().for_project(project_id, limit=60)
     p['jobs'] = [public_job(j) for j in jobs]
     analysis = next((j for j in jobs if j['id'] == p.get('analysis_job')), None)

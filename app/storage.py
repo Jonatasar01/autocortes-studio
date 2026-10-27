@@ -1,6 +1,9 @@
 """Persistência de projetos em disco.
 
 - project.json gravado de forma atômica (arquivo temporário + fsync + os.replace) com cópia .bak.
+- A transcrição fica em transcript.json, separada: numa live longa ela tem vários MB e o resto do projeto
+  poucos KB. Ela só é regravada quando é substituída, e fica em memória enquanto o arquivo não muda; assim
+  cada edição de corte grava ~40 KB em vez de reescrever a transcrição inteira.
 - Bloqueio por projeto: leituras/alterações concorrentes (exportações, edições) não se sobrescrevem.
 - Identificadores validados por regex — sem path traversal.
 """
@@ -58,6 +61,73 @@ def new_project_dir() -> tuple[str, Path]:
     return project_id, folder
 
 
+def _dumps(data: dict) -> str:
+    """JSON compacto: com ``indent`` o Python não usa o codificador em C e um projeto de live longa (transcrição
+    de vários MB) levava quase 1 s para gravar a cada edição; compacto, 0,2 s e metade do tamanho."""
+    return json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+
+
+TRANSCRIPT_FILE = 'transcript.json'
+_transcripts: dict[str, tuple[tuple, list]] = {}   # projeto -> (carimbo do arquivo, transcrição já lida)
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    fd, tmp_name = tempfile.mkstemp(prefix='.' + path.stem + '-', suffix='.tmp', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+def _stamp(path: Path) -> tuple | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
+def _load_transcript(project_id: str, folder: Path) -> list | None:
+    path = folder / TRANSCRIPT_FILE
+    stamp = _stamp(path)
+    if stamp is None:
+        return None
+    cached = _transcripts.get(project_id)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        log.warning('transcript.json ilegível em %s.', project_id)
+        return None
+    if not isinstance(data, list):
+        return None
+    _transcripts[project_id] = (stamp, data)
+    return data
+
+
+def _save_transcript(project_id: str, folder: Path, data: dict) -> None:
+    """Grava a transcrição só se ela foi trocada (as edições comuns não mexem nela)."""
+    path = folder / TRANSCRIPT_FILE
+    if 'transcript' not in data:
+        with contextlib.suppress(OSError):
+            path.unlink()
+        _transcripts.pop(project_id, None)
+        return
+    transcript = data['transcript']
+    cached = _transcripts.get(project_id)
+    if cached and cached[1] is transcript and cached[0] == _stamp(path):
+        return
+    _write_atomic(path, _dumps(transcript))
+    _transcripts[project_id] = (_stamp(path), transcript)
+
+
 def read_project(project_id: str) -> dict:
     folder = project_dir(project_id)
     with lock_for(project_id):
@@ -75,7 +145,7 @@ def read_project(project_id: str) -> dict:
                         try:
                             fd, repair = tempfile.mkstemp(prefix='.project-', suffix='.tmp', dir=folder)
                             with os.fdopen(fd, 'w', encoding='utf-8') as handle:
-                                json.dump(data, handle, ensure_ascii=False, indent=2)
+                                handle.write(_dumps(data))
                                 handle.flush()
                                 os.fsync(handle.fileno())
                             os.replace(repair, folder / 'project.json')
@@ -85,6 +155,10 @@ def read_project(project_id: str) -> dict:
                             if repair is not None:
                                 with contextlib.suppress(OSError):
                                     os.unlink(repair)
+                    if 'transcript' not in data:
+                        transcript = _load_transcript(project_id, folder)
+                        if transcript is not None:
+                            data['transcript'] = transcript
                     return data
             except (OSError, json.JSONDecodeError):
                 continue
@@ -95,10 +169,12 @@ def write_project(project_id: str, data: dict) -> None:
     folder = project_dir(project_id)
     with lock_for(project_id):
         data['updated_at'] = time.time()
+        _save_transcript(project_id, folder, data)   # antes: o project.json novo nunca aponta para nada velho
+        body = {k: v for k, v in data.items() if k != 'transcript'}
         fd, tmp_name = tempfile.mkstemp(prefix='.project-', suffix='.tmp', dir=folder)
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as handle:
-                json.dump(data, handle, ensure_ascii=False, indent=2)
+                handle.write(_dumps(body))
                 handle.flush()
                 os.fsync(handle.fileno())
             current = folder / 'project.json'
@@ -120,21 +196,44 @@ def edit_project(project_id: str):
         write_project(project_id, data)
 
 
+_summaries: dict[str, tuple[tuple, dict]] = {}   # resumo da lista por projeto, válido enquanto o arquivo não muda
+_summaries_lock = threading.Lock()
+
+
+def _summary(project_id: str, folder: Path) -> dict | None:
+    try:
+        st = (folder / 'project.json').stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        stamp = None
+    with _summaries_lock:
+        cached = _summaries.get(project_id)
+    if stamp is not None and cached and cached[0] == stamp:
+        return cached[1]
+    try:
+        p = read_project(project_id)
+    except AppError:
+        return None
+    item = {'id': p.get('id'), 'name': p.get('name'), 'status': p.get('status'),
+            'created_at': p.get('created_at'), 'duration': (p.get('media') or {}).get('duration'),
+            'clips': len(p.get('clips') or []), 'origin': p.get('origin', 'upload'),
+            'autopilot': (p.get('autopilot') or {}).get('status'),
+            'fingerprint': p.get('source_fingerprint')}
+    if stamp is not None:
+        with _summaries_lock:
+            _summaries[project_id] = (stamp, item)
+    return item
+
+
 def list_projects() -> list[dict]:
     items = []
     for folder in data_dir().iterdir():
         if not (folder.is_dir() and valid_id(folder.name) and
                 any((folder / name).exists() for name in ('project.json', 'project.json.bak'))):
             continue
-        try:
-            p = read_project(folder.name)
-        except AppError:
-            continue
-        items.append({'id': p.get('id'), 'name': p.get('name'), 'status': p.get('status'),
-                      'created_at': p.get('created_at'), 'duration': (p.get('media') or {}).get('duration'),
-                      'clips': len(p.get('clips') or []), 'origin': p.get('origin', 'upload'),
-                      'autopilot': (p.get('autopilot') or {}).get('status'),
-                      'fingerprint': p.get('source_fingerprint')})
+        item = _summary(folder.name, folder)
+        if item is not None:
+            items.append(dict(item))
     return sorted(items, key=lambda x: x.get('created_at') or 0, reverse=True)
 
 

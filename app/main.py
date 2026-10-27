@@ -202,8 +202,9 @@ async def create_project(request: Request):
 
 
 @app.get('/api/projects/{project_id}')
-def get_project(project_id: str):
-    return service.get_project(project_id)
+def get_project(project_id: str, transcript: bool = False):
+    """``?transcript=1`` inclui a transcrição completa (fica de fora por padrão: pode ter vários MB)."""
+    return service.get_project(project_id, include_transcript=transcript)
 
 
 @app.delete('/api/projects/{project_id}')
