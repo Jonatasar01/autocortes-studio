@@ -31,7 +31,8 @@ log = logging.getLogger('autocortes.media')
 
 ALLOWED_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'}
 FORMATS = ('9:16', '16:9', '1:1', 'original')
-FRAMINGS = ('fit', 'blur', 'track')  # track = seguir rosto (recorta as laterais)
+FRAMINGS = ('fit', 'blur', 'track', 'mix')  # track = seguir rosto (recorta as laterais); mix = por trecho
+SEGMENT_FRAMINGS = ('fit', 'blur', 'track')  # o que cada trecho do modo "por trecho" pode usar
 FORMAT_SLUG = {'9:16': '9x16', '16:9': '16x9', '1:1': '1x1', 'original': 'orig'}
 
 ProgressFn = Callable[[float, str], None]
@@ -642,8 +643,7 @@ def _blur_branch(inp: str, W: int, H: int, out: str) -> str:
 def _track_graph(src: str, pre: str, subs: str, W: int, H: int, track: dict) -> str:
     """Recorte que segue o rosto (expressão de tempo no crop) e fundo desfocado nas cenas sem rosto."""
     from . import reframe
-    x = f"clip(({reframe.crop_x_expression(track['shots'])})*iw-ow/2,0,iw-ow)"
-    crop = f"crop=w='2*trunc(ih*{W}/{H}/2)':h=ih:x='{x}':y=0,scale={W}:{H}:flags=bicubic,setsar=1"
+    crop = _track_crop(W, H, track)
     enable = reframe.fit_enable_expression(track['shots'])
     if not enable:
         return f'{src}{crop},{pre}setsar=1{subs}[vout]'
@@ -652,9 +652,63 @@ def _track_graph(src: str, pre: str, subs: str, W: int, H: int, track: dict) -> 
             f";[trk][fitv]overlay=0:0:enable='{enable}'[mix];[mix]{pre}setsar=1{subs}[vout]")
 
 
+def _track_crop(W: int, H: int, track: dict) -> str:
+    from . import reframe
+    x = f"clip(({reframe.crop_x_expression(track['shots'])})*iw-ow/2,0,iw-ow)"
+    return f"crop=w='2*trunc(ih*{W}/{H}/2)':h=ih:x='{x}':y=0,scale={W}:{H}:flags=bicubic,setsar=1"
+
+
+def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[dict], track: dict | None) -> str:
+    """Enquadramento por trecho: uma versão do vídeo por enquadramento, ligada no tempo de cada trecho.
+
+    As versões são montadas sobre o vídeo antes de ``pre`` (fps, corte de pausas), então os tempos dos
+    trechos são os do corte original, como no recorte que segue o rosto.
+    """
+    from . import reframe
+    kinds = []
+    for seg in segments:
+        kind = seg['framing'] if seg['framing'] != 'track' or (track and track.get('ok')) else 'blur'
+        seg['_kind'] = kind
+        if kind not in kinds:
+            kinds.append(kind)
+    if len(kinds) == 1:
+        only = kinds[0]
+        if only == 'track':
+            return _track_graph(src, pre, subs, W, H, track)
+        if only == 'blur':
+            return _blur_branch(f'{src}{pre}', W, H, f',setsar=1{subs}[vout]')
+        return (f'{src}{pre}scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'
+                f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1{subs}[vout]')
+    labels = ''.join(f'[mx{k}]' for k in range(len(kinds)))
+    parts = [f'{src}split={len(kinds)}{labels}']
+    for k, kind in enumerate(kinds):
+        if kind == 'blur':
+            parts.append(_blur_branch(f'[mx{k}]', W, H, f',setsar=1[mv{k}]'))
+        elif kind == 'fit':
+            parts.append(f'[mx{k}]scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'
+                         f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[mv{k}]')
+        else:  # seguir rosto, com fundo desfocado nas cenas sem rosto (como no modo "seguir rosto")
+            enable = reframe.fit_enable_expression(track['shots'])
+            if enable:
+                parts.append(f'[mx{k}]split=2[mt{k}][mf{k}];[mt{k}]{_track_crop(W, H, track)}[mtc{k}];'
+                             + _blur_branch(f'[mf{k}]', W, H, f',setsar=1[mtf{k}]')
+                             + f";[mtc{k}][mtf{k}]overlay=0:0:enable='{enable}'[mv{k}]")
+            else:
+                parts.append(f'[mx{k}]{_track_crop(W, H, track)}[mv{k}]')
+    # A primeira versão é a base; as outras entram por cima só nos seus trechos.
+    current = '[mv0]'
+    for k, kind in enumerate(kinds[1:], start=1):
+        spans = [f"between(t,{seg['start']:.3f},{seg['end']:.3f})" for seg in segments if seg['_kind'] == kind]
+        parts.append(f"{current}[mv{k}]overlay=0:0:enable='{expr_sum(spans)}'[mo{k}]")
+        current = f'[mo{k}]'
+    parts.append(f'{current}{pre}setsar=1{subs}[vout]')
+    return ';'.join(parts)
+
+
 def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str | None,
                       keep: list[tuple[float, float]] | None = None,
-                      track: dict | None = None, post: str = '') -> tuple[str, tuple[int, int]]:
+                      track: dict | None = None, post: str = '',
+                      segments: list[dict] | None = None) -> tuple[str, tuple[int, int]]:
     """``post``: filtros extras (começando com vírgula) aplicados no quadro final, antes da legenda."""
     W, H = target_size(fmt, media)
     # Formato original mantém o quadro como está; os demais descartam as faixas pretas embutidas.
@@ -666,9 +720,11 @@ def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str |
     subs = post + (f',ass={subtitles_file}' if subtitles_file else '')
     if fmt == 'original':
         graph = f'{src}{pre}scale={W}:{H}:flags=bicubic,setsar=1{subs}[vout]'
+    elif framing == 'mix' and segments:
+        graph = _mixed_graph(src, pre, subs, W, H, [dict(s) for s in segments], track)
     elif framing == 'track' and track and track.get('ok'):
         graph = _track_graph(src, pre, subs, W, H, track)
-    elif framing in ('blur', 'track'):  # track sem plano válido: fundo desfocado
+    elif framing in ('blur', 'track', 'mix'):  # sem plano/trechos válidos: fundo desfocado
         graph = _blur_branch(f'{src}{pre}', W, H, f',setsar=1{subs}[vout]')
     else:  # fit: enquadramento original preservado com barras
         graph = (f'{src}{pre}scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'
@@ -703,8 +759,9 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
                       narration: list[dict] | None = None, original_volume: float = 1.0,
                       keep: list[tuple[float, float]] | None = None,
                       track: dict | None = None, post: str = '',
-                      audio_extra: str = '', preview: bool = False) -> tuple[list[str], tuple[int, int]]:
-    graph, size = build_filtergraph(media, fmt, framing, subtitles_file, keep, track, post)
+                      audio_extra: str = '', preview: bool = False,
+                      segments: list[dict] | None = None) -> tuple[list[str], tuple[int, int]]:
+    graph, size = build_filtergraph(media, fmt, framing, subtitles_file, keep, track, post, segments)
     if preview:
         # Prévia: o mesmo grafo (layout, legenda, efeitos) e só no fim reduz à metade para codificar rápido.
         size = (_even(size[0] / 2), _even(size[1] / 2))
@@ -820,7 +877,8 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                 normalize_audio: bool = False, on_progress: ProgressFn | None = None,
                 cancel_event: threading.Event | None = None, narration: list[dict] | None = None,
                 original_volume: float = 1.0, keep: list[tuple[float, float]] | None = None,
-                track: dict | None = None, post: str = '', audio_extra: str = '', preview: bool = False) -> dict:
+                track: dict | None = None, post: str = '', audio_extra: str = '', preview: bool = False,
+                segments: list[dict] | None = None) -> dict:
     """Renderiza em pasta temporária, valida e só então publica com renomeação atômica.
 
     ``preview``: mesma montagem em meia resolução e codificação rápida, para conferir antes de exportar.
@@ -858,7 +916,7 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                 raise Cancelled()
             args, size = build_export_args(source, media, start, duration, fmt, framing, subs,
                                            normalize_audio, render, narration, original_volume, keep, track,
-                                           post, audio_extra, preview)
+                                           post, audio_extra, preview, segments)
             run_ffmpeg(args, duration=out_duration, cwd=work, cancel_event=cancel_event,
                        on_progress=lambda p, m: progress(p * 0.85, 'Renderizando'))
             return size

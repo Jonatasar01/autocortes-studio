@@ -346,6 +346,83 @@ def edit_clip(project_id: str, clip_id: int, start: float, end: float, title: st
 
 
 
+# --------------------------------------------------------------------------- enquadramento por trecho
+
+FRAMING_MIN_SEGMENT = 0.5    # trechos menores que isso são absorvidos pelo vizinho
+AUTO_FRAMING_CYCLE = ('track', 'blur')   # variação automática: seguir rosto, depois fundo desfocado…
+AUTO_FRAMING_MIN = 2.5       # trecho automático mínimo (cenas mais curtas se juntam à seguinte)
+AUTO_FRAMING_EVERY = 6.0     # sem trocas de cena no corte, alterna a cada ~6 s
+
+
+def clean_framing_segments(raw: list | None, clip_len: float) -> list[dict]:
+    """Trechos ``{start, end, framing}`` (em segundos do corte) ordenados, sem buracos e sem sobreposição.
+
+    Cobrem o corte inteiro: o primeiro começa em 0 e o último termina no fim; trechos vizinhos com o mesmo
+    enquadramento são unidos. Trechos fora do corte (depois de encurtá-lo) são cortados.
+    """
+    items = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            raise AppError('Trecho de enquadramento inválido.', 400, 'bad_input')
+        framing = item.get('framing')
+        if framing not in media.SEGMENT_FRAMINGS:
+            raise AppError('Enquadramento do trecho inválido (use blur, fit ou track).', 400, 'bad_framing')
+        try:
+            a, b = float(item['start']), float(item['end'])
+        except (KeyError, TypeError, ValueError):
+            raise AppError('Tempos do trecho inválidos.', 400, 'bad_input') from None
+        if not (math.isfinite(a) and math.isfinite(b)):
+            raise AppError('Tempos do trecho inválidos.', 400, 'bad_input')
+        a, b = max(0.0, a), min(clip_len, b)
+        if b - a >= FRAMING_MIN_SEGMENT:
+            items.append({'start': a, 'end': b, 'framing': framing})
+    items.sort(key=lambda s: s['start'])
+    out: list[dict] = []
+    for seg in items:
+        if out and seg['start'] < out[-1]['end']:
+            seg['start'] = out[-1]['end']          # sobreposição: vale o trecho que começou antes
+            if seg['end'] - seg['start'] < FRAMING_MIN_SEGMENT:
+                continue
+        if out:
+            out[-1]['end'] = seg['start']          # buraco: o trecho anterior vai até o próximo
+        if out and out[-1]['framing'] == seg['framing']:
+            out[-1]['end'] = seg['end']
+        else:
+            out.append(seg)
+    if out:
+        out[0]['start'] = 0.0
+        out[-1]['end'] = clip_len
+    return [{'start': round(s['start'], 3), 'end': round(s['end'], 3), 'framing': s['framing']} for s in out]
+
+
+def auto_framing_segments(p: dict, clip: dict) -> list[dict]:
+    """Variação automática: alterna seguir rosto e fundo desfocado a cada troca de cena do corte."""
+    clip_len = clip['end'] - clip['start']
+    cuts = sorted(s - clip['start'] for s in (p.get('scenes') or []) if clip['start'] < s < clip['end'])
+    bounds = [0.0]
+    for c in cuts:
+        if c - bounds[-1] >= AUTO_FRAMING_MIN and clip_len - c >= AUTO_FRAMING_MIN:
+            bounds.append(c)
+    if len(bounds) == 1:   # nenhuma troca de cena útil: alterna em intervalos regulares
+        n = max(1, round(clip_len / AUTO_FRAMING_EVERY))
+        bounds = [clip_len * k / n for k in range(n)]
+    bounds.append(clip_len)
+    raw = [{'start': a, 'end': b, 'framing': AUTO_FRAMING_CYCLE[k % len(AUTO_FRAMING_CYCLE)]}
+           for k, (a, b) in enumerate(zip(bounds, bounds[1:]))]
+    return clean_framing_segments(raw, clip_len)
+
+
+def set_framing_segments(project_id: str, clip_id: int, segments: list | None, *, auto: bool = False) -> dict:
+    """Grava os trechos de enquadramento do corte (``auto``: gera a variação automática)."""
+    with storage.edit_project(project_id) as p:
+        _require_ready(p)
+        clip = _find_clip(p, clip_id)
+        clip_len = clip['end'] - clip['start']
+        clip['framing_segments'] = (auto_framing_segments(p, clip) if auto
+                                    else clean_framing_segments(segments, clip_len))
+        return {'clip_id': clip_id, 'segments': clip['framing_segments']}
+
+
 def create_manual_clip(project_id: str, start: float, end: float, title: str) -> dict:
     """Cria um corte a partir da seleção do usuário, sem depender de IA ou transcrição."""
     title = _clean_text(title, 120)
@@ -590,6 +667,11 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
         if plan is not None:
             params['edit_plan'] = copy.deepcopy(plan)
             params['edit_plan_name'] = plan_name
+        if framing == 'mix':
+            # Por trecho: usa os trechos marcados no corte; sem trechos, a variação automática.
+            clip_len = clip['end'] - clip['start']
+            params['framing_segments'] = (clean_framing_segments(clip.get('framing_segments'), clip_len)
+                                          or auto_framing_segments(p, clip))
         if preview:
             params['preview'] = True
         if use_narration:

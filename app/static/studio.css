@@ -339,6 +339,13 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .stylebox output { float: right; color: var(--text); font-variant-numeric: tabular-nums; }
 .stylebox input[type=range] { margin-top: 12px; }
 .checkgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.mixpanel { display: grid; gap: 8px; margin-top: 10px; }
+.mixsegments { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; max-height: 220px; overflow-y: auto; }
+.mixsegments li { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center; }
+.mixsegments .t { padding: 4px 6px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--field);
+  color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.mixsegments li.here .t { border-color: var(--primary); color: var(--text); }
+.mixsplit { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
 .planbtns { display: flex; gap: 6px; margin-top: 12px; }
 .planbtns .btn { flex: 1; }
 .planresult { margin-top: 12px; }

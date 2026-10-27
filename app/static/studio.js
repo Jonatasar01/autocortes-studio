@@ -607,9 +607,73 @@ function render() {
   selectionLabel();
   renderRights(p);
   renderPlans();
+  renderMix();
   renderTimeline();
   updateControls();
 }
+
+// ------------------------------------------------------------------ enquadramento por trecho
+
+const FRAMING_LABELS = {track: 'Seguir rosto', blur: 'Fundo desfocado', fit: 'Quadro inteiro'};
+function mixSegments(c) {
+  return c?.framing_segments?.length ? c.framing_segments.map((s) => ({...s}))
+    : (c ? [{start: 0, end: c.end - c.start, framing: 'blur'}] : []);
+}
+function renderMix() {
+  const c = current();
+  $('mixPanel').hidden = $('framing').value !== 'mix' || !c;
+  if ($('mixPanel').hidden) return;
+  const at = video.currentTime - c.start;
+  $('mixSegments').innerHTML = mixSegments(c).map((s, i) =>
+    '<li' + (at >= s.start && at < s.end ? ' class="here"' : '') + '>' +
+    '<button type="button" class="t" data-seek="' + s.start + '" title="Ir para o início do trecho">' +
+    fmt(s.start) + '–' + fmt(s.end) + '</button>' +
+    '<select data-seg="' + i + '" aria-label="Enquadramento do trecho ' + (i + 1) + '">' +
+    Object.entries(FRAMING_LABELS).map(([v, l]) => '<option value="' + v + '"' + (v === s.framing ? ' selected' : '') +
+      '>' + l + '</option>').join('') + '</select>' +
+    '<button type="button" class="iconbtn sm" data-del="' + i + '" aria-label="Remover trecho"' +
+    (i === 0 && mixSegments(c).length === 1 ? ' disabled' : '') + '><svg class="ic"><use href="#i-x"/></svg></button></li>').join('');
+}
+async function saveMix(segments, {auto = false} = {}) {
+  const c = current();
+  if (!c) return;
+  const base = '/api/projects/' + state.project.id + '/clips/' + c.id + '/framing';
+  try {
+    await (auto ? api(base + '/auto', 'POST') : api(base, 'PUT', {segments}));
+    await refresh();
+  } catch (e) { toast(e.message, true); }
+}
+$('framing').addEventListener('change', renderMix);
+video.addEventListener('pause', renderMix);
+$('mixSegments').onclick = (e) => {
+  const c = current();
+  const seek = e.target.closest('[data-seek]');
+  if (seek && c) { video.currentTime = c.start + Number(seek.dataset.seek); renderMix(); return; }
+  const del = e.target.closest('[data-del]');
+  if (del) saveMix(mixSegments(c).filter((_, i) => i !== Number(del.dataset.del)));
+};
+$('mixSegments').onchange = (e) => {
+  const sel = e.target.closest('[data-seg]');
+  if (!sel) return;
+  const segs = mixSegments(current());
+  segs[Number(sel.dataset.seg)].framing = sel.value;
+  saveMix(segs);
+};
+$('mixSplit').onclick = () => {
+  const c = current();
+  if (!c) return;
+  const t = video.currentTime - c.start;
+  const segs = mixSegments(c);
+  const k = segs.findIndex((s) => t >= s.start && t < s.end);
+  if (k < 0 || t - segs[k].start < 0.5 || segs[k].end - t < 0.5) {
+    return toast('Pare o vídeo dentro do corte, longe do começo e do fim de um trecho.', true);
+  }
+  // Do ponto atual até o fim do trecho em que ele está.
+  segs.splice(k, 1, {...segs[k], end: t}, {start: t, end: segs[k].end, framing: $('mixFrom').value});
+  saveMix(segs);
+};
+$('mixAuto').onclick = () => saveMix(null, {auto: true});
+$('mixClear').onclick = () => saveMix([]);
 
 function renderRights(p) {
   const r = p.rights;

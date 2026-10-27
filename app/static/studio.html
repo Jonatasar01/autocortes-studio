@@ -327,7 +327,24 @@
                 <option value="blur">Fundo desfocado</option>
                 <option value="fit">Quadro inteiro</option>
                 <option value="track">Seguir rosto (se disponível)</option>
+                <option value="mix">Por trecho (variar no vídeo)</option>
               </select>
+              <div id="mixPanel" class="mixpanel" hidden>
+                <p class="hint">Cada trecho do corte usa um enquadramento. Pare o vídeo onde quer trocar e use “Mudar a partir daqui”.</p>
+                <ol id="mixSegments" class="mixsegments" aria-label="Trechos de enquadramento"></ol>
+                <div class="mixsplit">
+                  <select id="mixFrom" aria-label="Enquadramento a partir da posição atual">
+                    <option value="track">Seguir rosto</option>
+                    <option value="blur">Fundo desfocado</option>
+                    <option value="fit">Quadro inteiro</option>
+                  </select>
+                  <button id="mixSplit" class="btn" type="button">Mudar a partir daqui</button>
+                </div>
+                <div class="planbtns">
+                  <button id="mixAuto" class="btn ghost" type="button" title="Alterna seguir rosto e fundo desfocado a cada troca de cena">Variar automaticamente</button>
+                  <button id="mixClear" class="btn ghost" type="button">Limpar trechos</button>
+                </div>
+              </div>
               <span class="eyebrow spaced">Texto</span>
               <label class="switch"><input id="hook" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Gancho</strong><small>Usa o nome do corte como texto de abertura.</small></span></label>
             </div>

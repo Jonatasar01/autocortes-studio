@@ -263,11 +263,35 @@ def edit_clip(project_id: str, clip_id: int, edit: ClipEdit):
     return service.edit_clip(project_id, clip_id, edit.start, edit.end, edit.title)
 
 
+class FramingSegment(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    start: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+    framing: Literal['fit', 'blur', 'track']
+
+
+class FramingSegments(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    segments: list[FramingSegment] = Field(max_length=200)
+
+
+@app.put('/api/projects/{project_id}/clips/{clip_id}/framing')
+def set_clip_framing(project_id: str, clip_id: int, body: FramingSegments):
+    """Enquadramento por trecho: cada parte do corte com fundo desfocado, quadro inteiro ou seguir rosto."""
+    return service.set_framing_segments(project_id, clip_id, [seg.model_dump() for seg in body.segments])
+
+
+@app.post('/api/projects/{project_id}/clips/{clip_id}/framing/auto')
+def auto_clip_framing(project_id: str, clip_id: int):
+    """Variação automática: alterna seguir rosto e fundo desfocado a cada troca de cena."""
+    return service.set_framing_segments(project_id, clip_id, None, auto=True)
+
+
 class ExportOptions(BaseModel):
     model_config = ConfigDict(extra='forbid')
     format: Optional[Literal['9:16', '16:9', '1:1', 'original']] = None
     portrait: bool = True  # compatibilidade: usado quando "format" não é enviado
-    framing: Literal['fit', 'blur', 'track'] = 'fit'
+    framing: Literal['fit', 'blur', 'track', 'mix'] = 'fit'   # mix = enquadramento por trecho
     subtitles: bool = True
     subtitle_style: Literal['classica', 'dinamica'] = 'classica'
     hook: bool = False

@@ -246,7 +246,12 @@ def run_export(ctx: JobContext) -> dict:
             info = {**info, 'letterbox': box}
             warnings.append(f"Faixas pretas do vídeo original removidas (área útil {box['w']}×{box['h']}).")
     width, height = media.target_size(prm['format'], info)
-    band = media.content_band(prm['format'], prm['framing'], info, (width, height))
+    segments = prm.get('framing_segments') if prm['framing'] == 'mix' else None
+    kinds = {seg['framing'] for seg in segments or []}
+    # Legenda: no "por trecho" com algum desfocado/quadro inteiro, fica abaixo da faixa do vídeo nesses
+    # trechos; nos de seguir rosto (tela cheia) essa mesma altura continua sobre a imagem, sem borda.
+    band_framing = ('blur' if kinds & {'blur', 'fit'} else 'track') if segments else prm['framing']
+    band = media.content_band(prm['format'], band_framing, info, (width, height))
     out_len = sum(b - a for a, b in keep) if keep else end - start
     hook_text = prm.get('hook_text') if prm.get('hook') else None
     sub_report = subtitles._new_report()
@@ -297,7 +302,7 @@ def run_export(ctx: JobContext) -> dict:
         ass_text = subtitles.to_ass([], width, height, hook_text=hook_text, clip_len=out_len, report=sub_report,
                                     video_band=band)
     track = None
-    if prm['framing'] == 'track':
+    if prm['framing'] == 'track' or 'track' in kinds:
         ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
         track = _cached_track(folder, p, info, start, end, prm['format'], ctx)
         if not track['ok']:
@@ -318,7 +323,8 @@ def run_export(ctx: JobContext) -> dict:
                                on_progress=(ctx.span(0.25, 1.0) if placed else (lambda f, m='': ctx.progress(f))),
                                cancel_event=ctx.cancel_event, narration=placed, keep=keep,
                                original_volume=max(0, min(100, int(prm.get('original_volume', 100)))) / 100,
-                               track=track, post=post, audio_extra=audio_extra, preview=preview)
+                               track=track, post=post, audio_extra=audio_extra, preview=preview,
+                               segments=segments)
     result['warnings'] = warnings + result['warnings']
     # Verificação de qualidade visual registrada na exportação: a legenda cabe e o rosto não foi cortado.
     quality = {'subtitles': sub_report if sub_report['events'] else None,

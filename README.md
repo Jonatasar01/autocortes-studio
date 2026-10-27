@@ -359,6 +359,26 @@ quando não acha rostos; efeitos sonoros e música não são adicionados automat
 de conteúdo é heurística; a análise roda na requisição (alguns segundos para cortes longos), não na fila.
 Nenhum ganho de retenção é afirmado: não há dados de desempenho.
 
+## Enquadramento por trecho
+
+Na aba **Efeitos**, em **Enquadramento**, a opção **Por trecho (variar no vídeo)** deixa cada parte do corte
+com um enquadramento diferente: **seguir rosto**, **fundo desfocado** ou **quadro inteiro**.
+
+- **Mudar a partir daqui:** pare o vídeo onde quer trocar, escolha o enquadramento e clique; o trecho em que
+  o vídeo está é dividido nesse ponto.
+- **Variar automaticamente:** alterna seguir rosto e fundo desfocado a cada troca de cena do corte (cenas
+  com menos de 2,5 s se juntam à seguinte); sem trocas de cena, alterna a cada ~6 s.
+- Cada trecho da lista pode ter o enquadramento trocado ou ser removido (o vizinho ocupa o espaço);
+  clicar no tempo leva o vídeo ao início do trecho.
+- Sem trechos marcados, a exportação "por trecho" usa a variação automática.
+
+Na exportação, o FFmpeg monta uma versão do vídeo para cada enquadramento usado e liga cada uma no tempo
+do seu trecho, numa única codificação. Seguir rosto sem rosto detectado vira fundo desfocado, como no modo
+normal. A legenda fica abaixo da faixa do vídeo nos trechos com desfoque ou barras; nos de seguir rosto (tela
+cheia), a mesma altura fica sobre a imagem. API: `PUT /api/projects/{id}/clips/{n}/framing` com
+`{"segments": [{"start", "end", "framing"}]}` (segundos do corte) e `POST …/framing/auto`; exportar com
+`"framing": "mix"`.
+
 ## Segurança visual: legenda dentro do quadro e rosto inteiro no recorte
 
 **Legendas (`app/textfit.py`, `app/subtitles.py`).** As quebras de linha são decididas pela largura real
