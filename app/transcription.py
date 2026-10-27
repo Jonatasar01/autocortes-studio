@@ -106,18 +106,23 @@ def _load_refine_model():
         return _refine_cache[name]
 
 
-def refine(audio_path: Path, *, cancel_event: threading.Event | None = None) -> tuple[list[dict], dict]:
+def refine(audio_path: Path, *, prompt: str | None = None,
+           cancel_event: threading.Event | None = None) -> tuple[list[dict], dict]:
     """Retranscreve um trecho curto (o áudio de um corte) com o modelo maior, para a legenda.
 
     O ``small`` da análise erra fala rápida, gíria e nomes ("curinguinho a júnior" em vez de "Coringuinha
     Júnior"); num corte de 1–2 min o ``large-v3-turbo`` na GPU leva poucos segundos. Mesmo formato de
     ``transcribe``, com tempos relativos ao início do áudio.
+
+    ``prompt`` (título do corte e nome do vídeo) dá o vocabulário do assunto ao modelo: acerta nomes e gírias
+    ("esse x1", "Coringa") e evita frases inventadas no silêncio do fim ("Tchau. Tchau. Tchau.").
     """
     language = None if config.WHISPER_LANGUAGE.lower() == 'auto' else config.WHISPER_LANGUAGE
     try:
         model = _load_refine_model()
         segments_iter, _info = model.transcribe(str(audio_path), language=language, vad_filter=True,
-                                                word_timestamps=True, beam_size=5, condition_on_previous_text=True)
+                                                word_timestamps=True, beam_size=5, condition_on_previous_text=True,
+                                                initial_prompt=(prompt or '')[:200] or None)
         result = []
         for seg in segments_iter:
             if cancel_event is not None and cancel_event.is_set():
@@ -142,9 +147,18 @@ def _segment_dict(seg, offset: float) -> dict | None:
     logprob = float(getattr(seg, 'avg_logprob', 0) or 0)
     if not text or (no_speech > 0.8 and logprob < -1.0):
         return None
-    words = [{'start': round(offset + float(w.start), 2), 'end': round(offset + float(w.end), 2),
-              'word': w.word.strip()}
-             for w in (getattr(seg, 'words', None) or []) if w.word.strip()]
+    words: list[dict] = []
+    for w in getattr(seg, 'words', None) or []:
+        if not w.word.strip():
+            continue
+        # Peça sem espaço antes é continuação da palavra anterior ("auto" + "-explicativa"): sem juntar,
+        # a legenda podia quebrar a palavra em duas telas.
+        if words and not w.word[:1].isspace() and w.word[:1] in '-–' + "'’":
+            words[-1]['word'] += w.word.strip()
+            words[-1]['end'] = round(offset + float(w.end), 2)
+            continue
+        words.append({'start': round(offset + float(w.start), 2), 'end': round(offset + float(w.end), 2),
+                      'word': w.word.strip()})
     return {'start': round(offset + float(seg.start), 2), 'end': round(offset + float(seg.end), 2),
             'text': text, 'words': words, 'avg_logprob': round(logprob, 3), 'no_speech_prob': round(no_speech, 3)}
 

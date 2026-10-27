@@ -9,6 +9,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 import shutil
 import threading
 import time
@@ -268,7 +269,7 @@ def run_export(ctx: JobContext) -> dict:
             warnings.append(f"Faixas pretas do vídeo original removidas (área útil {box['w']}×{box['h']}).")
     narration_subs = bool(placed) and prm.get('subtitle_source', 'narracao') == 'narracao'
     if prm.get('subtitles') and prm.get('refine_subtitles', True) and not narration_subs:
-        p = _refine_transcript(ctx, folder, p, info, start, end, warnings)
+        p = _refine_transcript(ctx, folder, p, info, start, end, warnings, title=prm.get('title'))
     width, height = media.target_size(prm['format'], info)
     segments = prm.get('framing_segments') if prm['framing'] == 'mix' else None
     kinds = {seg['framing'] for seg in segments or []}
@@ -424,8 +425,15 @@ def _refined(p: dict, start: float, end: float) -> bool:
     return any(a <= start + 0.05 and end - 0.05 <= b and m == model for a, b, m in p.get('transcript_refined') or [])
 
 
+def _refine_prompt(project_name: str | None, title: str | None) -> str:
+    """Dica de vocabulário para o modelo: nome do vídeo (sem data, resolução e extensão) e título do corte."""
+    name = re.sub(r'\.[A-Za-z0-9]{2,4}$', '', project_name or '')
+    words = [w for w in re.split(r'[\s_\-]+', name) if w and not any(ch.isdigit() for ch in w)]
+    return '. '.join(part for part in (' '.join(words), (title or '').strip()) if part)
+
+
 def _refine_transcript(ctx: JobContext, folder: Path, p: dict, info: dict, start: float, end: float,
-                       warnings: list[str]) -> dict:
+                       warnings: list[str], *, title: str | None = None) -> dict:
     """Legenda precisa: retranscreve só o áudio do corte com o modelo maior e grava no projeto.
 
     As frases do projeto cujo meio cai dentro do corte são trocadas pelas novas (1 s de folga em cada ponta
@@ -433,8 +441,8 @@ def _refine_transcript(ctx: JobContext, folder: Path, p: dict, info: dict, start
     """
     if _refined(p, start, end) or info.get('audio_index') is None:
         return p
-    if (p.get('transcription') or {}).get('model') == config.WHISPER_REFINE_MODEL:
-        return p   # a análise já usou o modelo grande: retranscrever o corte não mudaria nada
+    # Mesmo quando a análise já usou o modelo grande vale retranscrever: na análise a live inteira vai em lotes,
+    # sem o contexto da frase anterior e com busca menor (beam 3); só o corte, com contexto e beam 5, erra menos.
     if not transcription.refine_available():
         warnings.append('Legenda precisa indisponível (precisa de GPU NVIDIA com requirements-gpu.txt); '
                         'usada a transcrição da análise.')
@@ -448,7 +456,8 @@ def _refine_transcript(ctx: JobContext, folder: Path, p: dict, info: dict, start
         media.run_ffmpeg(['-ss', f'{a:.3f}', '-t', f'{b - a:.3f}', '-i', str(folder / p['filename']),
                           '-map', f"0:{info['audio_index']}", '-vn', '-ac', '1', '-ar', '16000', str(wav)],
                          duration=b - a, cancel_event=ctx.cancel_event)
-        segments, status = transcription.refine(wav, cancel_event=ctx.cancel_event)
+        segments, status = transcription.refine(wav, prompt=_refine_prompt(p.get('name'), title),
+                                                cancel_event=ctx.cancel_event)
     except media.FFmpegError:
         segments, status = [], {'state': 'failed', 'message': 'Não foi possível extrair o áudio do corte.'}
     finally:

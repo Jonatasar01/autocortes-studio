@@ -58,6 +58,27 @@ class RefineTranscriptTests(ServiceBase):
         _, _, _, again = self.run_refine(4.0, 12.0)
         again.assert_not_called()
 
+    def test_refines_even_when_the_analysis_used_the_same_model(self):
+        # A análise da live inteira vai em lotes e sem contexto: errava "esse x1" como "este zoom".
+        with storage.edit_project(self.pid) as p:
+            p['transcription'] = {**(p.get('transcription') or {}), 'model': 'large-v3-turbo'}
+        _, _, _, fake = self.run_refine(4.0, 12.0)
+        fake.assert_called_once()
+
+    def test_hyphenated_word_stays_whole(self):
+        from types import SimpleNamespace as W
+        raw = W(text=' gameplay auto-explicativa?', start=0.0, end=2.0, no_speech_prob=0.0, avg_logprob=-0.2,
+                words=[W(word=' gameplay', start=0.0, end=0.6), W(word=' auto', start=0.6, end=1.0),
+                       W(word='-explicativa?', start=1.0, end=2.0)])
+        words = transcription._segment_dict(raw, 10.0)['words']
+        self.assertEqual([w['word'] for w in words], ['gameplay', 'auto-explicativa?'])
+        self.assertEqual((words[1]['start'], words[1]['end']), (10.6, 12.0))
+
+    def test_prompt_uses_video_name_and_clip_title(self):
+        self.assertEqual(pipeline._refine_prompt('Coringa_Just-Chatting_2026-10-26_1080p60.mp4', 'Conceito da fakebang'),
+                         'Coringa Just Chatting. Conceito da fakebang')
+        self.assertEqual(pipeline._refine_prompt(None, None), '')
+
     def test_without_gpu_keeps_the_analysis_transcript(self):
         out, warnings, ctx, fake = self.run_refine(4.0, 12.0, available=False)
         fake.assert_not_called()
