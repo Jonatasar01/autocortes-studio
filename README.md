@@ -157,6 +157,12 @@ pip install -r requirements-ai.txt
 
 - **Transcrição:** `faster-whisper` local. Variáveis: `WHISPER_MODEL` (`small` padrão; `base`/`tiny` para pouca memória),
   `WHISPER_DEVICE` (`auto`, `cpu`, `cuda`), `WHISPER_LANGUAGE` (`pt` padrão; `auto` para detectar). O primeiro uso baixa os pesos.
+- **Legenda precisa** (Legendas → "Legenda precisa", ligada por padrão): na prévia e na exportação, o áudio só do
+  corte é retranscrito com `WHISPER_REFINE_MODEL` (`large-v3-turbo` padrão; `off` desliga) na GPU, e essas frases
+  substituem as da análise no projeto. O `small` da análise errava fala rápida, gíria e nomes: num corte de 95 s,
+  8 trechos ("um curinguinho a júnior ou uma painazinha a júnior" → "um Coringuinha Júnior ou uma Tainazinha
+  Júnior"). A primeira vez baixa ~1,6 GB e leva ~50 s (carregar o modelo); depois o mesmo corte não é refeito.
+  Sem GPU NVIDIA, a legenda usa a transcrição da análise e a exportação avisa.
 - **Vídeos longos:** acima de 20 min, o áudio é transcrito em partes de ~20 min cortadas em pausas. A memória
   fica fixa (pico de ~1,5 GB) em vez de crescer com a duração; antes, uma live de 8 h falhava por falta de memória.
 - **GPU NVIDIA no Windows:** `pip install -r requirements-gpu.txt` instala o cuBLAS e o cuDNN do CUDA 12 (~1,2 GB)

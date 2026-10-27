@@ -13,8 +13,8 @@ import shutil
 import threading
 import time
 
-from . import (curation, direction, media, music, narration, publish, reframe, rights, selection, settings, storage,
-               subtitles, transcription)
+from . import (config, curation, direction, media, music, narration, publish, reframe, rights, selection, settings,
+               storage, subtitles, transcription)
 from .errors import AppError, Cancelled
 from .jobs import JobContext
 
@@ -245,6 +245,9 @@ def run_export(ctx: JobContext) -> dict:
         if box:
             info = {**info, 'letterbox': box}
             warnings.append(f"Faixas pretas do vídeo original removidas (área útil {box['w']}×{box['h']}).")
+    narration_subs = bool(placed) and prm.get('subtitle_source', 'narracao') == 'narracao'
+    if prm.get('subtitles') and prm.get('refine_subtitles', True) and not narration_subs:
+        p = _refine_transcript(ctx, folder, p, info, start, end, warnings)
     width, height = media.target_size(prm['format'], info)
     segments = prm.get('framing_segments') if prm['framing'] == 'mix' else None
     kinds = {seg['framing'] for seg in segments or []}
@@ -386,6 +389,54 @@ def run_export(ctx: JobContext) -> dict:
     for message in record['warnings']:
         ctx.warn(message)
     return record
+
+
+def _refined(p: dict, start: float, end: float) -> bool:
+    model = config.WHISPER_REFINE_MODEL
+    return any(a <= start + 0.05 and end - 0.05 <= b and m == model for a, b, m in p.get('transcript_refined') or [])
+
+
+def _refine_transcript(ctx: JobContext, folder: Path, p: dict, info: dict, start: float, end: float,
+                       warnings: list[str]) -> dict:
+    """Legenda precisa: retranscreve só o áudio do corte com o modelo maior e grava no projeto.
+
+    As frases do projeto cujo meio cai dentro do corte são trocadas pelas novas (1 s de folga em cada ponta
+    para não cortar palavras); o intervalo fica marcado e a próxima prévia/exportação não repete o trabalho.
+    """
+    if _refined(p, start, end) or info.get('audio_index') is None:
+        return p
+    if not transcription.refine_available():
+        warnings.append('Legenda precisa indisponível (precisa de GPU NVIDIA com requirements-gpu.txt); '
+                        'usada a transcrição da análise.')
+        return p
+    ctx.stage('legenda', f'Refinando a legenda ({config.WHISPER_REFINE_MODEL})')
+    a, b = max(0.0, start - 1.0), min(info['duration'], end + 1.0)
+    work = folder / 'work_legenda'
+    try:
+        work.mkdir(parents=True, exist_ok=True)
+        wav = work / 'trecho.wav'
+        media.run_ffmpeg(['-ss', f'{a:.3f}', '-t', f'{b - a:.3f}', '-i', str(folder / p['filename']),
+                          '-map', f"0:{info['audio_index']}", '-vn', '-ac', '1', '-ar', '16000', str(wav)],
+                         duration=b - a, cancel_event=ctx.cancel_event)
+        segments, status = transcription.refine(wav, cancel_event=ctx.cancel_event)
+    except media.FFmpegError:
+        segments, status = [], {'state': 'failed', 'message': 'Não foi possível extrair o áudio do corte.'}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    if status['state'] != 'ok' or not segments:
+        warnings.append(status.get('message') or 'Legenda precisa sem fala reconhecida; usada a da análise.')
+        return p
+    shift = lambda seg: {**seg, 'start': round(seg['start'] + a, 2), 'end': round(seg['end'] + a, 2),  # noqa: E731
+                         'words': [{**w, 'start': round(w['start'] + a, 2), 'end': round(w['end'] + a, 2)}
+                                   for w in seg.get('words') or []]}
+    inside = lambda seg: start <= (seg['start'] + seg['end']) / 2 <= end  # noqa: E731
+    fresh = [seg for seg in map(shift, segments) if inside(seg)]
+    with storage.edit_project(ctx.project_id) as q:
+        kept = [seg for seg in q.get('transcript') or [] if not inside(seg)]
+        q['transcript'] = sorted(kept + fresh, key=lambda seg: seg['start'])
+        q.setdefault('transcript_refined', []).append([round(start, 3), round(end, 3), config.WHISPER_REFINE_MODEL])
+        updated = q
+    return updated
 
 
 def _cached_track(folder: Path, p: dict, info: dict, start: float, end: float, fmt: str, ctx: JobContext) -> dict:

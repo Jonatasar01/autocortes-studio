@@ -660,6 +660,7 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
         params = {'clip_id': clip_id, 'format': fmt, 'framing': framing,
                   'subtitles': bool(options.get('subtitles', True)),
                   'subtitle_style': subtitle_style, 'hook': bool(hook_text), 'hook_text': hook_text,
+                  'refine_subtitles': bool(options.get('refine_subtitles', True)),
                   'normalize_audio': bool(options.get('normalize_audio', False)),
                   'narration': use_narration, 'voice': voice if use_narration else None,
                   'original_volume': _int_range(options.get('original_volume', 100), 0, 100, 'Volume inválido.'),

@@ -65,6 +65,78 @@ def _load_model(device: str):
         return _cache[key]
 
 
+# --------------------------------------------------------------------------- refinamento da legenda
+
+_refine_cache: dict[str, object] = {}
+
+
+def refine_available() -> bool:
+    """Refinamento só com GPU: na CPU o modelo grande levaria minutos por corte."""
+    if config.WHISPER_REFINE_MODEL.lower() in ('', 'off', 'none', '0') or _gpu_failed or not available():
+        return False
+    if config.WHISPER_DEVICE == 'cpu':
+        return False
+    try:
+        import ctranslate2
+        return ctranslate2.get_cuda_device_count() > 0
+    except Exception:  # sem CTranslate2 com CUDA
+        return False
+
+
+def _load_refine_model():
+    from faster_whisper import WhisperModel
+    _cuda_dll_dirs()
+    name = config.WHISPER_REFINE_MODEL
+    with _lock:
+        if name not in _refine_cache:
+            _refine_cache.clear()
+            _refine_cache[name] = WhisperModel(name, device='cuda', compute_type='int8_float16')
+        return _refine_cache[name]
+
+
+def refine(audio_path: Path, *, cancel_event: threading.Event | None = None) -> tuple[list[dict], dict]:
+    """Retranscreve um trecho curto (o áudio de um corte) com o modelo maior, para a legenda.
+
+    O ``small`` da análise erra fala rápida, gíria e nomes ("curinguinho a júnior" em vez de "Coringuinha
+    Júnior"); num corte de 1–2 min o ``large-v3-turbo`` na GPU leva poucos segundos. Mesmo formato de
+    ``transcribe``, com tempos relativos ao início do áudio.
+    """
+    language = None if config.WHISPER_LANGUAGE.lower() == 'auto' else config.WHISPER_LANGUAGE
+    try:
+        model = _load_refine_model()
+        segments_iter, _info = model.transcribe(str(audio_path), language=language, vad_filter=True,
+                                                word_timestamps=True, beam_size=5, condition_on_previous_text=True)
+        result = []
+        for seg in segments_iter:
+            if cancel_event is not None and cancel_event.is_set():
+                raise Cancelled()
+            item = _segment_dict(seg, 0.0)
+            if item:
+                result.append(item)
+    except Cancelled:
+        raise
+    except Exception as exc:  # CUDA indisponível, pesos não baixados, memória da placa...
+        log.warning('Refinamento da legenda falhou: %s', sanitize(exc, 300))
+        with _lock:
+            _refine_cache.clear()
+        return [], {'state': 'failed', 'message': 'Refinamento da legenda falhou: ' + sanitize(exc, 160)}
+    return result, {'state': 'ok', 'model': config.WHISPER_REFINE_MODEL}
+
+
+def _segment_dict(seg, offset: float) -> dict | None:
+    """Segmento do faster-whisper → dicionário do projeto (``None`` para provável alucinação sem fala)."""
+    text = (seg.text or '').strip()
+    no_speech = float(getattr(seg, 'no_speech_prob', 0) or 0)
+    logprob = float(getattr(seg, 'avg_logprob', 0) or 0)
+    if not text or (no_speech > 0.8 and logprob < -1.0):
+        return None
+    words = [{'start': round(offset + float(w.start), 2), 'end': round(offset + float(w.end), 2),
+              'word': w.word.strip()}
+             for w in (getattr(seg, 'words', None) or []) if w.word.strip()]
+    return {'start': round(offset + float(seg.start), 2), 'end': round(offset + float(seg.end), 2),
+            'text': text, 'words': words, 'avg_logprob': round(logprob, 3), 'no_speech_prob': round(no_speech, 3)}
+
+
 CHUNK_SECONDS = 20 * 60      # áudio acima disto é transcrito em partes (memória fixa, ~0,5 GB por parte)
 CHUNK_SEARCH_SECONDS = 30.0  # cada parte termina no ponto mais silencioso dos seus últimos 30 s
 _QUIET_WINDOW = 0.1
@@ -173,19 +245,14 @@ def transcribe(audio_path: Path, duration: float, *, on_progress: Callable[[floa
                         raise Cancelled()
                     if on_progress and duration > 0:
                         on_progress(min(1.0, (offset + float(seg.end)) / duration), '')
-                    text = (seg.text or '').strip()
-                    no_speech = float(getattr(seg, 'no_speech_prob', 0) or 0)
-                    logprob = float(getattr(seg, 'avg_logprob', 0) or 0)
-                    if not text or (no_speech > 0.8 and logprob < -1.0):
+                    item = _segment_dict(seg, offset)
+                    if item is None:
                         continue  # provável alucinação em trecho sem fala
-                    words = [{'start': round(offset + float(w.start), 2), 'end': round(offset + float(w.end), 2),
-                              'word': w.word.strip()}
-                             for w in (getattr(seg, 'words', None) or []) if w.word.strip()]
-                    start, end = round(offset + float(seg.start), 2), round(offset + float(seg.end), 2)
-                    parts = split_sentences(words) if batched and words else [(start, end, text, words)]
-                    for p_start, p_end, p_text, p_words in parts:
-                        result.append({'start': p_start, 'end': p_end, 'text': p_text, 'words': p_words,
-                                       'avg_logprob': round(logprob, 3), 'no_speech_prob': round(no_speech, 3)})
+                    if not (batched and item['words']):
+                        result.append(item)
+                        continue
+                    for p_start, p_end, p_text, p_words in split_sentences(item['words']):
+                        result.append({**item, 'start': p_start, 'end': p_end, 'text': p_text, 'words': p_words})
             detected = detected or language or '?'
             return result, {'state': 'ok' if result else 'no_speech', 'model': config.WHISPER_MODEL,
                             'device': device, 'language': detected,

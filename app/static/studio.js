@@ -1267,7 +1267,7 @@ function showExport(text, {progress = null, cancellable = false, tone = ''} = {}
 function exportOptions(format, rights) {
   return {
     format, framing: $('framing').value, subtitles: $('subtitles').checked,
-    subtitle_style: $('subtitleStyle').value,
+    subtitle_style: $('subtitleStyle').value, refine_subtitles: $('refineSubtitles').checked,
     normalize_audio: $('normalize').checked, hook: $('hook').checked, acknowledge_rights: rights,
     edit_plan: exportPlanName(),
   };
@@ -1276,10 +1276,14 @@ function exportOptions(format, rights) {
 // Estilo da legenda: lembrado entre sessões; com um plano de edição em uso, o plano decide.
 $('subtitleStyle').value = store.get('subtitleStyle') === 'classica' ? 'classica' : 'dinamica';
 $('subtitleStyle').addEventListener('change', () => store.set('subtitleStyle', $('subtitleStyle').value));
+$('refineSubtitles').checked = store.get('refineSubtitles') !== 'off';
+$('refineSubtitles').addEventListener('change', () => store.set('refineSubtitles',
+  $('refineSubtitles').checked ? 'on' : 'off'));
 function syncSubtitleStyle() {
   const planned = Boolean(exportPlanName());
   $('subtitleStyle').disabled = !$('subtitles').checked || planned;
   $('subtitleStyleNote').hidden = !planned || !$('subtitles').checked;
+  $('refineSubtitles').disabled = !$('subtitles').checked;
 }
 $('subtitles').addEventListener('change', syncSubtitleStyle);
 

@@ -295,6 +295,7 @@ class ExportOptions(BaseModel):
     framing: Literal['fit', 'blur', 'track', 'streamer', 'mix'] = 'fit'   # mix = por trecho
     subtitles: bool = True
     subtitle_style: Literal['classica', 'dinamica'] = 'classica'
+    refine_subtitles: bool = True   # legenda precisa: retranscreve o corte com o modelo maior (GPU)
     hook: bool = False
     normalize_audio: bool = False
     acknowledge_rights: bool = False
