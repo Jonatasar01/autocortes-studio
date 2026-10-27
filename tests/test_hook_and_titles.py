@@ -98,6 +98,12 @@ def test_rendered_hook_with_unbreakable_word_still_fits(tmp_path):
 
 # ----------------------------------------------------------------------------- títulos
 
+def test_interjection_title_takes_the_next_sentence():
+    # Lives: "Porra." sozinho não diz do que o corte trata.
+    assert selection._title_from_text('Porra. Tu acabou de tirar x1 com um cara.') == 'Porra. Tu acabou de tirar x1 com um cara.'
+    assert selection._title_from_text('Certo.') == 'Certo.'
+
+
 def test_short_sentence_is_kept_whole():
     assert selection._title_from_text('Isso é um teste. Outra frase.') == 'Isso é um teste.'
 

@@ -212,7 +212,11 @@ def _title_from_text(text: str, limit: int = 80) -> str:
     sem reticências; só sem nenhuma fronteira cai para palavra inteira + "…", nunca terminando em artigo,
     preposição ou conjunção."""
     text = re.sub(r'\s+', ' ', text or '').strip()
-    first = re.split(r'(?<=[.!?…])\s', text, maxsplit=1)[0]
+    # Interjeições ("Porra.", "Certo.") não dizem do que o corte trata: junta as frases seguintes.
+    sentences = re.split(r'(?<=[.!?…])\s', text)
+    first = sentences.pop(0)
+    while sentences and len(first.split()) < 3:
+        first += ' ' + sentences.pop(0)
     if len(first) <= limit:
         return first.rstrip(' ,;:')
     window = first[:limit + 1]

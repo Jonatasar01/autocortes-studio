@@ -39,6 +39,15 @@ class _AnyEvent:
         return self.own.wait(timeout) or self.is_set()
 
 
+def _saved_analysis(pid: str) -> tuple[dict, list[dict], dict, list[float]]:
+    """Mídia, transcrição e cenas já gravadas: refazer a seleção não transcreve de novo (horas numa live)."""
+    p = storage.read_project(pid)
+    t_status = p.get('transcription') or {}
+    if not p.get('media') or t_status.get('state') != 'ok' or not p.get('transcript'):
+        raise AppError('Este projeto não tem transcrição salva; use Reanalisar.', 409, 'no_transcript')
+    return p['media'], p['transcript'], t_status, p.get('scenes') or []
+
+
 def run_analysis(ctx: JobContext) -> dict:
     pid = ctx.project_id
     folder = storage.project_dir(pid)
@@ -51,79 +60,84 @@ def run_analysis(ctx: JobContext) -> dict:
                                       'third_party_footage', 'monetization', 'recognize_music',
                                       'target_seconds', 'desired_count')}
 
-    ctx.stage('validando', 'Validando o arquivo de vídeo')
-    info = media.probe_media(source)
-    warnings = media.integrity_warnings(source, info)
-    ctx.progress(0.03)
-
-    ctx.stage('musica', 'Verificando música (somente se autorizado)')
-    music_review = music.recognize_music(source, info['duration'], bool(opts['recognize_music']), info['audio'],
-                                         cancel_event=ctx.cancel_event, audio_index=info.get('audio_index'))
-    review = rights.rights_review(opts['source_rights'], opts['external_audio'], opts['license_notes'] or '',
-                                  info['audio'], opts.get('graphics_rights') or 'unknown',
-                                  opts.get('third_party_footage') or 'unknown', opts.get('monetization') or 'unknown',
-                                  music_review)
-    with storage.edit_project(pid) as p:
-        p.update({'media': info, 'rights': review, 'music_review': music_review, 'warnings': warnings})
-    ctx.progress(0.08)
-
-    # Cenas em paralelo com a transcrição: na GPU a detecção quase não usa CPU, e em vídeos longos ela
-    # levava quase tanto tempo quanto a transcrição. Pasta própria: a transcrição apaga a sua ao terminar.
-    scene_state: dict = {'fraction': 0.0, 'scenes': [], 'error': None}
-    scene_stop = _AnyEvent(ctx.cancel_event)   # para a detecção se a análise falhar antes dela terminar
-
-    def find_scenes() -> None:
-        try:
-            scene_state['scenes'] = media.detect_scenes(
-                source, info, folder / 'work_cenas', cancel_event=scene_stop,
-                on_progress=lambda f, _m='': scene_state.__setitem__('fraction', f))
-        except Cancelled as exc:  # relançado na thread do job
-            scene_state['error'] = exc
-        except Exception:
-            # As cenas só refinam as bordas dos cortes: uma falha aqui não pode descartar horas de
-            # transcrição. Segue sem elas.
-            log.warning('Detecção de cenas falhou; seguindo sem cenas.', exc_info=True)
-
-    scene_thread = threading.Thread(target=find_scenes, name=f'cenas-{pid[:8]}', daemon=True)
-    scene_thread.start()
-
-    transcript: list[dict] = []
-    if not info['audio']:
-        t_status = {'state': 'no_audio', 'message': 'Vídeo sem áudio: não há fala para analisar; cortes temporais.'}
-    elif not transcription.available():
-        t_status = {'state': 'not_installed', 'message': 'Transcrição não instalada (faster-whisper). Sem '
-                    'transcrição, os cortes são apenas temporais — não há análise do conteúdo falado.'}
+    saved = _saved_analysis(pid) if ctx.params.get('reselect') else None
+    if saved:  # refazer só a seleção: mídia, transcrição e cenas da análise anterior
+        info, transcript, t_status, scenes = saved
+        ctx.progress(0.88)
     else:
-        work = folder / 'work'
-        try:
-            storage.ensure_free_space(int(info['duration'] * 32_000) + 50 * 1024 ** 2, folder)
-            ctx.stage('extraindo_audio', 'Extraindo áudio para transcrição')
-            wav = media.extract_audio_wav(source, info, work / 'audio.wav', on_progress=ctx.span(0.08, 0.14),
-                                          cancel_event=ctx.cancel_event)
-            ctx.stage('transcrevendo', 'Transcrevendo a fala localmente')
-            transcript, t_status = transcription.transcribe(wav, info['duration'], on_progress=ctx.span(0.14, 0.74),
-                                                            cancel_event=ctx.cancel_event)
-        except media.FFmpegError as exc:
-            t_status = {'state': 'failed', 'message': 'Não foi possível extrair o áudio; cortes temporais. '
-                        + exc.args[0]}
-        except BaseException:
-            scene_stop.set()
-            raise
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
-    ctx.progress(0.75)
+        ctx.stage('validando', 'Validando o arquivo de vídeo')
+        info = media.probe_media(source)
+        warnings = media.integrity_warnings(source, info)
+        ctx.progress(0.03)
 
-    if scene_thread.is_alive():
-        ctx.stage('cenas', 'Detectando mudanças de cena')
-        while scene_thread.is_alive():
-            scene_thread.join(1.0)
-            ctx.progress(0.75 + 0.13 * scene_state['fraction'])
-    scene_thread.join()
-    shutil.rmtree(folder / 'work_cenas', ignore_errors=True)
-    if scene_state['error'] is not None:
-        raise scene_state['error']
-    scenes = scene_state['scenes']
-    ctx.progress(0.88)
+        ctx.stage('musica', 'Verificando música (somente se autorizado)')
+        music_review = music.recognize_music(source, info['duration'], bool(opts['recognize_music']), info['audio'],
+                                             cancel_event=ctx.cancel_event, audio_index=info.get('audio_index'))
+        review = rights.rights_review(opts['source_rights'], opts['external_audio'], opts['license_notes'] or '',
+                                      info['audio'], opts.get('graphics_rights') or 'unknown',
+                                      opts.get('third_party_footage') or 'unknown', opts.get('monetization') or 'unknown',
+                                      music_review)
+        with storage.edit_project(pid) as p:
+            p.update({'media': info, 'rights': review, 'music_review': music_review, 'warnings': warnings})
+        ctx.progress(0.08)
+
+        # Cenas em paralelo com a transcrição: na GPU a detecção quase não usa CPU, e em vídeos longos ela
+        # levava quase tanto tempo quanto a transcrição. Pasta própria: a transcrição apaga a sua ao terminar.
+        scene_state: dict = {'fraction': 0.0, 'scenes': [], 'error': None}
+        scene_stop = _AnyEvent(ctx.cancel_event)   # para a detecção se a análise falhar antes dela terminar
+
+        def find_scenes() -> None:
+            try:
+                scene_state['scenes'] = media.detect_scenes(
+                    source, info, folder / 'work_cenas', cancel_event=scene_stop,
+                    on_progress=lambda f, _m='': scene_state.__setitem__('fraction', f))
+            except Cancelled as exc:  # relançado na thread do job
+                scene_state['error'] = exc
+            except Exception:
+                # As cenas só refinam as bordas dos cortes: uma falha aqui não pode descartar horas de
+                # transcrição. Segue sem elas.
+                log.warning('Detecção de cenas falhou; seguindo sem cenas.', exc_info=True)
+
+        scene_thread = threading.Thread(target=find_scenes, name=f'cenas-{pid[:8]}', daemon=True)
+        scene_thread.start()
+
+        transcript: list[dict] = []
+        if not info['audio']:
+            t_status = {'state': 'no_audio', 'message': 'Vídeo sem áudio: não há fala para analisar; cortes temporais.'}
+        elif not transcription.available():
+            t_status = {'state': 'not_installed', 'message': 'Transcrição não instalada (faster-whisper). Sem '
+                        'transcrição, os cortes são apenas temporais — não há análise do conteúdo falado.'}
+        else:
+            work = folder / 'work'
+            try:
+                storage.ensure_free_space(int(info['duration'] * 32_000) + 50 * 1024 ** 2, folder)
+                ctx.stage('extraindo_audio', 'Extraindo áudio para transcrição')
+                wav = media.extract_audio_wav(source, info, work / 'audio.wav', on_progress=ctx.span(0.08, 0.14),
+                                              cancel_event=ctx.cancel_event)
+                ctx.stage('transcrevendo', 'Transcrevendo a fala localmente')
+                transcript, t_status = transcription.transcribe(wav, info['duration'], on_progress=ctx.span(0.14, 0.74),
+                                                                cancel_event=ctx.cancel_event)
+            except media.FFmpegError as exc:
+                t_status = {'state': 'failed', 'message': 'Não foi possível extrair o áudio; cortes temporais. '
+                            + exc.args[0]}
+            except BaseException:
+                scene_stop.set()
+                raise
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        ctx.progress(0.75)
+
+        if scene_thread.is_alive():
+            ctx.stage('cenas', 'Detectando mudanças de cena')
+            while scene_thread.is_alive():
+                scene_thread.join(1.0)
+                ctx.progress(0.75 + 0.13 * scene_state['fraction'])
+        scene_thread.join()
+        shutil.rmtree(folder / 'work_cenas', ignore_errors=True)
+        if scene_state['error'] is not None:
+            raise scene_state['error']
+        scenes = scene_state['scenes']
+        ctx.progress(0.88)
 
     ctx.stage('selecionando', 'Selecionando os melhores trechos')
     fallback = None if t_status['state'] == 'ok' else t_status['message']
@@ -187,6 +201,9 @@ def end_analysis(ctx: JobContext, status: str, error: str | None) -> None:
     with contextlib.suppress(AppError):
         with storage.edit_project(ctx.project_id) as p:
             if p.get('analysis_job') not in (None, ctx.id):
+                return
+            if ctx.params.get('reselect') and p.get('clips'):
+                p['status'] = 'ready'  # refazer a seleção não terminou: os cortes anteriores continuam valendo
                 return
             p['status'] = {'cancelled': 'cancelled', 'interrupted': 'interrupted'}.get(status, 'error')
             p['error'] = error or {'cancelled': 'Análise cancelada pelo usuário.'}.get(status, 'A análise não terminou.')
@@ -258,7 +275,7 @@ def run_export(ctx: JobContext) -> dict:
     # Legenda: no "por trecho" com algum desfocado/quadro inteiro, fica abaixo da faixa do vídeo nesses
     # trechos; nos de seguir rosto (tela cheia) essa mesma altura continua sobre a imagem, sem borda.
     track = None
-    if prm['framing'] in ('track', 'streamer') or kinds & {'track', 'streamer'}:
+    if prm['framing'] in ('track', 'streamer', 'split') or kinds & {'track', 'streamer', 'split'}:
         # Antes da legenda: no "só o streamer" ela se posiciona pela altura da janela da webcam.
         ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
         track = _cached_track(folder, p, info, start, end, prm['format'], ctx)
@@ -266,8 +283,13 @@ def run_export(ctx: JobContext) -> dict:
             warnings.append(track['message'])
         elif 'streamer' in kinds | {prm['framing']} and not track.get('facecam'):
             warnings.append('Nenhuma janela de webcam encontrada no corte; "só o streamer" seguiu o rosto.')
+        elif 'split' in kinds | {prm['framing']} and not track.get('facecam'):
+            warnings.append('Nenhuma janela de webcam encontrada no corte; "webcam + jogo" seguiu o rosto.')
+        elif 'split' in kinds | {prm['framing']} and prm['format'] != '9:16':
+            warnings.append('"Webcam + jogo" é só para o formato vertical; neste formato o vídeo seguiu o rosto.')
     if segments:
-        band_framing = 'blur' if kinds & {'blur', 'fit'} else 'streamer' if 'streamer' in kinds else 'track'
+        band_framing = ('blur' if kinds & {'blur', 'fit'} else 'split' if 'split' in kinds
+                        else 'streamer' if 'streamer' in kinds else 'track')
     else:
         band_framing = prm['framing']
     band = media.content_band(prm['format'], band_framing, info, (width, height), (track or {}).get('facecam'))

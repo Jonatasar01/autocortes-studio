@@ -223,6 +223,11 @@ def reanalyze(project_id: str):
     return service.reanalyze(project_id)
 
 
+@app.post('/api/projects/{project_id}/reselect')
+def reselect(project_id: str):
+    return service.reselect(project_id)
+
+
 @app.get('/api/projects/{project_id}/source')
 def source_file(project_id: str):
     path, name = service.source_path(project_id)
@@ -286,7 +291,7 @@ class FramingSegment(BaseModel):
     model_config = ConfigDict(extra='forbid')
     start: float = Field(ge=0, allow_inf_nan=False)
     end: float = Field(gt=0, allow_inf_nan=False)
-    framing: Literal['fit', 'blur', 'track', 'streamer']
+    framing: Literal['fit', 'blur', 'track', 'streamer', 'split']
 
 
 class FramingSegments(BaseModel):
@@ -310,7 +315,7 @@ class ExportOptions(BaseModel):
     model_config = ConfigDict(extra='forbid')
     format: Optional[Literal['9:16', '16:9', '1:1', 'original']] = None
     portrait: bool = True  # compatibilidade: usado quando "format" não é enviado
-    framing: Literal['fit', 'blur', 'track', 'streamer', 'mix'] = 'fit'   # mix = por trecho
+    framing: Literal['fit', 'blur', 'track', 'streamer', 'split', 'mix'] = 'fit'   # mix = por trecho
     subtitles: bool = True
     subtitle_style: Literal['classica', 'dinamica'] = 'classica'
     refine_subtitles: bool = True   # legenda precisa: retranscreve o corte com o modelo maior (GPU)
@@ -338,7 +343,7 @@ class PlanToggles(BaseModel):
 
 class PlanRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    style: Literal['auto', 'impacto', 'equilibrado', 'cinematografico', 'podcast'] = 'auto'
+    style: Literal['auto', 'impacto', 'equilibrado', 'cinematografico', 'podcast', 'live_jogo'] = 'auto'
     intensity: float = Field(default=0.6, ge=0, le=1)
     variants: bool = False
     options: PlanToggles = Field(default_factory=PlanToggles)

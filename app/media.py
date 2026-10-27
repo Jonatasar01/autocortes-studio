@@ -32,9 +32,9 @@ log = logging.getLogger('autocortes.media')
 ALLOWED_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'}
 FORMATS = ('9:16', '16:9', '1:1', 'original')
 # track = seguir rosto (recorta as laterais); streamer = só a janela da webcam, com fundo desfocado;
-# mix = por trecho
-FRAMINGS = ('fit', 'blur', 'track', 'streamer', 'mix')
-SEGMENT_FRAMINGS = ('fit', 'blur', 'track', 'streamer')  # o que cada trecho do modo "por trecho" pode usar
+# split = tela dividida (webcam em cima, jogo embaixo); mix = por trecho
+FRAMINGS = ('fit', 'blur', 'track', 'streamer', 'split', 'mix')
+SEGMENT_FRAMINGS = ('fit', 'blur', 'track', 'streamer', 'split')  # o que cada trecho do modo "por trecho" pode usar
 FORMAT_SLUG = {'9:16': '9x16', '16:9': '16x9', '1:1': '1x1', 'original': 'orig'}
 
 ProgressFn = Callable[[float, str], None]
@@ -502,10 +502,12 @@ def content_band(fmt: str, framing: str, media: dict, size: tuple[int, int],
 
     ``None`` quando o vídeo ocupa a tela inteira (formato original, ou seguir rosto, que recorta).
     """
-    if fmt == 'original' or framing not in ('blur', 'fit', 'streamer'):
+    if fmt == 'original' or framing not in ('blur', 'fit', 'streamer', 'split'):
         return None
     W, H = size
     vw, vh = visible_size(media)
+    if framing == 'split':  # a legenda fica logo abaixo da webcam, no topo do jogo
+        return (0, split_top_height(W, H, media, facecam)) if facecam and H > W else None
     if framing == 'streamer':
         if not facecam:
             return None
@@ -679,12 +681,52 @@ def _facecam_crop(rect: list) -> str:
     return f'crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},'
 
 
+SPLIT_TOP_MIN, SPLIT_TOP_MAX = 0.28, 0.42   # altura da webcam na tela dividida (fração da altura)
+
+
+def split_top_height(W: int, H: int, media: dict, rect: list) -> int:
+    """Altura da faixa da webcam na tela dividida: a janela ocupa a largura toda na sua proporção, dentro
+    de 28–42% da tela (webcam muito larga ou muito alta é recortada para caber)."""
+    vw, vh = visible_size(media)
+    natural = W * (vh * rect[3]) / max(1.0, vw * rect[2])
+    return _even(min(H * SPLIT_TOP_MAX, max(H * SPLIT_TOP_MIN, natural)))
+
+
+def split_game_left(W: int, H: int, media: dict, rect: list, top: int) -> float:
+    """Borda esquerda (fração da largura) do recorte do jogo: o centro da tela, mas sem pegar a janela da
+    webcam, que já aparece em cima. Webcam no meio da tela não tem como evitar: fica o centro."""
+    vw, vh = visible_size(media)
+    cw = min(1.0, vh * W / (H - top) / max(1.0, vw))
+    left = (1 - cw) / 2
+    x0, x1 = rect[0], rect[0] + rect[2]
+    if x1 <= 0.5 and x1 > left:          # webcam à esquerda: o recorte começa depois dela
+        left = min(x1, 1 - cw)
+    elif x0 >= 0.5 and x0 < left + cw:   # webcam à direita: o recorte termina antes dela
+        left = max(0.0, x0 - cw)
+    return round(left, 4)
+
+
+def _split_branch(inp: str, W: int, H: int, rect: list, top: int, out: str, left: float = 0.5) -> str:
+    """Tela dividida: janela da webcam em cima (preenchendo a largura) e o jogo embaixo, a partir de
+    ``left`` (fração da largura; 0.5 = centralizado)."""
+    bottom = H - top
+    x = "'(iw-ow)/2'" if left == 0.5 else f"'iw*{left:.4f}'"
+    game = (f"crop=w='2*trunc(min(iw,ih*{W}/{bottom})/2)':h='2*trunc(min(ih,iw*{bottom}/{W})/2)'"
+            f":x={x}:y='(ih-oh)/2'")
+    return (f'{inp}split=2[sc][sg];'
+            f'[sc]{_facecam_crop(rect)}scale={W}:{top}:force_original_aspect_ratio=increase:flags=bicubic,'
+            f'crop={W}:{top},setsar=1[stop];'
+            f'[sg]{game},scale={W}:{bottom}:flags=bicubic,setsar=1[sbot];'
+            f'[stop][sbot]vstack=inputs=2{out}')
+
+
 def _streamer_graph(src: str, pre: str, subs: str, W: int, H: int, rect: list) -> str:
     """Só o streamer: recorta a janela da webcam e a encaixa na tela com ela mesma desfocada no fundo."""
     return _blur_branch(f'{src}{_facecam_crop(rect)}{pre}', W, H, f',setsar=1{subs}[vout]')
 
 
-def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[dict], track: dict | None) -> str:
+def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[dict], track: dict | None,
+                 split_top: int | None = None, split_left: float = 0.5) -> str:
     """Enquadramento por trecho: uma versão do vídeo por enquadramento, ligada no tempo de cada trecho.
 
     As versões são montadas sobre o vídeo antes de ``pre`` (fps, corte de pausas), então os tempos dos
@@ -696,7 +738,7 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
     facecam = (track or {}).get('facecam')
     for seg in segments:
         kind = seg['framing']
-        if kind == 'streamer' and not facecam:
+        if kind in ('streamer', 'split') and not (facecam and split_top):
             kind = 'track'      # sem janela de webcam: segue o rosto
         if kind == 'track' and not has_track:
             kind = 'blur'
@@ -711,6 +753,8 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
             return _blur_branch(f'{src}{pre}', W, H, f',setsar=1{subs}[vout]')
         if only == 'streamer':
             return _streamer_graph(src, pre, subs, W, H, facecam)
+        if only == 'split':
+            return _split_branch(f'{src}{pre}', W, H, facecam, split_top, f',setsar=1{subs}[vout]', split_left)
         return (f'{src}{pre}scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'
                 f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1{subs}[vout]')
     labels = ''.join(f'[mx{k}]' for k in range(len(kinds)))
@@ -720,6 +764,10 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
             parts.append(_blur_branch(f'[mx{k}]', W, H, f',setsar=1[mv{k}]'))
         elif kind == 'streamer':
             parts.append(_blur_branch(f'[mx{k}]{_facecam_crop(facecam)}', W, H, f',setsar=1[mv{k}]'))
+        elif kind == 'split':
+            parts.append(_split_branch(f'[mx{k}]', W, H, facecam, split_top, f',setsar=1[mv{k}]', split_left)
+                         .replace('[sc]', f'[sc{k}]').replace('[sg]', f'[sg{k}]')
+                         .replace('[stop]', f'[stop{k}]').replace('[sbot]', f'[sbot{k}]'))
         elif kind == 'fit':
             parts.append(f'[mx{k}]scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'
                          f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[mv{k}]')
@@ -754,15 +802,21 @@ def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str |
         fps = output_fps(media) or media.get('fps') or 30
         pre = f"fps={fps:g},select='{_select_expr(keep)}',setpts=N/FRAME_RATE/TB,"
     subs = post + (f',ass={subtitles_file}' if subtitles_file else '')
+    facecam = (track or {}).get('facecam')
+    # Tela dividida só faz sentido em tela vertical (em 16:9 a webcam e o jogo ficariam espremidos).
+    split_top = split_top_height(W, H, media, facecam) if facecam and H > W else None
+    split_left = split_game_left(W, H, media, facecam, split_top) if split_top else 0.5
     if fmt == 'original':
         graph = f'{src}{pre}scale={W}:{H}:flags=bicubic,setsar=1{subs}[vout]'
     elif framing == 'mix' and segments:
-        graph = _mixed_graph(src, pre, subs, W, H, [dict(s) for s in segments], track)
-    elif framing == 'streamer' and (track or {}).get('facecam'):
-        graph = _streamer_graph(src, pre, subs, W, H, track['facecam'])
-    elif framing in ('track', 'streamer') and track and track.get('ok'):  # sem webcam: segue o rosto
+        graph = _mixed_graph(src, pre, subs, W, H, [dict(s) for s in segments], track, split_top, split_left)
+    elif framing == 'split' and split_top:
+        graph = _split_branch(f'{src}{pre}', W, H, facecam, split_top, f',setsar=1{subs}[vout]', split_left)
+    elif framing == 'streamer' and facecam:
+        graph = _streamer_graph(src, pre, subs, W, H, facecam)
+    elif framing in ('track', 'streamer', 'split') and track and track.get('ok'):  # sem webcam: segue o rosto
         graph = _track_graph(src, pre, subs, W, H, track)
-    elif framing in ('blur', 'track', 'streamer', 'mix'):  # sem plano/trechos válidos: fundo desfocado
+    elif framing in ('blur', 'track', 'streamer', 'split', 'mix'):  # sem plano/trechos válidos: fundo desfocado
         graph = _blur_branch(f'{src}{pre}', W, H, f',setsar=1{subs}[vout]')
     else:  # fit: enquadramento original preservado com barras
         graph = (f'{src}{pre}scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'

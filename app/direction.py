@@ -32,6 +32,7 @@ STYLES = {
     'equilibrado': 'Equilibrado',
     'cinematografico': 'Cinematográfico',
     'podcast': 'Podcast premium',
+    'live_jogo': 'Live de jogo',
 }
 # Versões automáticas: diferenças reais de ritmo, zoom, pausas e cor.
 VARIANTS = ('impacto', 'equilibrado', 'cinematografico')
@@ -53,6 +54,10 @@ PRESETS: dict[str, dict] = {
     'podcast': {'zoom': 0.06, 'zoom_per_10s': 0.4, 'zoom_gap': 5.0, 'pause_over': 0.8, 'pause_keep': 0.25,
                 'subtitle_style': 'dinamica', 'highlights': 3, 'framing': 'track',
                 'color': None, 'video_fade': 0.0, 'push': 0.0},
+    # Webcam em cima e jogo embaixo. Sem zoom: aproximar a tela dividida cortaria a webcam ou o jogo.
+    'live_jogo': {'zoom': 0.0, 'zoom_per_10s': 0.0, 'zoom_gap': 99.0, 'pause_over': 0.6, 'pause_keep': 0.15,
+                  'subtitle_style': 'dinamica', 'highlights': 4, 'framing': 'split',
+                  'color': {'contrast': 1.04, 'saturation': 1.08}, 'video_fade': 0.0, 'push': 0.0},
 }
 DEFAULT_OPTIONS = {'zoom': True, 'dynamic_subtitles': True, 'audio': True, 'denoise': False,
                    'remove_pauses': True, 'reframe': True}
@@ -317,7 +322,7 @@ def build_plan(analysis: dict, style: str = 'auto', intensity: float = 0.6, opti
         act.update(id=i, enabled=True, label=ACTION_LABELS[act['type']])
 
     framing = preset['framing'] if opts['reframe'] else 'blur'
-    if framing == 'track' and not reframe.available():
+    if framing in ('track', 'split') and not reframe.available():
         framing = 'blur'
     settings = {
         'framing': framing,

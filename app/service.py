@@ -387,7 +387,7 @@ def clean_framing_segments(raw: list | None, clip_len: float) -> list[dict]:
             raise AppError('Trecho de enquadramento inválido.', 400, 'bad_input')
         framing = item.get('framing')
         if framing not in media.SEGMENT_FRAMINGS:
-            raise AppError('Enquadramento do trecho inválido (use blur, fit, track ou streamer).', 400, 'bad_framing')
+            raise AppError('Enquadramento do trecho inválido (use blur, fit, track, streamer ou split).', 400, 'bad_framing')
         try:
             a, b = float(item['start']), float(item['end'])
         except (KeyError, TypeError, ValueError):
@@ -708,7 +708,7 @@ def preview_path(project_id: str, clip_id: int) -> Path:
     p = storage.read_project(project_id)
     record = _find_clip(p, clip_id).get('preview') or {}
     name = record.get('file') or ''
-    if not re.fullmatch(r'clip_\d{2}_(9x16|16x9|1x1|orig)_v\d+\.mp4', name):
+    if not re.fullmatch(r'clip_\d{2,}_(9x16|16x9|1x1|orig)_v\d+\.mp4', name):
         raise AppError('Gere a prévia deste corte primeiro.', 404, 'no_preview')
     path = storage.project_dir(project_id) / 'preview' / name
     if not path.is_file():
@@ -810,7 +810,7 @@ def publication_text(project_id: str, clip_id: int, fmt: str) -> tuple[Path, str
     if not record or not record.get('package_file'):
         raise AppError('Pacote de publicação não encontrado. Exporte o corte primeiro.', 404, 'not_found')
     name = record['package_file']
-    if not re.fullmatch(r'clip_\d{2}_(9x16|16x9|1x1|orig)_v\d+\.txt', name):
+    if not re.fullmatch(r'clip_\d{2,}_(9x16|16x9|1x1|orig)_v\d+\.txt', name):
         raise AppError('Arquivo não encontrado.', 404, 'not_found')
     path = storage.project_dir(project_id) / 'clips' / name
     if not path.is_file():
@@ -825,6 +825,25 @@ def reanalyze(project_id: str) -> dict:
         p['status'] = 'queued'
         p['error'] = None
     job, _ = _jobs().submit(project_id, 'analysis', {}, dedupe_key=f'analysis:{project_id}')
+    with storage.edit_project(project_id) as p:
+        p['analysis_job'] = job['id']
+    return public_job(job)
+
+
+def reselect(project_id: str) -> dict:
+    """Refaz só a escolha dos cortes sobre a transcrição já salva, com as Configurações atuais de curadoria
+    (ex.: IA ativada depois da análise). Os cortes atuais são substituídos ao terminar."""
+    if _jobs().for_project(project_id, active_only=True):
+        raise AppError('Aguarde as tarefas em andamento deste projeto terminarem.', 409, 'busy')
+    with storage.edit_project(project_id) as p:
+        if p.get('status') != 'ready':
+            raise AppError('A seleção só pode ser refeita em projetos prontos.', 409, 'bad_state')
+        if (p.get('transcription') or {}).get('state') != 'ok' or not p.get('transcript'):
+            raise AppError('Este projeto não tem transcrição salva; use Reanalisar.', 409, 'no_transcript')
+        p['curation_profile'] = copy.deepcopy(settings.load()['curation'])
+        p['status'] = 'queued'
+        p['error'] = None
+    job, _ = _jobs().submit(project_id, 'analysis', {'reselect': True}, dedupe_key=f'analysis:{project_id}')
     with storage.edit_project(project_id) as p:
         p['analysis_job'] = job['id']
     return public_job(job)
@@ -860,7 +879,7 @@ def export_path(project_id: str, clip_id: int, fmt: str | None, kind: str = 'mp4
     if not record:
         raise AppError('Exporte o trecho neste formato antes de baixar.', 404, 'not_exported')
     name = record.get('file') if kind == 'mp4' else record.get('srt_file')
-    if not name or not re.fullmatch(r'clip_\d{2}_(9x16|16x9|1x1|orig)_v\d+\.(mp4|srt)', name):
+    if not name or not re.fullmatch(r'clip_\d{2,}_(9x16|16x9|1x1|orig)_v\d+\.(mp4|srt)', name):
         raise AppError('Arquivo não encontrado.', 404, 'not_found')
     path = storage.project_dir(project_id) / 'clips' / name
     if not path.is_file():

@@ -100,6 +100,43 @@ class FlowTests(ServiceBase):
         with self.assertRaises(AppError):
             service.project_jobs('0' * 32)
 
+    def test_reselect_reuses_the_saved_transcript(self):
+        res = self.create(self.video)
+        original = transcription.transcribe
+
+        def must_not_run(*a, **k):
+            raise AssertionError('refazer a seleção não pode transcrever de novo')
+        transcription.transcribe = must_not_run
+        try:
+            job = service.reselect(res['id'])
+            done = service.manager.wait(job['id'], 180)
+        finally:
+            transcription.transcribe = original
+        self.assertEqual(done['status'], 'done', done.get('error'))
+        p = storage.read_project(res['id'])
+        self.assertEqual(p['status'], 'ready')
+        self.assertTrue(p['clips'])
+        self.assertEqual(p['curation_profile']['provider'], 'heuristica')
+
+    def test_reselect_requires_a_ready_project_with_transcript(self):
+        res = self.create(self.video)
+        with storage.edit_project(res['id']) as p:
+            p['transcription'] = {'state': 'failed', 'message': 'x'}
+        with self.assertRaises(AppError) as ctx:
+            service.reselect(res['id'])
+        self.assertEqual(ctx.exception.code, 'no_transcript')
+
+    def test_download_clip_with_three_digit_number(self):
+        # Lives longas passam de 99 cortes: o arquivo do corte 164 é clip_164_9x16_v1.mp4.
+        res = self.create(self.video)
+        clips_dir = storage.project_dir(res['id']) / 'clips'
+        clips_dir.mkdir(exist_ok=True)
+        (clips_dir / 'clip_164_9x16_v1.mp4').write_bytes(b'x')
+        with storage.edit_project(res['id']) as p:
+            p['clips'][0]['exports'] = {'9:16': {'file': 'clip_164_9x16_v1.mp4', 'format': '9:16'}}
+        path, _ = service.export_path(res['id'], p['clips'][0]['id'], '9:16')
+        self.assertEqual(path.name, 'clip_164_9x16_v1.mp4')
+
     def test_reexport_replaces_previous_version(self):
         res = self.create(self.video)
         first = service.manager.wait(service.request_export(res['id'], 1, {'format': '16:9', 'subtitles': False})['id'], 180)

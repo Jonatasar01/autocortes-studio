@@ -390,6 +390,7 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .qmain progress { margin-top: 4px; height: 4px; }
 .qrow.error small { color: var(--danger); }
 .qactions { display: flex; gap: 2px; flex: none; }
+.qcancel { flex: none; height: 28px; padding: 0 8px; gap: 4px; font-size: 12px; border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); }
 #downloads .btn { margin-top: 10px; }
 #downloads .hint { margin-top: 8px; }
 
@@ -477,6 +478,10 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .dialogbody ul { margin: 8px 0 0; padding-left: 18px; list-style: disc; }
 .dialogbody li { margin: 3px 0; }
 .dialogbody b { color: var(--text); }
+.selectionbody { display: grid; gap: 8px; }
+.selectionbody p { margin: 0; }
+.selectionbody .hint.warn { color: var(--danger); }
+#openSelection { margin-top: 10px; }
 .dialog footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-soft); }
 .dialog.preview { width: min(860px, calc(100vw - 32px)); }
 .previewbody { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 18px; padding: 16px; min-height: 0; overflow: auto; }

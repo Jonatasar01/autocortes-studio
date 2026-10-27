@@ -533,6 +533,7 @@ async function openProject(id) {
     m.size_bytes ? fmtSize(m.size_bytes) : null, p.editing_mode === 'manual' ? 'Edição manual' : 'Seleção automática']
     .filter(Boolean).join(' · ');
   $('mediaCard').hidden = false;
+  $('openSelection').hidden = !(p.status === 'ready' && p.transcription?.state === 'ok');
   render();
   loadProjects();
   closeDrawers();
@@ -570,6 +571,7 @@ function closeProject() {
   hideExport();
   $('noVideo').hidden = false;
   $('mediaCard').hidden = true;
+  $('openSelection').hidden = true;
   $('projectName').textContent = $('crumb').textContent = 'Nenhum projeto aberto';
   $('projectMeta').textContent = 'Importe um vídeo ou abra um projeto recente';
   document.title = 'AutoCortes Studio — Editor';
@@ -667,7 +669,7 @@ function render() {
 // ------------------------------------------------------------------ enquadramento por trecho
 
 const FRAMING_LABELS = {track: 'Seguir rosto', blur: 'Fundo desfocado', fit: 'Quadro inteiro',
-  streamer: 'Só o streamer'};
+  streamer: 'Só o streamer', split: 'Webcam + jogo'};
 function mixSegments(c) {
   return c?.framing_segments?.length ? c.framing_segments.map((s) => ({...s}))
     : (c ? [{start: 0, end: c.end - c.start, framing: 'blur'}] : []);
@@ -750,6 +752,65 @@ async function loadAutomation() {
     $('automationDetails').textContent = 'Painel de automação indisponível no momento.';
   }
 }
+
+// ------------------------------------------------------------------ seleção de cortes e curadoria com IA
+
+async function openSelection() {
+  const dlg = $('selectionDialog');
+  try {
+    const [cfg, health] = await Promise.all([api('/api/settings'), api('/api/health')]);
+    const cur = cfg.curation, providers = health.curation || {};
+    $('curationProvider').innerHTML = Object.entries(providers).map(([id, info]) =>
+      '<option value="' + id + '"' + (id === cur.provider ? ' selected' : '') + '>' + escape(info.label) +
+      (id !== 'heuristica' && !info.configured ? ' — sem chave' : '') + '</option>').join('');
+    $('curationProvider').dataset.providers = JSON.stringify(providers);
+    $('curationConsent').checked = !!cur.consent;
+    $('curationPrompt').value = cur.prompt || '';
+    syncCuration();
+    const clips = state.project?.clips || [];
+    const exported = clips.filter((c) => Object.keys(c.exports || {}).length).length;
+    $('reselectNote').textContent = 'Refazer a seleção usa a transcrição já salva (não transcreve de novo) e substitui os ' +
+      clips.length + ' cortes atuais' + (exported ? ', incluindo ' + exported + ' já exportado(s) — baixe-os antes' : '') + '.';
+    dlg.showModal();
+  } catch (e) { toast(e.message, true); }
+}
+
+function syncCuration() {
+  const id = $('curationProvider').value;
+  const info = JSON.parse($('curationProvider').dataset.providers || '{}')[id] || {};
+  const cloud = id !== 'heuristica';
+  $('curationConsentRow').hidden = !cloud;
+  $('curationKeyNote').hidden = !cloud;
+  const env = id === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+  $('curationKeyNote').textContent = info.configured
+    ? 'Chave encontrada. Modelo: ' + (info.model || '—') + '.'
+    : 'Chave não encontrada: defina ' + env + ' no Windows e reinicie o AutoCortes.';
+  $('curationKeyNote').classList.toggle('warn', cloud && !info.configured);
+  $('reselect').disabled = cloud && !info.configured;  // sem chave a IA falharia e voltaria à heurística
+}
+$('curationProvider').addEventListener('change', syncCuration);
+
+async function saveCuration() {
+  const provider = $('curationProvider').value;
+  await api('/api/settings', 'PUT', {curation: {
+    provider, consent: provider !== 'heuristica' && $('curationConsent').checked, prompt: $('curationPrompt').value.trim(),
+  }});
+}
+$('curationSave').onclick = async () => {
+  try { await saveCuration(); toast('Configuração da seleção salva.'); $('selectionDialog').close(); } catch (e) { toast(e.message, true); }
+};
+$('reselect').onclick = async () => {
+  const p = state.project;
+  if (!p) return;
+  try {
+    await saveCuration();
+    await api('/api/projects/' + p.id + '/reselect', 'POST');
+    $('selectionDialog').close();
+    toast('Refazendo a seleção com a transcrição salva…');
+    await openProject(p.id);
+  } catch (e) { toast(e.message, true); }
+};
+$('openSelection').onclick = openSelection;
 
 function select(id, {seek = true} = {}) {
   state.selected = id;
@@ -1602,7 +1663,8 @@ function renderExports() {
     '</small>' + (progress === null ? '' : '<progress max="100" value="' + Math.round(progress * 100) + '"></progress>') +
     '</div>' + actions + '</li>';
   const cancel = (j) => j.status === 'cancelling' ? '' :
-    '<button type="button" class="linkbtn danger" data-cancel="' + j.id + '">Cancelar</button>';
+    '<button type="button" class="btn ghost danger qcancel" data-cancel="' + j.id + '" title="Cancelar esta exportação">' +
+    '<svg class="ic"><use href="#i-x"/></svg><span>Cancelar</span></button>';
   // A escolha de abrir/fechar um grupo vale até trocar de projeto; sem escolha, usa o padrão do grupo.
   const isOpen = (name, open) => name in state.queueClosed ? !state.queueClosed[name] : open;
   const group = (name, label, items, body, open = true) => items.length

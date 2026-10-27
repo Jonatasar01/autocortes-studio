@@ -134,6 +134,7 @@
             </div>
             <button id="deleteProject" type="button" class="iconbtn sm" title="Excluir este projeto" aria-label="Excluir este projeto"><svg class="ic"><use href="#i-trash"/></svg></button>
           </div>
+          <button id="openSelection" type="button" class="btn ghost block" hidden title="Escolher os cortes de novo com a transcrição já salva (com IA, se ativada)">Seleção de cortes e IA…</button>
 
           <form id="uploadForm" novalidate>
             <div class="segmented" role="radiogroup" aria-label="Origem do vídeo">
@@ -291,6 +292,7 @@
                       <option value="equilibrado">Equilibrado</option>
                       <option value="cinematografico">Cinematográfico</option>
                       <option value="podcast">Podcast premium</option>
+                      <option value="live_jogo">Live de jogo (webcam + jogo)</option>
                     </select>
                   </label>
                   <label class="field" for="editIntensity">Intensidade <output id="intensityOut">60%</output>
@@ -329,6 +331,7 @@
                 <option value="fit">Quadro inteiro</option>
                 <option value="track">Seguir rosto (se disponível)</option>
                 <option value="streamer">Só o streamer (webcam com fundo desfocado)</option>
+                <option value="split">Webcam + jogo (tela dividida)</option>
                 <option value="mix">Por trecho (variar no vídeo)</option>
               </select>
               <div id="mixPanel" class="mixpanel" hidden>
@@ -340,6 +343,7 @@
                     <option value="blur">Fundo desfocado</option>
                     <option value="fit">Quadro inteiro</option>
                     <option value="streamer">Só o streamer</option>
+                    <option value="split">Webcam + jogo</option>
                   </select>
                   <button id="mixSplit" class="btn" type="button">Mudar a partir daqui</button>
                 </div>
@@ -414,6 +418,25 @@
 <dialog id="rightsDialog" class="dialog" aria-labelledby="rightsTitle">
   <header><h2 id="rightsTitle">Revisão de direitos</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
   <div id="rightsDetails" class="dialogbody">Abra um projeto para ver a revisão de direitos.</div>
+</dialog>
+
+<dialog id="selectionDialog" class="dialog" aria-labelledby="selectionTitle">
+  <header><h2 id="selectionTitle">Seleção de cortes</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <div class="dialogbody selectionbody">
+    <p>Quem escolhe os cortes. A heurística local roda só neste computador; a curadoria com IA lê a transcrição e só mantém os trechos que ela avalia bem.</p>
+    <label class="field" for="curationProvider">Curadoria</label>
+    <select id="curationProvider"></select>
+    <p id="curationKeyNote" class="hint" hidden></p>
+    <label class="switch" id="curationConsentRow" hidden><input id="curationConsent" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Autorizo enviar o texto das transcrições</strong><small>Só o texto vai ao provedor, nunca o vídeo ou o áudio. Cada análise usa a API e tem custo.</small></span></label>
+    <label class="field" for="curationPrompt">Foco (opcional)</label>
+    <input id="curationPrompt" type="text" maxlength="300" placeholder="Ex.: momentos engraçados e histórias pessoais">
+    <p id="reselectNote" class="hint"></p>
+  </div>
+  <footer>
+    <button class="btn ghost" type="button" data-close>Fechar</button>
+    <button id="curationSave" class="btn" type="button">Salvar</button>
+    <button id="reselect" class="btn primary" type="button">Salvar e refazer seleção</button>
+  </footer>
 </dialog>
 
 <dialog id="automationDialog" class="dialog" aria-labelledby="automationTitle">
