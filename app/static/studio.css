@@ -373,6 +373,23 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .exportpanel[data-tone=ok] .jobstatus { color: var(--success); }
 .exportpanel[data-tone=error] .jobstatus { color: var(--danger); }
 .exportpanel[data-tone=muted] .jobstatus { color: var(--text-3); }
+.exportqueue { max-height: min(30vh, 210px); overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
+.exportqueue:empty { display: none; }
+.qgroup { margin-top: 10px; }
+.qgroup summary { cursor: pointer; font-size: 11.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--text-2); padding: 2px 0; }
+.qgroup summary b { display: inline-block; min-width: 18px; margin-left: 4px; padding: 0 5px; border-radius: 9px; background: var(--border-soft); color: var(--text); font-size: 11px; text-align: center; }
+.qgroup[data-group=running] summary b { background: color-mix(in srgb, var(--focus) 30%, transparent); }
+.qgroup[data-group=done] summary b { background: color-mix(in srgb, var(--success) 25%, transparent); }
+.qgroup[data-group=failed] summary b { background: color-mix(in srgb, var(--danger) 25%, transparent); }
+.qgroup ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.qrow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border-soft); }
+.qrow:first-child { border-top: 0; }
+.qmain { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.qmain strong { font-size: 12.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qmain small { font-size: 11.5px; color: var(--text-3); }
+.qmain progress { margin-top: 4px; height: 4px; }
+.qrow.error small { color: var(--danger); }
+.qactions { display: flex; gap: 2px; flex: none; }
 #downloads .btn { margin-top: 10px; }
 #downloads .hint { margin-top: 8px; }
 

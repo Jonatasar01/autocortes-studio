@@ -90,6 +90,16 @@ class FlowTests(ServiceBase):
         self.assertTrue(report['clips'][0]['exports']['9:16']['validado'])
         json.dumps(report)  # serializável
 
+    def test_project_jobs_lists_exports_for_the_queue_panel(self):
+        res = self.create(self.video)
+        job = service.request_export(res['id'], 1, {'format': '16:9', 'subtitles': False})
+        service.manager.wait(job['id'], 180)
+        jobs = service.project_jobs(res['id'])
+        self.assertEqual([j['kind'] for j in jobs], ['export'])  # a análise não entra no painel
+        self.assertEqual((jobs[0]['clip_id'], jobs[0]['format'], jobs[0]['preview']), (1, '16:9', False))
+        with self.assertRaises(AppError):
+            service.project_jobs('0' * 32)
+
     def test_reexport_replaces_previous_version(self):
         res = self.create(self.video)
         first = service.manager.wait(service.request_export(res['id'], 1, {'format': '16:9', 'subtitles': False})['id'], 180)

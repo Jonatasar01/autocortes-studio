@@ -7,6 +7,7 @@ const state = {
   project: null, selected: null, format: '9:16', markIn: 0, markOut: 0, scale: 7,
   previewEnd: null, drag: null, stripKey: null, stripToken: 0, rulerKey: null, openVersion: 0,
   exporting: false, exportJob: null, edited: {}, syncedClip: null, dirty: false, seeking: false,
+  queueTimer: null, queueClosed: {},
 };
 const CSRF = {'X-AutoCortes': '1'};
 const ACTIVE_JOB = ['queued', 'running', 'cancelling'];
@@ -218,7 +219,7 @@ function updateControls() {
   $('exportTop').disabled = state.exporting || !c || !ready;
   $('save').disabled = state.exporting || !c || !ready;
   $('saveTop').disabled = state.exporting || !c || !ready;
-  $('exportLabel').textContent = state.exporting === true ? 'Exportando…' : 'Exportar';
+  $('exportLabel').textContent = state.exporting === true ? 'Enviando…' : 'Exportar';
   $('previewTop').disabled = state.exporting || !c || !ready;
   $('previewLabel').textContent = state.exporting === 'preview' ? 'Gerando…' : 'Prévia';
   syncSubtitleStyle();
@@ -644,6 +645,7 @@ function render() {
   if (!p) return updateControls();
   const c = current();
   $('count').textContent = p.clips.length;
+  renderExports();
   $('cutCards').innerHTML = p.clips.map((x) =>
     '<button class="cutCard' + (x.id === state.selected ? ' selected' : '') + '" data-id="' + x.id + '"' +
     (x.id === state.selected ? ' aria-current="true"' : '') + '><strong>' + escape(x.title) + '</strong><small>' +
@@ -1425,6 +1427,10 @@ $('usePlan').addEventListener('change', syncSubtitleStyle);
 // ------------------------------------------------------------------ exportação
 
 function hideExport() {
+  clearTimeout(state.queueTimer);
+  state.queueTimer = null;
+  state.queueClosed = {};
+  $('exportQueue').replaceChildren();
   $('exportPanel').dataset.tone = '';
   $('downloads').replaceChildren();
   $('jobStatus').textContent = EXPORT_IDLE;
@@ -1477,7 +1483,7 @@ async function previewEdit() {
     setStatus('Gerando prévia…', 'busy');
     const j = await api('/api/projects/' + pid + '/clips/' + cid + '/preview', 'POST', exportOptions(format, false));
     state.exportJob = j.id;
-    await monitorJob(j.id, pid, cid, format, {preview: true});
+    await monitorPreview(j.id, pid, cid);
   } catch (e) {
     if (state.project?.id === pid) showExport(e.message, {tone: 'error'});
     setStatus('Prévia não concluída', 'error');
@@ -1545,24 +1551,146 @@ async function exportClip() {
       title: 'Alertas de direitos autorais', yes: 'Confirmo e quero exportar',
       text: 'Este material tem alertas de direitos autorais. Confirma que pode utilizá-lo?',
     })) return;
-    $('downloads').replaceChildren();
-    showExport('Enviando para a fila…', {progress: 0});
-    setStatus('Exportando…', 'busy');
+    // Só envia para a fila: o painel acompanha cada exportação, e outros cortes podem ser enfileirados já.
     const j = await api('/api/projects/' + pid + '/clips/' + cid + '/export', 'POST', exportOptions(format, rights));
-    state.exportJob = j.id;
-    await monitorJob(j.id, pid, cid, format);
+    toast(j.duplicate ? 'Este corte já está na fila de exportação.' : clipLabel(cid) + ' entrou na fila (' + format + ').');
+    setStatus('Exportação na fila', 'busy');
+    if (state.project?.id === pid) {
+      state.project.jobs = [j, ...(state.project.jobs || []).filter((x) => x.id !== j.id)];
+      renderExports();
+    }
   } catch (e) {
-    if (state.project?.id === pid) showExport(e.message, {tone: 'error'});
-    setStatus('Exportação não concluída', 'error');
+    setStatus('Exportação não enviada', 'error');
     toast(e.message, true);
   } finally {
     state.exporting = false;
-    state.exportJob = null;
     updateControls();
   }
 }
 
-async function monitorJob(id, pid, cid, format, {preview = false} = {}) {
+// ------------------------------------------------------------------ fila de exportações
+
+function clipLabel(id) {
+  const i = state.project?.clips.findIndex((c) => c.id === id) ?? -1;
+  return i < 0 ? 'Corte removido' : '#' + (i + 1) + ' ' + state.project.clips[i].title;
+}
+
+function jobLine(j) {
+  const kind = j.kind === 'narration' ? 'Narrado · ' : '';
+  return kind + (j.format || '') + ' · ' + (j.message || 'Processando') + ' · ' + Math.round((j.progress || 0) * 100) + '%';
+}
+
+// Três escopos: o que está renderizando agora, o que espera a vez e o que já pode ser baixado.
+function renderExports() {
+  const p = state.project;
+  const box = $('exportQueue');
+  if (!p) return box.replaceChildren();
+  const jobs = (p.jobs || []).filter((j) => !j.preview);
+  const running = jobs.filter((j) => j.status === 'running' || j.status === 'cancelling');
+  const queued = jobs.filter((j) => j.status === 'queued').sort((a, b) => a.created - b.created);
+  const done = p.clips.flatMap((c) => Object.keys(c.exports || {}).map((format) => ({c, format})));
+  // Falhas só enquanto não houver uma tentativa mais nova do mesmo corte e formato.
+  const latest = new Map();
+  for (const j of jobs) {
+    const key = j.kind + j.clip_id + j.format;
+    if (!latest.has(key) || latest.get(key).created < j.created) latest.set(key, j);
+  }
+  const failed = [...latest.values()].filter((j) => j.status === 'failed' || j.status === 'interrupted').slice(0, 5);
+
+  const row = (title, sub, {progress = null, actions = '', tone = ''} = {}) =>
+    '<li class="qrow ' + tone + '"><div class="qmain"><strong>' + escape(title) + '</strong><small>' + escape(sub) +
+    '</small>' + (progress === null ? '' : '<progress max="100" value="' + Math.round(progress * 100) + '"></progress>') +
+    '</div>' + actions + '</li>';
+  const cancel = (j) => j.status === 'cancelling' ? '' :
+    '<button type="button" class="linkbtn danger" data-cancel="' + j.id + '">Cancelar</button>';
+  // A escolha de abrir/fechar um grupo vale até trocar de projeto; sem escolha, usa o padrão do grupo.
+  const isOpen = (name, open) => name in state.queueClosed ? !state.queueClosed[name] : open;
+  const group = (name, label, items, body, open = true) => items.length
+    ? '<details class="qgroup" data-group="' + name + '"' + (isOpen(name, open) ? ' open' : '') +
+      '><summary>' + label + ' <b>' + items.length + '</b></summary><ul>' + body + '</ul></details>'
+    : '';
+
+  box.innerHTML =
+    group('running', 'Em andamento', running, running.map((j) =>
+      row(clipLabel(j.clip_id), jobLine(j), {progress: j.progress || 0, actions: cancel(j)})).join('')) +
+    group('queued', 'Na fila', queued, queued.map((j, i) =>
+      row(clipLabel(j.clip_id), (i + 1) + 'º na fila · ' + (j.kind === 'narration' ? 'Narrado · ' : '') + (j.format || ''),
+        {actions: cancel(j)})).join('')) +
+    group('done', 'Concluídas', done, done.map(({c, format}) =>
+      row(clipLabel(c.id), format + (c.exports[format]?.validation?.duration ? ' · ' + fmt(c.exports[format].validation.duration) : ''), {
+        tone: 'ok',
+        actions: '<span class="qactions"><button type="button" class="iconbtn" title="Assistir" aria-label="Assistir" ' +
+          'data-watch="' + c.id + '" data-format="' + escape(format) + '"><svg class="ic"><use href="#i-eye"/></svg></button>' +
+          '<a class="iconbtn" title="Baixar MP4" aria-label="Baixar MP4" href="' + downloadUrl(p.id, c.id, format) +
+          '"><svg class="ic"><use href="#i-download"/></svg></a></span>',
+      })).join(''), done.length <= 3) +
+    group('failed', 'Com erro', failed, failed.map((j) =>
+      row(clipLabel(j.clip_id), (j.format || '') + ' · ' + (j.error || 'A exportação não terminou.') + ' Exporte de novo.',
+        {tone: 'error'})).join(''));
+
+  if (state.exporting !== 'preview') {
+    const parts = [[running, 'em andamento'], [queued, 'na fila'], [done, done.length === 1 ? 'concluída' : 'concluídas']]
+      .filter(([items]) => items.length).map(([items, label]) => items.length + ' ' + label);
+    $('jobStatus').textContent = parts.length ? parts.join(' · ') : EXPORT_IDLE;
+  }
+  if ((running.length || queued.length) && !state.queueTimer) state.queueTimer = setTimeout(pollExports, 1500);
+}
+
+const downloadUrl = (pid, cid, format) =>
+  '/api/projects/' + pid + '/clips/' + cid + '/download?format=' + encodeURIComponent(format);
+
+// Enquanto houver algo na fila, consulta só a lista de tarefas (leve); o projeto inteiro é recarregado
+// apenas quando uma exportação termina, para os cortes mostrarem o arquivo novo.
+async function pollExports() {
+  state.queueTimer = null;
+  const p = state.project;
+  if (!p) return;
+  let jobs;
+  try { jobs = (await api('/api/projects/' + p.id + '/jobs')).jobs; } catch {
+    // Servidor ainda sem a rota leve (não reiniciado desde a atualização): usa o projeto inteiro.
+    try { jobs = (await api('/api/projects/' + p.id)).jobs.filter((j) => j.kind !== 'analysis'); } catch { jobs = null; }
+  }
+  if (state.project !== p) return;
+  if (!jobs) { state.queueTimer = setTimeout(pollExports, 5000); return; }
+  const wasActive = new Set((p.jobs || []).filter((j) => ACTIVE_JOB.includes(j.status)).map((j) => j.id));
+  const finished = jobs.filter((j) => wasActive.has(j.id) && j.status === 'done' && !j.preview);
+  p.jobs = [...jobs, ...(p.jobs || []).filter((j) => j.kind === 'analysis')];
+  if (finished.length) {
+    setStatus('Exportação concluída', 'ok');
+    toast(finished.length === 1 ? clipLabel(finished[0].clip_id) + ' exportado (' + finished[0].format + ').'
+      : finished.length + ' cortes exportados.');
+    await refresh();
+  } else {
+    renderExports();
+  }
+}
+
+$('exportQueue').addEventListener('click', async (e) => {
+  const cancelBtn = e.target.closest('[data-cancel]');
+  if (cancelBtn) {
+    cancelBtn.disabled = true;
+    try {
+      await api('/api/jobs/' + cancelBtn.dataset.cancel + '/cancel', 'POST');
+      toast('Exportação cancelada.');
+      pollExports();
+    } catch (err) { toast(err.message, true); cancelBtn.disabled = false; }
+    return;
+  }
+  const watch = e.target.closest('[data-watch]');
+  if (watch) {
+    const c = state.project.clips.find((x) => String(x.id) === watch.dataset.watch);
+    if (!c) return;
+    const format = watch.dataset.format;
+    openPreview(downloadUrl(state.project.id, c.id, format), c.exports?.[format], {preview: false});
+  }
+});
+$('exportQueue').addEventListener('toggle', (e) => {
+  const d = e.target.closest('details[data-group]');
+  if (d) state.queueClosed = {...state.queueClosed, [d.dataset.group]: !d.open};
+}, true);
+
+// Só a prévia é acompanhada aqui: abre o vídeo ao terminar. As exportações vão para a fila do painel.
+async function monitorPreview(id, pid, cid) {
   for (let i = 0; i < 2400; i++) {
     const j = await api('/api/jobs/' + id);
     const here = state.project?.id === pid;
@@ -1570,7 +1698,7 @@ async function monitorJob(id, pid, cid, format, {preview = false} = {}) {
       showExport((j.message || 'Processando') + ' · ' + Math.round((j.progress || 0) * 100) + '%',
         {progress: j.progress || 0, cancellable: j.status !== 'cancelling'});
     }
-    if (j.status === 'done' && preview) {
+    if (j.status === 'done') {
       setStatus('Prévia pronta', 'ok');
       if (!here) return toast('Prévia pronta em outro projeto.');
       await refresh();
@@ -1586,38 +1714,12 @@ async function monitorJob(id, pid, cid, format, {preview = false} = {}) {
       openPreview(src, j.result);
       return;
     }
-    if (j.status === 'done') {
-      setStatus('Exportação concluída', 'ok');
-      if (!here) return toast('Exportação concluída em outro projeto.');
-      await refresh();
-      showExport('Exportação concluída.', {tone: 'ok'});
-      const a = document.createElement('a');
-      a.className = 'btn primary block';
-      a.href = '/api/projects/' + pid + '/clips/' + cid + '/download?format=' + encodeURIComponent(format);
-      a.innerHTML = '<svg class="ic"><use href="#i-download"/></svg>';
-      a.append('Baixar MP4 (' + format + ')');
-      const watch = document.createElement('button');
-      watch.type = 'button';
-      watch.className = 'btn block';
-      watch.innerHTML = '<svg class="ic"><use href="#i-eye"/></svg>';
-      watch.append('Assistir');
-      watch.onclick = () => openPreview(a.href, j.result, {preview: false});
-      $('downloads').replaceChildren(a, watch);
-      for (const w of j.result?.warnings || []) {
-        const p = document.createElement('p');
-        p.className = 'hint';
-        p.textContent = w;
-        $('downloads').append(p);
-      }
-      toast('Seu vídeo está pronto.');
-      return;
-    }
     if (j.status === 'cancelled') {
-      if (here) showExport('Exportação cancelada. Nenhum arquivo parcial foi mantido.', {tone: 'muted'});
-      setStatus('Exportação cancelada', 'idle');
+      if (here) showExport('Prévia cancelada.', {tone: 'muted'});
+      setStatus('Prévia cancelada', 'idle');
       return;
     }
-    if (FAILED_JOB.includes(j.status)) throw Error(j.error || 'A exportação falhou.');
+    if (FAILED_JOB.includes(j.status)) throw Error(j.error || 'A prévia falhou.');
     await sleep(i < 20 ? 700 : 1500);
   }
   throw Error('O acompanhamento expirou; a tarefa continua no histórico do projeto.');

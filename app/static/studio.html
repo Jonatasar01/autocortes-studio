@@ -363,12 +363,13 @@
 
         <div id="exportPanel" class="exportpanel" tabindex="-1" aria-label="Exportação">
           <div class="exporthead">
-            <strong>Exportação</strong>
+            <strong>Exportações</strong>
             <button id="cancelExport" class="linkbtn danger" type="button" hidden>Cancelar</button>
           </div>
           <p id="jobStatus" class="jobstatus" role="status">Selecione um corte e clique em Exportar.</p>
-          <progress id="exportBar" value="0" max="100" hidden aria-label="Progresso da exportação"></progress>
+          <progress id="exportBar" value="0" max="100" hidden aria-label="Progresso da prévia"></progress>
           <div id="downloads"></div>
+          <div id="exportQueue" class="exportqueue" aria-live="polite"></div>
         </div>
       </aside>
     </main>

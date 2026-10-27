@@ -201,6 +201,11 @@ async def create_project(request: Request):
     return await run_in_threadpool(upload.finish)
 
 
+@app.get('/api/projects/{project_id}/jobs')
+def project_jobs(project_id: str):
+    return {'jobs': service.project_jobs(project_id)}
+
+
 @app.get('/api/projects/{project_id}')
 def get_project(project_id: str, transcript: bool = False):
     """``?transcript=1`` inclui a transcrição completa (fica de fora por padrão: pode ter vários MB)."""

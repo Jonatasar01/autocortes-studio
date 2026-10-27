@@ -275,8 +275,15 @@ def public_job(job: dict | None) -> dict | None:
     return {k: job.get(k) for k in ('id', 'kind', 'status', 'stage', 'progress', 'message', 'error',
                                     'created', 'started', 'finished')} | {
         'clip_id': job['params'].get('clip_id'), 'format': job['params'].get('format'),
-        'narration': job['params'].get('narration'),
+        'narration': job['params'].get('narration'), 'preview': bool(job['params'].get('preview')),
         'result': job.get('result')}
+
+
+def project_jobs(project_id: str) -> list[dict]:
+    """Exportações, prévias e narrações do projeto para o painel de exportações. Não lê o project.json:
+    o painel consulta isto a cada 1,5 s enquanto houver algo na fila."""
+    storage.project_dir(project_id)
+    return [public_job(j) for j in _jobs().for_project(project_id, limit=100) if j['kind'] != 'analysis']
 
 
 def get_project(project_id: str, *, include_transcript: bool = False) -> dict:
