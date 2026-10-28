@@ -1168,6 +1168,7 @@ async function openProject(id) {
   $('mediaCard').hidden = false;
   $('openSelection').hidden = !(p.status === 'ready' && p.transcription?.state === 'ok');
   $('reanalyze').hidden = !(p.status === 'ready' || STOPPED.includes(p.status));
+  loadCacheUsage();
   render();
   loadProjects();
   closeDrawers();
@@ -1211,6 +1212,7 @@ function closeProject() {
   $('cutTools').hidden = true;
   $('openSelection').hidden = true;
   $('reanalyze').hidden = true;
+  $('clearCache').hidden = true;
   $('projectName').textContent = $('crumb').textContent = 'Nenhum projeto aberto';
   $('projectMeta').textContent = 'Importe um vídeo ou abra um projeto recente';
   document.title = 'AutoCortes Studio — Editor';
@@ -1249,6 +1251,36 @@ async function reanalyzeProject(id, {ready}) {
 }
 $('reanalyze').onclick = () => {
   if (state.project) reanalyzeProject(state.project.id, {ready: state.project.status === 'ready'});
+};
+
+// Cache do projeto: só aparece com algo para liberar (1 MB ou mais).
+const cacheSize = (b) => (b < 1e6 ? Math.max(1, Math.round(b / 1e3)) + ' KB' : fmtSize(b));
+async function loadCacheUsage() {
+  const id = state.project?.id;
+  if (!id) return;
+  try {
+    const u = await api('/api/projects/' + id + '/cache');
+    if (state.project?.id !== id) return;
+    state.cacheUsage = u;
+    $('clearCacheText').textContent = 'Liberar cache (' + cacheSize(u.total_bytes) + ')';
+    $('clearCache').hidden = u.total_bytes < 1e6;
+  } catch { $('clearCache').hidden = true; }
+}
+$('clearCache').onclick = async () => {
+  const id = state.project?.id, u = state.cacheUsage;
+  if (!id || !u) return;
+  const parts = u.parts.filter((x) => x.bytes).map((x) => x.label.toLowerCase() + ' (' + cacheSize(x.bytes) + ')');
+  const ok = await askConfirm({title: 'Liberar cache', yes: 'Liberar ' + cacheSize(u.total_bytes),
+    text: 'Apaga ' + parts.join(', ') + '. Tudo é refeito quando necessário (a próxima prévia ou exportação ' +
+      'pode demorar um pouco mais). O vídeo, a transcrição, os cortes e as exportações não são apagados.'});
+  if (!ok) return;
+  try {
+    const r = await api('/api/projects/' + id + '/cache', 'DELETE');
+    toast('Cache liberado: ' + cacheSize(r.freed_bytes) + '.');
+    for (const c of state.project?.clips || []) delete c.preview;
+    state.cacheUsage = r;
+    $('clearCache').hidden = true;
+  } catch (err) { toast(err.message, true); }
 };
 
 async function deleteProject(id, name) {

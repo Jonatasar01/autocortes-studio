@@ -1052,6 +1052,57 @@ def delete_project(project_id: str) -> None:
     storage.delete_project_dir(project_id)
 
 
+# Caches que o app refaz sozinho quando faltam: miniaturas, onda do áudio, energia, faixas pretas, planos de
+# enquadramento e prévias. Vídeo, transcrição, cortes e exportações nunca entram aqui.
+CACHE_DIRS = {'cache': 'Miniaturas, onda e medidas do vídeo', 'direction': 'Planos de enquadramento',
+              'preview': 'Prévias da edição'}
+
+
+def _dir_size(folder: Path) -> tuple[int, int]:
+    size = count = 0
+    for path in folder.rglob('*') if folder.is_dir() else ():
+        with contextlib.suppress(OSError):
+            if path.is_file() and not path.is_symlink():
+                size += path.stat().st_size
+                count += 1
+    return size, count
+
+
+def cache_usage(project_id: str) -> dict:
+    folder = storage.project_dir(project_id)
+    parts = []
+    for name, label in CACHE_DIRS.items():
+        size, count = _dir_size(folder / name)
+        parts.append({'id': name, 'label': label, 'bytes': size, 'files': count})
+    return {'parts': parts, 'total_bytes': sum(x['bytes'] for x in parts)}
+
+
+def clear_cache(project_id: str) -> dict:
+    """Apaga os caches do projeto (refeitos quando necessário). Recusa com tarefa em andamento no projeto."""
+    folder = storage.project_dir(project_id)
+    if _jobs().for_project(project_id, active_only=True):
+        raise AppError('Espere as tarefas do projeto terminarem (ou cancele) antes de limpar o cache.', 409, 'busy')
+    freed = 0
+    for name in CACHE_DIRS:
+        target = folder / name
+        if target.is_symlink() or not target.is_dir():
+            continue
+        for path in target.iterdir():
+            size = _dir_size(path)[0] if path.is_dir() and not path.is_symlink() else 0
+            with contextlib.suppress(OSError):
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                    freed += size
+                else:
+                    size = path.stat().st_size
+                    path.unlink()
+                    freed += size
+    with storage.edit_project(project_id) as p:
+        for clip in p.get('clips') or []:   # as prévias apagadas não podem continuar apontadas nos cortes
+            clip.pop('preview', None)
+    return {'freed_bytes': freed, **cache_usage(project_id)}
+
+
 # --------------------------------------------------------------------------- arquivos
 
 def source_path(project_id: str) -> tuple[Path, str]:

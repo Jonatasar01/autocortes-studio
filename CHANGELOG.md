@@ -1,5 +1,11 @@
 ## Não lançado
 
+### Seguimento — limpeza de cache
+- Painel de mídia: "Liberar cache (tamanho)" quando o projeto tem 1 MB ou mais de cache. Apaga miniaturas, onda do
+  áudio, energia, faixas pretas, planos de enquadramento e prévias (`cache/`, `direction/`, `preview/`), que o app refaz
+  quando precisa; vídeo, transcrição, cortes e exportações ficam. Recusa com tarefa em andamento no projeto.
+- API: `GET /api/projects/{id}/cache` (tamanho por parte) e `DELETE /api/projects/{id}/cache`.
+
 ### Seguimento — avaliação independente
 - README descreve feedback em segundo vídeo de podcast/IRL, comparação v1 com/sem áudio, caminhos temporários e limitações do recall; não altera pesos.
 
