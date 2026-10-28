@@ -1,5 +1,14 @@
 ## Não lançado
 
+- Motor de cortes, fase 3 (camada de áudio, `app/audio_events.py`):
+  - Energia do áudio do vídeo inteiro (FFmpeg, 0,2 s, em cache por arquivo) e eventos com evidência: pico de volume,
+    possível risada/reação, silêncio, áudio estourado, fala acelerada.
+  - Reforço na seleção só para trechos com conteúdo que terminam com reação sonora; o fim do corte inclui a risada
+    logo depois da última frase. Alertas de áudio estourado e silêncio longo.
+  - Live de 8,5 h: Recall@18 0,28 → 0,33 e Recall@50 0,50 → 0,56 (ganho otimista: a regra foi escolhida nessa mesma
+    referência). `AUTOCORTES_AUDIO_LAYER=0` desliga.
+  - Verificação de troca de cena por busca binária na pontuação das janelas.
+
 - Motor de cortes, fase 2 (ver ANALISE_MOTOR_CORTES.md):
   - **Quantidade automática relativa ao vídeo:** até 4 cortes por hora (mínimo 3), configurável por
     `AUTOCORTES_AUTO_CLIPS_PER_HOUR`. Na live de 8,5 h: 34 cortes em vez de 170, com o mesmo Recall@18 (0,28) e

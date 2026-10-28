@@ -72,6 +72,7 @@ def main() -> None:
     ap.add_argument('fonte')
     ap.add_argument('referencia')
     ap.add_argument('--json')
+    ap.add_argument('--audio', help='pasta de cache para a energia do áudio; liga a camada de áudio')
     args = ap.parse_args()
     data = ROOT / 'data'
     proj = json.loads((data / args.fonte / 'project.json').read_text(encoding='utf-8'))
@@ -81,11 +82,19 @@ def main() -> None:
         segments = segments.get('segments') or []
     refs = json.loads((data / args.referencia / 'project.json').read_text(encoding='utf-8'))['clips']
     target = proj.get('target_seconds') or 35
+    audio = None
+    if args.audio:
+        from app import audio_events
+        source = data / args.fonte / proj['filename']
+        track = audio_events.energy_track(source, proj['media'], Path(args.audio))
+        audio = audio_events.analyze(track, segments)['index']
     t = time.perf_counter()
-    clips, info = selection.select_clips(segments, proj['media']['duration'], target, 0, proj.get('scenes') or [])
+    clips, info = selection.select_clips(segments, proj['media']['duration'], target, 0, proj.get('scenes') or [],
+                                         audio=audio)
     elapsed = time.perf_counter() - t
     from app import config
-    report = {'motor': f'select_clips automatico, motor {config.SELECTION_ENGINE}', 'referencias': len(refs),
+    report = {'motor': f'select_clips automatico, motor {config.SELECTION_ENGINE}' + (' + audio' if audio else ''),
+              'referencias': len(refs),
               'segundos_selecao': round(elapsed, 1), 'candidatos_avaliados': info.get('candidates_evaluated'),
               **evaluate(clips, refs)}
     print(json.dumps(report, ensure_ascii=False, indent=1))

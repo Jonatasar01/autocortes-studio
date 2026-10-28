@@ -14,7 +14,7 @@ import shutil
 import threading
 import time
 
-from . import (config, curation, direction, filters, media, music, narration, publish, reframe, rights, selection, settings,
+from . import (audio_events, config, curation, direction, filters, media, music, narration, publish, reframe, rights, selection, settings,
                storage, subtitles, transcription)
 from .errors import AppError, Cancelled
 from .jobs import JobContext
@@ -49,6 +49,37 @@ def _saved_analysis(pid: str) -> tuple[dict, list[dict], dict, list[float]]:
     return p['media'], p['transcript'], t_status, p.get('scenes') or []
 
 
+def _audio_layer(ctx: JobContext, folder: Path, info: dict, transcript: list[dict], *, original: Path,
+                 wav: Path | None = None):
+    """Camada de áudio da seleção (``app/audio_events.py``): ``AudioIndex`` ou ``None``.
+
+    Opcional e nunca fatal: sem áudio, desligada ou com falha, a seleção segue só com o texto.
+    """
+    if not config.AUDIO_LAYER or not transcript or info.get('audio_index') is None:
+        return None
+    ctx.stage('audio_eventos', 'Analisando o áudio (volume e reações)')
+    started = time.time()
+    try:
+        source = wav if wav is not None else original
+        source_info = {**info, 'audio_index': 0} if wav is not None else info
+        track = audio_events.energy_track(source, source_info, folder / 'cache', stamp_of=original,
+                                          cancel_event=ctx.cancel_event)
+        result = audio_events.analyze(track, transcript)
+    except Cancelled:
+        raise
+    except Exception as exc:  # a seleção por texto continua valendo
+        log.warning('Camada de áudio indisponível: %s', exc)
+        ctx.warn('Análise de áudio não concluída; a seleção usou só a transcrição.')
+        return None
+    counts: dict[str, int] = {}
+    for e in result['events']:
+        counts[e['tipo']] = counts.get(e['tipo'], 0) + 1
+    with storage.edit_project(ctx.project_id) as p:
+        p['audio_analysis'] = {'state': 'ok', 'version': audio_events.VERSION, 'events': counts,
+                               'seconds': round(time.time() - started, 1)}
+    return result['index']
+
+
 def run_analysis(ctx: JobContext) -> dict:
     pid = ctx.project_id
     folder = storage.project_dir(pid)
@@ -62,6 +93,7 @@ def run_analysis(ctx: JobContext) -> dict:
                                       'target_seconds', 'desired_count')}
 
     saved = _saved_analysis(pid) if ctx.params.get('reselect') else None
+    audio_index = None
     if saved:  # refazer só a seleção: mídia, transcrição e cenas da análise anterior
         info, transcript, t_status, scenes = saved
         ctx.progress(0.88)
@@ -118,6 +150,8 @@ def run_analysis(ctx: JobContext) -> dict:
                 ctx.stage('transcrevendo', 'Transcrevendo a fala localmente')
                 transcript, t_status = transcription.transcribe(wav, info['duration'], on_progress=ctx.span(0.14, 0.74),
                                                                 cancel_event=ctx.cancel_event)
+                # Energia do áudio a partir do WAV já extraído (sem decodificar o vídeo de novo).
+                audio_index = _audio_layer(ctx, folder, info, transcript, wav=wav, original=source)
             except media.FFmpegError as exc:
                 t_status = {'state': 'failed', 'message': 'Não foi possível extrair o áudio; cortes temporais. '
                             + exc.args[0]}
@@ -140,10 +174,12 @@ def run_analysis(ctx: JobContext) -> dict:
         scenes = scene_state['scenes']
         ctx.progress(0.88)
 
+    if audio_index is None and saved:
+        audio_index = _audio_layer(ctx, folder, info, transcript, original=source)
     ctx.stage('selecionando', 'Selecionando os melhores trechos')
     fallback = None if t_status['state'] == 'ok' else t_status['message']
     clips, sel = selection.select_clips(transcript, info['duration'], opts['target_seconds'], opts['desired_count'],
-                                        scenes, fallback_reason=fallback)
+                                        scenes, fallback_reason=fallback, audio=audio_index)
     ctx.progress(0.9)
 
     live_cfg = settings.load()['curation']
@@ -282,11 +318,15 @@ def run_export(ctx: JobContext) -> dict:
     if prm['framing'] in ('track', 'streamer', 'split') or kinds & {'track', 'streamer', 'split'}:
         # Antes da legenda: no "só o streamer" ela se posiciona pela altura da janela da webcam.
         ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
-        track = _cached_track(folder, p, info, start, end, prm['format'], ctx)
+        track = _cached_track(folder, p, info, start, end, prm['format'], ctx,
+                              main_set_only=prm['framing'] == 'streamer')
         if not track['ok']:
             warnings.append(track['message'])
         elif 'streamer' in kinds | {prm['framing']} and not track.get('facecam'):
-            warnings.append('Nenhuma janela de webcam encontrada no corte; "só o streamer" seguiu o rosto.')
+            warnings.append('Nenhuma janela de webcam encontrada no corte; "só o streamer" seguiu os rostos só na '
+                            'cena principal (bancada) e mostrou as outras cenas inteiras com fundo desfocado.'
+                            if track.get('main_set_only') else
+                            'Nenhuma janela de webcam encontrada no corte; "só o streamer" seguiu o rosto.')
         elif 'split' in kinds | {prm['framing']} and not track.get('facecam'):
             warnings.append('Nenhuma janela de webcam encontrada no corte; "webcam + jogo" seguiu o rosto.')
         elif 'split' in kinds | {prm['framing']} and prm['format'] != '9:16':
@@ -481,19 +521,23 @@ def _refine_transcript(ctx: JobContext, folder: Path, p: dict, info: dict, start
     return updated
 
 
-def _cached_track(folder: Path, p: dict, info: dict, start: float, end: float, fmt: str, ctx: JobContext) -> dict:
-    """Plano de enquadramento em cache por (trecho, formato, faixas pretas, versão do algoritmo).
+def _cached_track(folder: Path, p: dict, info: dict, start: float, end: float, fmt: str, ctx: JobContext, *,
+                  main_set_only: bool = False) -> dict:
+    """Plano de enquadramento em cache por (trecho, formato, faixas pretas, versão do algoritmo, modo).
+
+    ``main_set_only``: "só o streamer" numa transmissão sem janela de webcam segue rostos só na bancada.
 
     A análise de rostos é a etapa mais lenta: a prévia e a exportação do mesmo corte reaproveitam o resultado.
     """
     size = media.target_size(fmt, info)
     key = hashlib.sha256(json.dumps([reframe.PLAN_VERSION, p['filename'], round(start, 3), round(end, 3), size,
-                                     info.get('letterbox'), len(p.get('scenes') or [])]).encode()).hexdigest()[:24]
+                                     info.get('letterbox'), len(p.get('scenes') or []),
+                                     main_set_only]).encode()).hexdigest()[:24]
     cache = folder / 'direction' / f'track_{key}.json'
     with contextlib.suppress(OSError, ValueError):
         return json.loads(cache.read_text(encoding='utf-8'))
     track = reframe.plan(folder / p['filename'], info, start, end, size, scenes=p.get('scenes') or [],
-                         cancel_event=ctx.cancel_event)
+                         cancel_event=ctx.cancel_event, main_set_only=main_set_only)
     with contextlib.suppress(OSError):
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps(track), encoding='utf-8')

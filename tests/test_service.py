@@ -264,6 +264,13 @@ class FlowTests(ServiceBase):
         self.assertEqual(p['selection']['mode'], 'transcricao')
         self.assertTrue(p['clips'])
 
+    def test_analysis_runs_the_audio_layer_from_the_transcription_wav(self):
+        res = self.create(self.video)
+        p = storage.read_project(res['id'])
+        self.assertEqual(p['audio_analysis']['state'], 'ok')
+        self.assertIsInstance(p['audio_analysis']['events'], dict)
+        self.assertTrue(list((storage.project_dir(res['id']) / 'cache').glob('audio_energia_v*.json')))
+
     def test_ai_curation_is_merged_with_the_heuristic(self):
         # A curadoria trouxe um corte; os da heurística que não se sobrepõem a ele continuam na lista.
         from unittest import mock

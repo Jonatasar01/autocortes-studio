@@ -41,7 +41,7 @@ SMOOTHING = 0.18             # fração da distância percorrida a cada amostra
 SIMPLIFY_TOLERANCE = 0.004   # erro máximo (fração da largura) ao simplificar o caminho da câmera
 MAX_POINTS_PER_SHOT = 40
 MIN_SHOT_SECONDS = 0.6
-PLAN_VERSION = 5   # muda quando o algoritmo do plano muda (invalida os planos em cache)
+PLAN_VERSION = 6   # muda quando o algoritmo do plano muda (invalida os planos em cache)
 YUNET_MODEL = 'face_detection_yunet_2023mar.onnx'
 YUNET_SCORE = 0.7            # confiança mínima do YuNet
 MIN_TRACK_HITS = 3           # um rosto precisa aparecer em 3 amostras (0,6 s); falsos positivos piscam
@@ -52,6 +52,13 @@ SPEAKER_MIN_HOLD = 10        # e só depois de 10 amostras (2 s) no falante atua
 STATIC_FACE_MOTION = 0.05    # rosto que oscila menos que 5% da própria largura: imagem/ícone, não pessoa
 SPEAKER_MOTION_WEIGHT = 12.0 # peso do movimento do rosto na escolha de quem fala
 FACECAM_SAMPLES = 40         # quadros usados para achar a moldura da webcam
+# Cena principal (bancada dos streamers numa transmissão que alterna com campo, túnel, jogo...):
+SET_CLUSTERS = 4             # grupos de aparência (histograma de cor) procurados no corte
+SET_MERGE = 0.35             # grupos mais próximos que isto (Bhattacharyya) são a mesma cena (outro ângulo)
+SET_OTHER = 0.45             # uma cena "diferente" fica a pelo menos esta distância da principal…
+SET_OTHER_SHARE = 0.10       # …e ocupa ao menos 10% do corte; senão não há o que separar
+SET_MAIN_SHARE = 0.20        # a cena principal ocupa ao menos 20% do corte
+SET_MIN_RUN = 1.0            # trechos mais curtos que 1 s herdam a cena vizinha (transições, flashes)
 # Segurança do rosto: a caixa do rosto, com margem, precisa caber inteira no recorte.
 FACE_MARGIN_RATIO = 0.20     # margem lateral = 20% da largura do rosto (cabelo, movimento, erro do detector)
 FACE_MIN_MARGIN = 0.015      # e pelo menos 1,5% da largura do quadro
@@ -177,6 +184,56 @@ def sample(source: Path, start: float, end: float, *, cancel_event: threading.Ev
     finally:
         cap.release()
     return samples
+
+
+def main_set_mask(samples: list[dict]) -> list[bool] | None:
+    """Quais amostras são da cena principal: a bancada dos streamers numa transmissão que alterna com campo,
+    túnel ou jogo em tela cheia. ``None`` quando o corte não tem cenas bem diferentes entre si.
+
+    Agrupa as amostras pelo histograma de cor (as transições dessas transmissões são cortinas e fusões que a
+    detecção de corte não pega) e escolhe o grupo com mais tempo de tela × rosto maior: na bancada os rostos são
+    close (8–11% da largura, medido), no campo são pequenos (5–6%). Grupos de cor parecida são outro ângulo da
+    mesma cena.
+    """
+    import cv2
+    import numpy as np
+    n = len(samples)
+    if n < 5 * SET_CLUSTERS:
+        return None
+    h = np.array([s['hist'].flatten() for s in samples], dtype=np.float32)
+    h /= h.sum(axis=1, keepdims=True) + 1e-9
+    # k-means com início determinístico (ponto mais distante): mesmo corte, mesmo resultado.
+    centers = [h[0]]
+    for _ in range(SET_CLUSTERS - 1):
+        dist = np.min([((h - c) ** 2).sum(axis=1) for c in centers], axis=0)
+        centers.append(h[int(dist.argmax())])
+    centers = np.array(centers)
+    for _ in range(25):
+        labels = ((h[:, None, :] - centers[None]) ** 2).sum(axis=2).argmin(axis=1)
+        centers = np.array([h[labels == j].mean(axis=0) if (labels == j).any() else centers[j]
+                            for j in range(SET_CLUSTERS)])
+    bh = lambda a, b: cv2.compareHist(a.astype(np.float32), b.astype(np.float32), cv2.HISTCMP_BHATTACHARYYA)  # noqa: E731
+    biggest = np.array([max((f[2] for f in s['faces']), default=0.0) for s in samples])
+    score = [((labels == j).mean() * float(np.median(biggest[labels == j]))) if (labels == j).any() else -1
+             for j in range(SET_CLUSTERS)]
+    main = int(np.argmax(score))
+    same = [j for j in range(SET_CLUSTERS) if bh(centers[j], centers[main]) < SET_MERGE]
+    mask = np.isin(labels, same)
+    other = [j for j in range(SET_CLUSTERS) if bh(centers[j], centers[main]) >= SET_OTHER]
+    if mask.mean() < SET_MAIN_SHARE or np.isin(labels, other).mean() < SET_OTHER_SHARE:
+        return None
+    # Trechos curtos herdam a cena de antes (transições).
+    run = max(1, round(SET_MIN_RUN * SAMPLE_FPS))
+    out, k = mask.tolist(), 0
+    while k < n:
+        e = k
+        while e < n and out[e] == out[k]:
+            e += 1
+        if e - k < run and k > 0:
+            for i in range(k, e):
+                out[i] = out[k - 1]
+        k = e
+    return out
 
 
 def histogram_cuts(samples: list[dict]) -> list[float]:
@@ -534,8 +591,11 @@ def _split_unsafe(targets: list[tuple], a: float, b: float, crop_frac: float) ->
 
 def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[int, int], *,
          scenes: list[float] | None = None, cancel_event: threading.Event | None = None,
-         on_progress: Callable[[float, str], None] | None = None) -> dict:
+         on_progress: Callable[[float, str], None] | None = None, main_set_only: bool = False) -> dict:
     """Plano de enquadramento do corte. Tempos relativos ao início do corte.
+
+    ``main_set_only`` ("só o streamer" sem janela de webcam): segue rostos só nas amostras da cena principal
+    (``main_set_mask``, a bancada); o resto do corte usa quadro inteiro com fundo desfocado.
 
     Retorna ``{'ok': bool, 'message': str, 'shots': [{'start','end','layout','points'}], 'crop_frac'}``.
     ``ok`` é falso quando não dá para seguir rostos (sem OpenCV, sem rosto ou formato não aplicável).
@@ -562,6 +622,13 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
     w, h = (box['w'], box['h']) if box else (media['width'], media['height'])
     crop_frac = min(1.0, (h * out_size[0] / out_size[1]) / w)
     cuts = sorted({round(s - start, 3) for s in (scenes or []) if start < s < end} | set(histogram_cuts(samples)))
+    facecam = detect_facecam(samples, speaker_targets(samples))
+    main_mask = main_set_mask(samples) if main_set_only and not facecam else None
+    if main_mask:   # as trocas de cena principal ↔ outras viram limites de cena
+        flips = [round((a['t'] + b['t']) / 2, 3) for a, b, x, y in
+                 zip(samples, samples[1:], main_mask, main_mask[1:]) if x != y]
+        cuts = sorted(set(cuts) | set(flips))
+        in_main = {id(s): m for s, m in zip(samples, main_mask)}
     bounds = [0.0]
     for c in cuts:
         if c - bounds[-1] >= MIN_SHOT_SECONDS and duration - c >= MIN_SHOT_SECONDS:
@@ -580,8 +647,13 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
         else:
             shots.append({'start': a, 'end': b, 'layout': layout, 'points': points})
 
+    other_seconds = 0.0
     for a, b in zip(bounds, bounds[1:]):
         part = [s for s in samples if a <= s['t'] < b]
+        if main_mask and part and sum(in_main[id(s)] for s in part) < len(part) / 2:
+            other_seconds += b - a   # fora da bancada (campo, túnel, jogo): mostra a cena inteira
+            add(a, b, 'fit', [])
+            continue
         targets = _to_visible(speaker_targets(part), media, box)
         seen = sum(1 for tg in targets if tg[1] is not None)
         if not targets or seen / len(targets) < MIN_FACE_COVERAGE:
@@ -612,7 +684,10 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
                 'exportado com fundo desfocado.'}
     fit_seconds = sum(s['end'] - s['start'] for s in shots if s['layout'] == 'fit')
     message = 'Enquadramento seguindo o rosto de quem fala.'
-    if fit_seconds >= 0.5:
+    if main_mask:
+        message = (f'Rostos seguidos só na cena principal (bancada); {other_seconds:.0f} s de outras cenas '
+                   '(campo, jogo...) em quadro inteiro com fundo desfocado.')
+    elif fit_seconds >= 0.5:
         message += f' {fit_seconds:.0f} s sem rosto seguro para recortar usam fundo desfocado.'
     if unsafe_shots:
         message += f' {unsafe_shots} cena(s) com rosto que não cabe no recorte vertical ficaram em quadro inteiro.'
@@ -621,9 +696,10 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
                'face_visibility_min': round(ordered[0], 3) if ordered else None,
                'face_visibility_p05': round(ordered[int(len(ordered) * 0.05)], 3) if ordered else None,
                'unsafe_samples': sum(1 for v in ordered if v < 0.9),
-               'unsafe_shots': unsafe_shots, 'fit_seconds': round(fit_seconds, 2)}
+               'unsafe_shots': unsafe_shots, 'fit_seconds': round(fit_seconds, 2),
+               'other_scene_seconds': round(other_seconds, 2) if main_mask else None}
     return {'ok': True, 'shots': shots, 'crop_frac': round(crop_frac, 4), 'message': message, 'metrics': metrics,
-            'facecam': _visible_rect(detect_facecam(samples, speaker_targets(samples)), media, box)}
+            'facecam': _visible_rect(facecam, media, box), 'main_set_only': bool(main_mask)}
 
 
 def _visible_rect(rect, media: dict, box: dict | None):

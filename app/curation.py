@@ -235,7 +235,7 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
     target = max(10, min(90, int(target)))
     auto = int(desired) == selection.AUTO
     desired = AUTO_JUDGE_MAX // 3 if auto else max(1, min(15, int(desired)))
-    scenes = scenes or []
+    scenes = sorted(scenes or [])
     units = selection.build_units(segments or [])
     if not units:
         raise AppError('Sem frases transcritas para a curadoria.', 422, 'curation_no_text')
