@@ -563,7 +563,7 @@
     <label class="field" for="prefSubtitle">Estilo da legenda</label>
     <select id="prefSubtitle"><option value="dinamica">Dinâmica (palavra a palavra)</option><option value="classica">Clássica</option></select>
     <label class="switch"><input id="prefRefine" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda precisa</strong><small>Retranscreve o trecho de cada corte ao exportar (precisa de GPU).</small></span></label>
-    <label class="switch"><input id="prefGpuExport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Exportação rápida pela placa de vídeo</strong><small>Usa a NVIDIA (NVENC) quando houver: cerca de 2× mais rápido, mesma qualidade, arquivos ~25% maiores. Sem a placa, usa o processador.</small></span></label>
+    <label class="switch"><input id="prefGpuExport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Exportação rápida pela placa de vídeo</strong><small>Usa a NVIDIA (NVENC) quando disponível. Pode acelerar a exportação mantendo resolução e taxa de quadros; tempo, qualidade de compressão e tamanho variam com o vídeo e os efeitos. Se falhar, usa o processador.</small></span></label>
     <span class="eyebrow spaced">Escolha dos cortes</span>
     <button id="settingsSelection" type="button" class="btn ghost block">Curadoria com IA e foco…</button>
     <span class="eyebrow spaced">Pastas</span>

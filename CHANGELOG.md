@@ -1,5 +1,12 @@
 ## Não lançado
 
+### Seguimento — correções verificadas
+- Importação local valida vídeo real e destino canônico antes do fingerprint; bloqueia rede, dispositivos e streams.
+- Timeline calcula escala com o editor visível; perfis mostram opções efetivas do plano e deixam de indicar um perfil incompatível.
+- Inicializador testa a resposta da NVIDIA e reinstala dependências quando o hash está ausente ou mudou; só grava marcadores após sucesso.
+- Mensagem NVENC informa que desempenho, compressão e tamanho dependem do conteúdo, sem promessa universal de qualidade idêntica.
+
+
 - Fase 4 de melhorias:
   - **Perfis de exportação:** formato, enquadramento, legenda, filtro, volume e gancho de uma vez. Quatro prontos por
     tipo de conteúdo (Live de jogo, IRL / rua, Podcast / entrevista, YouTube horizontal) e até 20 salvos pelo

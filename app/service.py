@@ -277,6 +277,11 @@ def create_project(chunks: Iterable[bytes], filename: str, form: dict, declared_
 def _local_video(path_text: str) -> Path:
     """Caminho de vídeo digitado pelo usuário (app local): absoluto, existente e com extensão de vídeo."""
     text = str(path_text or '').strip().strip('"').strip("'")
+    # Refuse network/device namespaces and alternate data streams before any filesystem access.
+    normalized = text.replace('\\', '/')
+    if normalized.startswith('//') or ':' in normalized[2:]:
+        raise AppError('Use um arquivo de vídeo em um disco local, sem caminho de rede ou dispositivo.',
+                       400, 'bad_path')
     source = Path(text).expanduser()
     if not text or not source.is_absolute():
         raise AppError('Informe o caminho completo do vídeo (ex.: D:\\lives\\live.mp4).', 400, 'bad_path')
@@ -284,6 +289,14 @@ def _local_video(path_text: str) -> Path:
         raise AppError('Selecione um vídeo válido: MP4, MOV, MKV, WEBM, AVI ou M4V.', 400, 'bad_extension')
     if not source.is_file():
         raise AppError('Arquivo não encontrado nesse caminho.', 404, 'not_found')
+    try:
+        source = source.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise AppError('Não foi possível resolver o caminho do vídeo.', 400, 'bad_path') from None
+    if str(source).replace('\\', '/').startswith('//') or source.suffix.lower() not in media.ALLOWED_EXTENSIONS:
+        raise AppError('O destino precisa ser um vídeo em disco local.', 400, 'bad_path')
+    # Extension alone is insufficient: do not fingerprint arbitrary files disguised as videos.
+    media.probe_media(source)
     return source
 
 

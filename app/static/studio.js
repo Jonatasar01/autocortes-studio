@@ -1096,7 +1096,6 @@ async function openProject(id) {
     setDirty(false);
     hideExport();
     readLabel();
-    computeScale();
     video.src = '/api/projects/' + id + '/source';
     history.replaceState({}, '', '/?projeto=' + id);
     // Perfil do projeto: o tipo de conteúdo escolhido ao criar, ou o último perfil usado nele.
@@ -1108,6 +1107,7 @@ async function openProject(id) {
   }
   $('noVideo').hidden = true;
   setView('editor');
+  if (changed) computeScale();
   $('mediaEmpty').hidden = true;
   $('openRights').hidden = false;
   $('projectName').textContent = $('mediaName').textContent = $('crumb').textContent = p.name;
@@ -2081,6 +2081,7 @@ function applyProfile(key) {
   $('profileSel').value = key;
   if (state.project) store.set('profile.' + state.project.id, key);
   syncProfileButtons();
+  syncSubtitleStyle();
   return true;
 }
 // Mudou uma opção à mão: o perfil deixa de valer (a menos que tudo continue igual).
@@ -2352,7 +2353,16 @@ $('refineSubtitles').checked = store.get('refineSubtitles') !== 'off';
 $('refineSubtitles').addEventListener('change', () => store.set('refineSubtitles',
   $('refineSubtitles').checked ? 'on' : 'off'));
 function syncSubtitleStyle() {
-  const planned = Boolean(exportPlanName());
+  const plan = current()?.edit_plans?.[exportPlanName()];
+  const planned = Boolean(plan);
+  if (plan) {
+    $('subtitleStyle').value = plan.settings.subtitle_style;
+    $('framing').value = plan.settings.framing;
+    $('normalize').checked = plan.settings.normalize_audio;
+  }
+  $('framing').disabled = planned;
+  $('normalize').disabled = planned;
+  if (state.profiles) profileTouched();
   $('subtitleStyle').disabled = !$('subtitles').checked || planned;
   $('subtitleStyleNote').hidden = !planned || !$('subtitles').checked;
   $('refineSubtitles').disabled = !$('subtitles').checked;
