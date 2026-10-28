@@ -195,6 +195,14 @@
       <section class="player" aria-label="Pré-visualização">
         <div class="videobox" id="videoBox">
           <video id="video" playsinline preload="metadata"></video>
+          <div id="focusLayer" class="focuslayer" hidden>
+            <div id="focusArea" class="focusarea" hidden></div>
+            <div id="focusBar" class="focusbar" hidden>
+              <span id="focusHelp">Arraste sobre o vídeo para marcar a área do streamer.</span>
+              <button id="focusCancel" class="btn ghost" type="button">Cancelar</button>
+              <button id="focusOk" class="btn primary" type="button" disabled>Usar esta área</button>
+            </div>
+          </div>
           <div id="noVideo" class="novideo">
             <svg class="ic xl"><use href="#i-play"/></svg>
             <strong>Nenhum vídeo aberto</strong>
@@ -354,6 +362,13 @@
                 <option value="split">Webcam + jogo (tela dividida)</option>
                 <option value="mix">Por trecho (variar no vídeo)</option>
               </select>
+              <div id="focusBox" class="focusbox" hidden>
+                <p id="focusInfo" class="hint"></p>
+                <div class="planbtns">
+                  <button id="focusDraw" class="btn ghost" type="button"><svg class="ic"><use href="#i-pencil"/></svg><span>Desenhar área no vídeo</span></button>
+                  <button id="focusClear" class="btn ghost" type="button" hidden>Usar a automática</button>
+                </div>
+              </div>
               <div id="mixPanel" class="mixpanel" hidden>
                 <p class="hint">Cada trecho do corte usa um enquadramento. Pare o vídeo onde quer trocar e use “Mudar a partir daqui”.</p>
                 <ol id="mixSegments" class="mixsegments" aria-label="Trechos de enquadramento"></ol>

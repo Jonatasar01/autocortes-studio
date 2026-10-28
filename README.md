@@ -413,7 +413,15 @@ enquanto o jogo atrás muda. Lado sem borda (janela encostada na margem) vai at�
 rostos no meio da tela (jogadores, personagens) não contam. Em transmissões que alternam a bancada com campo ou
 jogo, a bancada é seguida e, nas outras cenas, a **janela com os streamers no canto** (picture-in-picture) é
 recortada e ampliada; cena sem essa janela aparece inteira com fundo desfocado. O plano de edição define o próprio
-enquadramento: para usar "Só o streamer", exporte sem plano. Também pode ser usado em trechos do **Por trecho**:
+enquadramento: para usar "Só o streamer", exporte sem plano.
+
+**Área desenhada à mão:** com "Só o streamer" (ou "Webcam + jogo", ou "Por trecho") escolhido, **Desenhar área no
+vídeo** abre uma camada sobre o player: arraste um retângulo em volta do streamer e use **Usar esta área** (Esc
+cancela). A área fica guardada no corte (contorno tracejado no player) e a exportação mostra só essa parte, com fundo
+desfocado, sem analisar rostos (mais rápido). **Usar a automática** apaga a área. API:
+`PUT /api/projects/{id}/clips/{n}/focus` com `{"rect": [x, y, largura, altura]}` em fração do quadro, ou `null`.
+
+Também pode ser usado em trechos do **Por trecho**:
 numa transmissão sem janela de webcam, esses trechos seguem rostos só na cena principal (bancada) e mostram as
 outras cenas inteiras com fundo desfocado, enquanto os trechos de "seguir rosto" continuam seguindo todos.
 

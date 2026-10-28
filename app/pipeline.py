@@ -316,11 +316,19 @@ def run_export(ctx: JobContext) -> dict:
     # Legenda: no "por trecho" com algum desfocado/quadro inteiro, fica abaixo da faixa do vídeo nesses
     # trechos; nos de seguir rosto (tela cheia) essa mesma altura continua sobre a imagem, sem borda.
     track = None
-    if prm['framing'] in ('track', 'streamer', 'split') or kinds & {'track', 'streamer', 'split'}:
+    used = kinds | {prm['framing']}
+    # Área do streamer desenhada à mão: vira a "janela da webcam" (só o streamer e webcam + jogo), sem detecção.
+    manual = reframe._visible_rect(prm['focus_rect'], info, info.get('letterbox')) if prm.get('focus_rect') else None
+    if manual and 'track' not in used:
+        track = {'ok': False, 'shots': [], 'facecam': manual, 'manual': True, 'message': ''}
+        warnings.append('"Só o streamer" usou a área desenhada à mão neste corte.')
+    elif prm['framing'] in ('track', 'streamer', 'split') or kinds & {'track', 'streamer', 'split'}:
         # Antes da legenda: no "só o streamer" ela se posiciona pela altura da janela da webcam.
         ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
         track = _cached_track(folder, p, info, start, end, prm['format'], ctx,
                               main_set_only=prm['framing'] == 'streamer')
+        if manual:   # "por trecho" com seguir rosto e área à mão: rostos para uns, a área para os outros
+            track = {**track, 'facecam': manual, 'manual': True, 'pip': None}
         if segments and 'streamer' in kinds and track['ok'] and not track.get('facecam'):
             # Por trecho com "só o streamer" sem janela de webcam: esses trechos seguem rostos só na cena
             # principal (bancada), como no modo "só o streamer"; os de "seguir rosto" continuam seguindo todos.

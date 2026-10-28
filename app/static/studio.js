@@ -1407,6 +1407,7 @@ function render() {
   renderRights(p);
   renderPlans();
   renderMix();
+  syncFocus();
   renderTimeline();
   updateControls();
 }
@@ -1507,6 +1508,103 @@ $('mixSplit').onclick = () => {
 };
 $('mixAuto').onclick = () => saveMix(null, {auto: true});
 $('mixClear').onclick = () => saveMix([]);
+
+// ------------------------------------------------------------------ área do streamer desenhada à mão
+
+// Retângulo em fração do quadro inteiro do vídeo. O player encaixa o vídeo na caixa (object-fit: contain),
+// então as contas usam a área onde a imagem aparece de fato.
+state.focusEdit = null;
+function videoArea() {
+  const box = $('videoBox').getBoundingClientRect();
+  const vw = video.videoWidth || 16, vh = video.videoHeight || 9;
+  const s = Math.min(box.width / vw, box.height / vh);
+  const w = vw * s, h = vh * s;
+  return {left: (box.width - w) / 2, top: (box.height - h) / 2, width: w, height: h, box};
+}
+function placeFocus(rect) {
+  const a = videoArea(), el = $('focusArea');
+  el.hidden = !rect;
+  if (!rect) return;
+  el.style.left = (a.left + rect[0] * a.width) + 'px';
+  el.style.top = (a.top + rect[1] * a.height) + 'px';
+  el.style.width = (rect[2] * a.width) + 'px';
+  el.style.height = (rect[3] * a.height) + 'px';
+}
+function syncFocus() {
+  const c = current();
+  const usable = Boolean(c) && ['streamer', 'split', 'mix'].includes($('framing').value);
+  $('focusBox').hidden = !usable;
+  if (state.focusEdit) return;   // desenhando: a camada fica como está
+  const rect = usable ? c.focus_rect : null;
+  $('focusClear').hidden = !rect;
+  $('focusInfo').textContent = rect
+    ? 'Área definida à mão (contorno tracejado no vídeo): o "Só o streamer" mostra só essa parte neste corte.'
+    : 'A área do streamer é achada sozinha (janela da webcam ou da bancada). Se errar, desenhe a área no vídeo.';
+  $('focusLayer').hidden = !rect;
+  $('focusLayer').classList.remove('editing');
+  $('focusBar').hidden = true;
+  placeFocus(rect);
+}
+$('framing').addEventListener('change', syncFocus);
+video.addEventListener('loadedmetadata', syncFocus);
+window.addEventListener('resize', () => (state.focusEdit ? placeFocus(state.focusEdit.rect) : syncFocus()));
+
+$('focusDraw').onclick = () => {
+  const c = current();
+  if (!c) return;
+  if (!video.paused) video.pause();
+  state.focusEdit = {rect: c.focus_rect || null, from: null};
+  $('focusLayer').hidden = false;
+  $('focusLayer').classList.add('editing');
+  $('focusBar').hidden = false;
+  $('focusOk').disabled = !state.focusEdit.rect;
+  placeFocus(state.focusEdit.rect);
+};
+function focusPoint(e) {
+  const a = videoArea();
+  return [Math.min(1, Math.max(0, (e.clientX - a.box.left - a.left) / a.width)),
+    Math.min(1, Math.max(0, (e.clientY - a.box.top - a.top) / a.height))];
+}
+$('focusLayer').addEventListener('pointerdown', (e) => {
+  if (!state.focusEdit || e.target.closest('#focusBar')) return;
+  e.preventDefault();
+  $('focusLayer').setPointerCapture(e.pointerId);
+  state.focusEdit.from = focusPoint(e);
+});
+$('focusLayer').addEventListener('pointermove', (e) => {
+  const f = state.focusEdit;
+  if (!f?.from) return;
+  const [x, y] = focusPoint(e);
+  f.rect = [Math.min(x, f.from[0]), Math.min(y, f.from[1]), Math.abs(x - f.from[0]), Math.abs(y - f.from[1])];
+  placeFocus(f.rect);
+});
+$('focusLayer').addEventListener('pointerup', () => {
+  const f = state.focusEdit;
+  if (!f?.from) return;
+  f.from = null;
+  const big = f.rect && f.rect[2] >= 0.05 && f.rect[3] >= 0.05;
+  $('focusOk').disabled = !big;
+  $('focusHelp').textContent = big ? 'Confira a área. Arraste de novo para refazer.' : 'Área pequena demais: arraste de novo.';
+});
+function endFocusEdit() {
+  state.focusEdit = null;
+  $('focusHelp').textContent = 'Arraste sobre o vídeo para marcar a área do streamer.';
+  syncFocus();
+}
+$('focusCancel').onclick = endFocusEdit;
+async function saveFocus(rect) {
+  const c = current();
+  if (!c || !state.project) return;
+  try {
+    const r = await api('/api/projects/' + state.project.id + '/clips/' + c.id + '/focus', 'PUT', {rect});
+    c.focus_rect = r.focus_rect || undefined;
+    toast(rect ? 'Área do streamer definida para este corte.' : 'Voltou para a área automática.');
+  } catch (err) { toast(err.message, true); }
+  endFocusEdit();
+}
+$('focusOk').onclick = () => state.focusEdit?.rect && saveFocus(state.focusEdit.rect.map((v) => Math.round(v * 10000) / 10000));
+$('focusClear').onclick = () => saveFocus(null);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.focusEdit) { e.preventDefault(); endFocusEdit(); } });
 
 function renderRights(p) {
   const r = p.rights;

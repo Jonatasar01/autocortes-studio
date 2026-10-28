@@ -801,9 +801,10 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
     facecam = (track or {}).get('facecam')
     for seg in segments:
         kind = seg['framing']
-        if kind == 'streamer' and not (facecam and split_top) and has_track and track.get('main_set'):
+        # "Só o streamer" precisa só da janela; "webcam + jogo" também da tela vertical (split_top).
+        if kind == 'streamer' and not facecam and has_track and track.get('main_set'):
             kind = 'main'       # sem janela de webcam: segue rostos só na cena principal (bancada)
-        elif kind in ('streamer', 'split') and not (facecam and split_top):
+        elif (kind == 'streamer' and not facecam) or (kind == 'split' and not (facecam and split_top)):
             kind = 'track'      # sem janela de webcam: segue o rosto
         if kind == 'track' and not has_track:
             kind = 'blur'

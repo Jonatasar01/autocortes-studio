@@ -426,6 +426,17 @@ def update_plan(project_id: str, clip_id: int, name: str, changes: PlanUpdate):
     return service.update_edit_plan(project_id, clip_id, name, changes.model_dump())
 
 
+class FocusRect(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    rect: Optional[list[float]] = Field(default=None, min_length=4, max_length=4)
+
+
+@app.put('/api/projects/{project_id}/clips/{clip_id}/focus')
+def clip_focus(project_id: str, clip_id: int, body: FocusRect):
+    """Área do "Só o streamer" desenhada à mão (fração do quadro); ``null`` volta para a automática."""
+    return service.set_focus_rect(project_id, clip_id, body.rect)
+
+
 class SubtitleLine(BaseModel):
     model_config = ConfigDict(extra='forbid')
     start: float

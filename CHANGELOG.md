@@ -1,5 +1,12 @@
 ## Não lançado
 
+### "Só o streamer": área desenhada à mão
+- **Desenhar área no vídeo** (aba Efeitos, com "Só o streamer", "Webcam + jogo" ou "Por trecho"): arraste um
+  retângulo sobre o player; a área fica no corte e a exportação recorta só ela, com fundo desfocado, sem detecção
+  automática nem análise de rostos. Nos trechos "seguir rosto" do "Por trecho" os rostos continuam sendo seguidos.
+  "Usar a automática" volta para a detecção. `PUT /api/projects/{id}/clips/{n}/focus`.
+- "Só o streamer" num trecho do "Por trecho" em formato horizontal passa a usar a janela (antes seguia o rosto).
+
 ### Por trecho: tempos editáveis
 - Cada trecho tem início e fim em campos de texto (`52.5`, `0:52.5`); mudar um limite move o do vizinho junto,
   com mínimo de 0,5 s por trecho. Focar o campo leva o vídeo até o ponto; Enter confirma, Esc desfaz.
