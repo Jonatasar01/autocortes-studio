@@ -764,8 +764,10 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
             if _plans_stale(clip):
                 raise AppError('Os tempos do corte mudaram depois que o plano foi gerado. Gere o plano de novo.',
                                409, 'plan_stale')
-            # O plano decide enquadramento, estilo de legenda, tratamento de áudio e pausas.
-            options = {**options, 'framing': plan['settings']['framing'],
+            # O plano decide enquadramento, estilo de legenda, tratamento de áudio e pausas. O enquadramento
+            # escolhido no editor (``keep_framing``) vale sobre o do plano.
+            options = {**options, 'framing': options['framing'] if options.get('keep_framing') and
+                       options.get('framing') in media.FRAMINGS else plan['settings']['framing'],
                        'subtitle_style': plan['settings']['subtitle_style'],
                        'normalize_audio': plan['settings']['normalize_audio'], 'shorten_pauses': False}
             framing = options['framing']
@@ -1133,6 +1135,39 @@ def export_path(project_id: str, clip_id: int, fmt: str | None, kind: str = 'mp4
         raise AppError('Arquivo não encontrado. Exporte novamente.', 404, 'not_found')
     slug = media.FORMAT_SLUG.get(record.get('format'), 'corte')
     return path, safe_download_name(record.get('title') or clip['title'], f'_{slug}.{kind}')
+
+
+def delete_export(project_id: str, clip_id: int, fmt: str) -> dict:
+    """Exclui uma exportação concluída do corte (MP4, legenda e pacote em ``clips/``). As cópias já feitas na pasta
+    de saída não são apagadas: são arquivos do usuário fora do projeto."""
+    folder = storage.project_dir(project_id)
+    busy = [j for j in _jobs().for_project(project_id, active_only=True)
+            if j.get('kind') == 'export' and (j.get('params') or {}).get('clip_id') == clip_id
+            and (j.get('params') or {}).get('format') == fmt]
+    if busy:
+        raise AppError('Este corte está sendo exportado neste formato; espere terminar ou cancele.', 409, 'busy')
+    with storage.edit_project(project_id) as p:
+        clip = _find_clip(p, clip_id)
+        record = (clip.get('exports') or {}).pop(fmt, None)
+        if record is None:
+            raise AppError('Exportação não encontrada.', 404, 'not_exported')
+        if (clip.get('export_metadata') or {}).get('file') == record.get('file'):
+            latest = max((clip.get('exports') or {}).values(), key=lambda r: r.get('created_at') or 0, default=None)
+            clip['export_file'] = latest.get('file') if latest else None
+            clip['export_metadata'] = latest
+            if latest is None:
+                clip.pop('export_file', None)
+                clip.pop('export_metadata', None)
+    freed = 0
+    for name in filter(None, (record.get('file'), record.get('srt_file'), record.get('package_file'))):
+        path = folder / 'clips' / name
+        if path.parent == folder / 'clips' and path.is_file():   # só nomes simples dentro de clips/
+            with contextlib.suppress(OSError):
+                size = path.stat().st_size
+                path.unlink()
+                freed += size
+    return {'clip_id': clip_id, 'format': fmt, 'freed_bytes': freed,
+            'output_kept': bool((record.get('output') or {}).get('files'))}
 
 
 def report(project_id: str) -> dict:

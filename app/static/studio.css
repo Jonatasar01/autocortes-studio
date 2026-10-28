@@ -390,6 +390,8 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .qmain progress { margin-top: 4px; height: 4px; }
 .qrow.error small { color: var(--danger); }
 .qactions { display: flex; gap: 2px; flex: none; }
+.qactions .iconbtn.danger:not(:hover) { background: transparent; border-color: transparent; }
+.qrow.qbulk { justify-content: flex-end; }
 .qcancel { flex: none; height: 28px; padding: 0 8px; gap: 4px; font-size: 12px; border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); }
 #downloads .btn { margin-top: 10px; }
 #downloads .hint { margin-top: 8px; }

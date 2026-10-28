@@ -384,6 +384,7 @@ class ExportOptions(BaseModel):
     shorten_pauses: bool = False
     filter: Optional[str] = Field(default=None, max_length=20)   # filtro de cor (app/filters.py)
     edit_plan: Optional[str] = Field(default=None, pattern=r'^[a-z_]{1,40}$')
+    keep_framing: bool = False   # com plano de edição: usa o enquadramento enviado em vez do sugerido pelo plano
 
 
 class PlanToggles(BaseModel):
@@ -423,6 +424,12 @@ def get_plans(project_id: str, clip_id: int):
 @app.patch('/api/projects/{project_id}/clips/{clip_id}/plans/{name}')
 def update_plan(project_id: str, clip_id: int, name: str, changes: PlanUpdate):
     return service.update_edit_plan(project_id, clip_id, name, changes.model_dump())
+
+
+@app.delete('/api/projects/{project_id}/clips/{clip_id}/exports')
+def delete_export(project_id: str, clip_id: int, format: Literal['9:16', '16:9', '1:1', 'original']):
+    """Exclui uma exportação concluída do corte (a cópia na pasta de saída fica)."""
+    return service.delete_export(project_id, clip_id, format)
 
 
 @app.post('/api/projects/{project_id}/clips/{clip_id}/export')

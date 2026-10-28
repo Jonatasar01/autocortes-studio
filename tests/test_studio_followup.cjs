@@ -1,14 +1,17 @@
 // Node-only regressions: exercise the actual Studio functions with minimal DOM controls.
 const assert=require('node:assert/strict'), fs=require('node:fs'), vm=require('node:vm');
 const source=fs.readFileSync('app/static/studio.js','utf8');
-const controls={};const $=id=>controls[id]??=( {value:'',checked:false,disabled:false,hidden:false} );
-const context=vm.createContext({$,state:{profiles:{}},current:()=>({edit_plans:{p:{settings:{subtitle_style:'classica',framing:'blur',normalize_audio:false}}}}),
- exportPlanName:()=> 'p',profileTouched:()=>{$('profileSel').value=''},Boolean});
+const controls={};const $=id=>controls[id]??=( {value:'',checked:false,disabled:false,hidden:false,dispatchEvent(){}} );
+const context=vm.createContext({$,state:{profiles:{},project:{id:'x'}},current:()=>({id:1,edit_plans:{p:{settings:{subtitle_style:'classica',framing:'blur',normalize_audio:false}}}}),
+ exportPlanName:()=> 'p',profileTouched:()=>{$('profileSel').value=''},Boolean,Event:class{}});
 vm.runInContext(source.slice(source.indexOf('function syncSubtitleStyle()'),source.indexOf("$('subtitles').addEventListener('change', syncSubtitleStyle)")),context);
 $('subtitles').checked=true;$('subtitleStyle').value='dinamica';$('profileSel').value='b:podcast';
 context.syncSubtitleStyle();
 assert.equal($('subtitleStyle').value,'classica');assert.equal($('framing').value,'blur');assert.equal($('normalize').checked,false);
 assert.equal($('subtitleStyle').disabled,true);assert.equal($('profileSel').value,'');
+// O enquadramento do plano é só a sugestão inicial: continua editável e a escolha do usuário não é desfeita.
+assert.equal($('framing').disabled,false);$('framing').value='streamer';context.syncSubtitleStyle();
+assert.equal($('framing').value,'streamer');
 context.exportPlanName=()=>null;context.syncSubtitleStyle();assert.equal($('subtitleStyle').disabled,false);assert.equal($('framing').disabled,false);
 console.log('Studio profile regressions passed');
 

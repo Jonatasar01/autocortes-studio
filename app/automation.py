@@ -96,6 +96,7 @@ def retry(job_id):
         options = {k: params[k] for k in RETRY_OPTIONS if k in params}
         if params.get('edit_plan_name'):
             options['edit_plan'] = params['edit_plan_name']
+            options['keep_framing'] = True   # o enquadramento usado na tentativa anterior
         return service.request_export(pid, params['clip_id'], options)
     raise AppError('Abra o projeto e execute novamente com as opções atuais para preservar suas edições.', 409, 'retry_from_project')
 

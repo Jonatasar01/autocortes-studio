@@ -2357,6 +2357,7 @@ function exportOptions(format, rights) {
     subtitle_style: $('subtitleStyle').value, refine_subtitles: $('refineSubtitles').checked,
     normalize_audio: $('normalize').checked, hook: $('hook').checked, acknowledge_rights: rights,
     edit_plan: exportPlanName(), filter: state.filter === 'nenhum' ? null : state.filter,
+    keep_framing: true,   // o enquadramento escolhido vale mesmo com plano de edição
   };
 }
 
@@ -2437,10 +2438,18 @@ function syncSubtitleStyle() {
   const planned = Boolean(plan);
   if (plan) {
     $('subtitleStyle').value = plan.settings.subtitle_style;
-    $('framing').value = plan.settings.framing;
     $('normalize').checked = plan.settings.normalize_audio;
+    // O plano sugere o enquadramento só quando é escolhido; depois ele continua editável e a escolha vale.
+    const key = state.project?.id + ':' + current()?.id + ':' + exportPlanName();
+    if (state.planFramingKey !== key) {
+      state.planFramingKey = key;
+      $('framing').value = plan.settings.framing;
+      $('framing').dispatchEvent(new Event('change'));
+    }
+  } else {
+    state.planFramingKey = null;
   }
-  $('framing').disabled = planned;
+  $('framing').disabled = false;
   $('normalize').disabled = planned;
   if (state.profiles) profileTouched();
   $('subtitleStyle').disabled = !$('subtitles').checked || planned;
@@ -2603,8 +2612,11 @@ function renderExports() {
         actions: '<span class="qactions"><button type="button" class="iconbtn" title="Assistir" aria-label="Assistir" ' +
           'data-watch="' + c.id + '" data-format="' + escape(format) + '"><svg class="ic"><use href="#i-eye"/></svg></button>' +
           '<a class="iconbtn" title="Baixar MP4" aria-label="Baixar MP4" href="' + downloadUrl(p.id, c.id, format) +
-          '"><svg class="ic"><use href="#i-download"/></svg></a></span>',
-      })).join(''), done.length <= 3) +
+          '"><svg class="ic"><use href="#i-download"/></svg></a>' +
+          '<button type="button" class="iconbtn danger" title="Excluir esta exportação" aria-label="Excluir esta exportação" ' +
+          'data-delexport="' + c.id + '" data-format="' + escape(format) + '"><svg class="ic"><use href="#i-trash"/></svg></button></span>',
+      })).join('') + (done.length > 1 ? '<li class="qrow qbulk"><button type="button" class="btn ghost danger" ' +
+        'data-delallexports>Excluir todas as exportações</button></li>' : ''), done.length <= 3) +
     group('failed', 'Com erro', failed, failed.map((j) =>
       row(clipLabel(j.clip_id), (j.format || '') + ' · ' + (j.error || 'A exportação não terminou.'), {
         tone: 'error',
@@ -2674,8 +2686,44 @@ $('exportQueue').addEventListener('click', async (e) => {
     if (!c) return;
     const format = watch.dataset.format;
     openPreview(downloadUrl(state.project.id, c.id, format), c.exports?.[format], {preview: false});
+    return;
   }
+  const del = e.target.closest('[data-delexport], [data-delallexports]');
+  if (del) deleteExports(del.dataset.delallexports !== undefined ? null
+    : [{clip: Number(del.dataset.delexport), format: del.dataset.format}]);
 });
+
+// Excluir exportações concluídas (uma ou todas do projeto). As cópias na pasta de saída ficam.
+async function deleteExports(items) {
+  const p = state.project;
+  if (!p) return;
+  const all = p.clips.flatMap((c) => Object.keys(c.exports || {}).map((format) => ({clip: c.id, format})));
+  items = items || all;
+  if (!items.length) return;
+  const one = items.length === 1;
+  const ok = await askConfirm({
+    title: one ? 'Excluir exportação' : 'Excluir exportações', danger: true,
+    yes: one ? 'Excluir' : 'Excluir ' + items.length,
+    text: (one ? 'O arquivo de ' + clipLabel(items[0].clip) + ' (' + items[0].format + ') será apagado do projeto. '
+      : 'Os ' + items.length + ' arquivos exportados deste projeto serão apagados. ') +
+      'Os cortes continuam e podem ser exportados de novo. As cópias já salvas na pasta de saída não são apagadas.',
+  });
+  if (!ok) return;
+  let freed = 0, failed = 0;
+  for (const it of items) {
+    try {
+      freed += (await api('/api/projects/' + p.id + '/clips/' + it.clip + '/exports?format=' +
+        encodeURIComponent(it.format), 'DELETE')).freed_bytes;
+      const c = p.clips.find((x) => x.id === it.clip);
+      if (c?.exports) delete c.exports[it.format];
+    } catch (err) { failed++; if (one) toast(err.message, true); }
+  }
+  renderExports();
+  render();
+  if (!one || !failed) toast((items.length - failed) + (items.length - failed === 1 ? ' exportação excluída' : ' exportações excluídas') +
+    (freed ? ' · ' + cacheSize(freed) + ' liberados' : '') + (failed ? ' · ' + failed + ' não puderam ser excluídas' : '') + '.', failed > 0);
+  loadCacheUsage();
+}
 $('exportQueue').addEventListener('toggle', (e) => {
   const d = e.target.closest('details[data-group]');
   if (d) state.queueClosed = {...state.queueClosed, [d.dataset.group]: !d.open};
