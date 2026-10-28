@@ -140,12 +140,50 @@ function analysisLabel(job, events = []) {
   return {text, progress: job.progress || 0, pct, steps};
 }
 
-async function api(url, method = 'GET', body) {
+// Credentials stay in memory; closing/reloading the page clears them.
+let sessionAuthorization = '';
+let authenticationRequest = null;
+function authHeaders() { return sessionAuthorization ? {Authorization: sessionAuthorization} : {}; }
+function requestAuthentication() {
+  if (authenticationRequest) return authenticationRequest;
+  authenticationRequest = new Promise((resolve) => {
+    const dialog = $('authDialog'), input = $('authPassword');
+    input.value = '';
+    dialog.returnValue = '';
+    dialog.addEventListener('close', () => {
+      const password = input.value;
+      input.value = '';
+      const accepted = dialog.returnValue === 'login' && Boolean(password);
+      if (accepted) {
+        const bytes = new TextEncoder().encode('autocortes:' + password);
+        sessionAuthorization = 'Basic ' + btoa(Array.from(bytes, b => String.fromCharCode(b)).join(''));
+      }
+      authenticationRequest = null;
+      resolve(accepted);
+    }, {once: true});
+    dialog.showModal();
+    input.focus();
+  });
+  return authenticationRequest;
+}
+function responseError(status, data = {}) {
+  const code = status === 413 ? 'upload_too_large' : data.code;
+  const message = status === 413
+    ? 'O servidor ou túnel recusou o tamanho do vídeo. Use um arquivo menor ou abra o AutoCortes no computador onde o vídeo está salvo e escolha “Do computador”.'
+    : status === 401 && code === 'auth_required'
+      ? 'Acesso não autorizado. Informe a senha configurada no servidor e tente novamente.'
+      : typeof data.detail === 'string' ? data.detail : 'Erro ao executar a operação.';
+  const error = Error(withHint(message, code));
+  error.code = code;
+  return error;
+}
+
+async function api(url, method = 'GET', body, authRetried = false) {
   let r;
   try {
     r = await fetch(url, {
       method,
-      headers: {...(method === 'GET' ? {} : CSRF), ...(body ? {'Content-Type': 'application/json'} : {})},
+      headers: {...authHeaders(), ...(method === 'GET' ? {} : CSRF), ...(body ? {'Content-Type': 'application/json'} : {})},
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -153,9 +191,11 @@ async function api(url, method = 'GET', body) {
   }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const err = Error(withHint(typeof data.detail === 'string' ? data.detail : 'Erro ao executar a operação.', data.code));
-    err.code = data.code;
-    throw err;
+    if (r.status === 401 && data.code === 'auth_required') {
+      sessionAuthorization = '';
+      if (!authRetried && await requestAuthentication()) return api(url, method, body, true);
+    }
+    throw responseError(r.status, data);
   }
   return data;
 }
@@ -978,11 +1018,12 @@ function params() {
   };
 }
 
-function uploadFile(f, p) {
+function uploadFile(f, p, authRetried = false) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/projects?' + new URLSearchParams(p));
     xhr.setRequestHeader('X-AutoCortes', '1');
+    if (sessionAuthorization) xhr.setRequestHeader('Authorization', sessionAuthorization);
     xhr.setRequestHeader('X-Filename', encodeURIComponent(f.name));
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     $('uploadProgress').hidden = false;
@@ -991,10 +1032,17 @@ function uploadFile(f, p) {
       $('uploadBar').value = Math.round(100 * e.loaded / e.total);
       $('uploadPercent').textContent = $('uploadBar').value + '%';
     };
-    xhr.onload = () => {
+    xhr.onload = async () => {
       let d = {};
       try { d = JSON.parse(xhr.responseText); } catch { /* resposta vazia */ }
-      if (xhr.status < 200 || xhr.status >= 300) reject(Error(d.detail || 'Erro no envio do vídeo.'));
+      if (xhr.status === 401 && d.code === 'auth_required') {
+        sessionAuthorization = '';
+        if (!authRetried && await requestAuthentication()) {
+          uploadFile(f, p, true).then(resolve, reject);
+          return;
+        }
+      }
+      if (xhr.status < 200 || xhr.status >= 300) reject(responseError(xhr.status, d));
       else resolve(d);
     };
     xhr.onerror = () => reject(Error('Falha de rede durante o envio.'));

@@ -658,6 +658,18 @@
   </form>
 </dialog>
 
+<dialog id="authDialog" class="dialog narrow" aria-labelledby="authTitle">
+  <form method="dialog">
+    <header><h2 id="authTitle">Senha do AutoCortes</h2></header>
+    <div class="dialogbody">
+      <p>Informe a senha configurada no computador que executa o projeto.</p>
+      <label class="field" for="authPassword">Senha</label>
+      <input id="authPassword" type="password" autocomplete="current-password" required>
+    </div>
+    <footer><button class="btn ghost" value="cancel" formnovalidate>Cancelar</button><button class="btn primary" value="login">Entrar</button></footer>
+  </form>
+</dialog>
+
 <div id="toast" class="toast" hidden>
   <svg class="ic toasticon" aria-hidden="true"><use href="#i-check"/></svg>
   <span id="toastText"></span>

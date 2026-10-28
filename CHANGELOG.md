@@ -1,5 +1,10 @@
 ## Não lançado
 
+### Seguimento — mensagens de acesso
+- Studio solicita senha em 401 `auth_required`, mantém credencial somente na memória e limita a uma nova tentativa; cancelar não repete a operação.
+- API e upload mostram orientação para respostas 413, inclusive HTML de proxies/túneis. Não habilita acesso de rede nem implementa os PRs de LAN/Cloudflare.
+
+
 ### Seguimento — correções verificadas
 - Importação local valida vídeo real e destino canônico antes do fingerprint; bloqueia rede, dispositivos e streams.
 - Timeline calcula escala com o editor visível; perfis mostram opções efetivas do plano e deixam de indicar um perfil incompatível.
