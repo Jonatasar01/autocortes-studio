@@ -57,6 +57,8 @@ def defaults() -> dict:
         },
         'watch': {'enabled': False, 'autopilot': True},
         'output': {'enabled': True},
+        # Exportação: auto = placa de vídeo NVIDIA (NVENC) quando houver, senão processador; x264 = sempre processador.
+        'export': {'encoder': 'auto'},
     }
 
 
@@ -158,6 +160,7 @@ def validate(s: dict) -> dict:
     s['watch']['enabled'] = _bool(s['watch']['enabled'])
     s['watch']['autopilot'] = _bool(s['watch']['autopilot'])
     s['output']['enabled'] = _bool(s['output']['enabled'])
+    s['export']['encoder'] = _choice(s['export']['encoder'], ('auto', 'x264'), 'Codificador da exportação')
     return s
 
 

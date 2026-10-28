@@ -91,7 +91,18 @@ def retry(job_id):
         return import_url(params['url'], params['form'])
     if job['kind'] == 'analysis':
         return service.reanalyze(pid)
+    if job['kind'] == 'export' and not params.get('narration') and not params.get('preview'):
+        # Mesmas opções, mas com os tempos e o título atuais do corte (as edições feitas depois valem).
+        options = {k: params[k] for k in RETRY_OPTIONS if k in params}
+        if params.get('edit_plan_name'):
+            options['edit_plan'] = params['edit_plan_name']
+        return service.request_export(pid, params['clip_id'], options)
     raise AppError('Abra o projeto e execute novamente com as opções atuais para preservar suas edições.', 409, 'retry_from_project')
+
+
+# Opções de uma exportação que voltam na nova tentativa (tempos, título e trechos vêm do corte atual).
+RETRY_OPTIONS = ('format', 'framing', 'subtitles', 'subtitle_style', 'refine_subtitles', 'hook', 'normalize_audio',
+                 'original_volume', 'subtitle_source', 'shorten_pauses', 'filter')
 
 
 def bundle(project_id):

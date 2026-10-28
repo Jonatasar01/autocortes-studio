@@ -302,7 +302,8 @@ def run_export(ctx: JobContext) -> dict:
     if prm['format'] != 'original':
         # Antes da legenda: sem as faixas pretas o vídeo muda de altura na tela, e a legenda se posiciona por ela.
         ctx.stage('enquadramento', 'Procurando faixas pretas no vídeo')
-        box = media.detect_letterbox(folder / p['filename'], info, start, end, cancel_event=ctx.cancel_event)
+        box = media.detect_letterbox(folder / p['filename'], info, start, end, cancel_event=ctx.cancel_event,
+                                     cache_dir=folder / 'cache')
         if box:
             info = {**info, 'letterbox': box}
             warnings.append(f"Faixas pretas do vídeo original removidas (área útil {box['w']}×{box['h']}).")

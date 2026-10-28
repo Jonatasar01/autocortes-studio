@@ -183,6 +183,7 @@
           <div id="cutTools" class="cuttools" hidden>
             <label class="check"><input type="checkbox" id="pickAll"><span>Todos</span></label>
             <select id="cutSort" aria-label="Ordem dos cortes"><option value="score">Melhores primeiro</option><option value="time">Ordem do vídeo</option></select>
+            <label class="check hidebad"><input type="checkbox" id="hideRejected"><span>Esconder rejeitados</span></label>
             <button id="exportPicked" type="button" class="btn primary block" disabled><svg class="ic"><use href="#i-upload"/></svg><span id="exportPickedLabel">Exportar selecionados</span></button>
           </div>
           <div id="cutCards" class="cutCards"></div>
@@ -252,6 +253,16 @@
                 <label class="field" for="clipDuration">Duração<input id="clipDuration" readonly tabindex="-1"></label>
               </div>
               <div id="clipInfo" class="clipinfo"></div>
+              <div class="feedbackrow" role="group" aria-label="Este corte é bom?">
+                <span>Este corte é bom?</span>
+                <button type="button" class="btn ghost" id="fbGood" aria-pressed="false" title="Marcar como bom (ajuda a medir a seleção automática)">👍 Bom</button>
+                <button type="button" class="btn ghost" id="fbBad" aria-pressed="false" title="Marcar como rejeitado">👎 Rejeitar</button>
+              </div>
+              <details class="more" id="whyBox" hidden>
+                <summary>Por que este corte foi sugerido</summary>
+                <ul id="whyEvidence" class="whylist"></ul>
+                <ul id="whyWarnings" class="whylist warn"></ul>
+              </details>
               <span class="eyebrow spaced" id="formatsLabel">Formato de saída</span>
               <div class="formats" id="formats" role="group" aria-labelledby="formatsLabel">
                 <button type="button" class="active" aria-pressed="true" data-format="9:16">9:16</button>
@@ -427,9 +438,10 @@
   <header><h2 id="newTitle">Novo projeto</h2><ol class="steps" aria-label="Etapas"><li id="stepDot1" class="on">1. Vídeo</li><li id="stepDot2">2. Modo</li></ol><button type="button" class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
   <div class="dialogbody wizardbody">
   <section id="step1">
-            <div class="segmented" id="sourceSwitch" role="radiogroup" aria-label="Origem do vídeo" hidden>
-              <label><input type="radio" name="sourceMode" value="file" checked><span>Arquivo</span></label>
-              <label><input type="radio" name="sourceMode" value="link"><span>Link</span></label>
+            <div class="segmented three" id="sourceSwitch" role="radiogroup" aria-label="Origem do vídeo">
+              <label><input type="radio" name="sourceMode" value="file" checked><span>Enviar arquivo</span></label>
+              <label title="Para lives grandes: usa o arquivo direto do disco, sem enviar pelo navegador"><input type="radio" name="sourceMode" value="path"><span>Do computador</span></label>
+              <label id="linkOption"><input type="radio" name="sourceMode" value="link"><span>Link</span></label>
             </div>
             <div id="fileWrap">
               <label class="drop" for="file" id="dropZone">
@@ -440,6 +452,12 @@
               <input id="file" type="file" accept="video/*,.mkv,.mov,.avi,.m4v" class="visually-hidden">
               <button id="pickFile" type="button" class="btn block">Selecionar vídeo</button>
               <div id="filename" class="filehint" aria-live="polite">Nenhum arquivo selecionado</div>
+            </div>
+            <div id="pathWrap" hidden>
+              <label class="field" for="videoPath">Caminho do vídeo no computador</label>
+              <input id="videoPath" type="text" spellcheck="false" autocomplete="off" placeholder="D:\lives\minha-live.mp4">
+              <p class="hint">No Explorador, clique no vídeo com o botão direito → <b>Copiar como caminho</b> e cole aqui. No mesmo disco da pasta do AutoCortes, o vídeo entra na hora e sem ocupar espaço extra.</p>
+              <div id="pathInfo" class="fileinfo" hidden aria-live="polite"></div>
             </div>
             <div id="urlWrap" hidden>
               <label class="field" for="videoUrl">Link público autorizado</label>
@@ -532,6 +550,7 @@
     <label class="field" for="prefSubtitle">Estilo da legenda</label>
     <select id="prefSubtitle"><option value="dinamica">Dinâmica (palavra a palavra)</option><option value="classica">Clássica</option></select>
     <label class="switch"><input id="prefRefine" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda precisa</strong><small>Retranscreve o trecho de cada corte ao exportar (precisa de GPU).</small></span></label>
+    <label class="switch"><input id="prefGpuExport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Exportação rápida pela placa de vídeo</strong><small>Usa a NVIDIA (NVENC) quando houver: cerca de 2× mais rápido, mesma qualidade, arquivos ~25% maiores. Sem a placa, usa o processador.</small></span></label>
     <span class="eyebrow spaced">Escolha dos cortes</span>
     <button id="settingsSelection" type="button" class="btn ghost block">Curadoria com IA e foco…</button>
     <span class="eyebrow spaced">Pastas</span>

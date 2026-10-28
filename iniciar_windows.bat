@@ -27,14 +27,36 @@ if not exist .venv\.deps-ok (
  .venv\Scripts\python.exe -m pip install -r requirements.txt
  if errorlevel 1 goto installerror
  type nul > .venv\.deps-ok
+ del .venv\.deps-hash >nul 2>&1
 )
+rem Dependencias mudaram desde a ultima instalacao (atualizacao do AutoCortes): instala o que falta.
+rem Sem hash anterior, so registra o atual. O hash so e gravado depois de uma instalacao bem-sucedida.
+.venv\Scripts\python.exe -c "import hashlib,pathlib,sys; h=hashlib.sha256(pathlib.Path('requirements.txt').read_bytes()).hexdigest(); p=pathlib.Path('.venv/.deps-hash'); old=p.read_text().strip() if p.exists() else ''; old or p.write_text(h); sys.exit(3 if old and old != h else 0)" >nul 2>&1
+if errorlevel 3 goto updatedeps
+:depsok
 where ffmpeg >nul 2>&1
 if errorlevel 1 echo AVISO: ffmpeg ausente no PATH.
 where ffprobe >nul 2>&1
 if errorlevel 1 echo AVISO: ffprobe ausente no PATH.
-if not "%AUTOCORTES_NO_BROWSER%"=="1" start "" http://127.0.0.1:8000
+rem O navegador so abre quando o servidor responder (antes abria cedo demais e mostrava erro de conexao).
+if not "%AUTOCORTES_NO_BROWSER%"=="1" start "" /b powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "for($i=0;$i -lt 90;$i++){try{Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 http://127.0.0.1:8000/api/health | Out-Null; Start-Process 'http://127.0.0.1:8000'; exit}catch{Start-Sleep -Seconds 1}}"
+echo AutoCortes Studio: abrindo em http://127.0.0.1:8000 (deixe esta janela aberta enquanto usa o app).
 .venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-exit /b %errorlevel%
+set RC=%errorlevel%
+if "%RC%"=="0" exit /b 0
+echo.
+echo O AutoCortes parou (codigo %RC%). O que verificar:
+netstat -ano | findstr /c:"127.0.0.1:8000" | findstr LISTENING >nul && echo  - A porta 8000 ja esta em uso: outro AutoCortes pode estar aberto. Feche-o ou acesse http://127.0.0.1:8000
+echo  - Se aparecer "ModuleNotFoundError", apague o arquivo .venv\.deps-ok e execute de novo para reinstalar.
+echo  - As mensagens acima mostram o motivo completo.
+if not "%AUTOCORTES_NO_BROWSER%"=="1" pause
+exit /b %RC%
+:updatedeps
+echo Dependencias atualizadas: instalando o que mudou...
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+if errorlevel 1 goto installerror
+.venv\Scripts\python.exe -c "import hashlib,pathlib; pathlib.Path('.venv/.deps-hash').write_text(hashlib.sha256(pathlib.Path('requirements.txt').read_bytes()).hexdigest())"
+goto depsok
 :badvenv
 echo.
 echo ERRO: a pasta .venv deste projeto foi criada com uma versao de Python nao suportada.

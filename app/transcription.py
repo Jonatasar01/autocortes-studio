@@ -71,6 +71,10 @@ def _load_model(device: str):
     compute = 'int8' if device == 'cpu' else ('int8_float16' if name == GPU_MODEL else 'default')
     key = (name, device, compute)
     with _lock:
+        # O mesmo modelo já carregado para a legenda precisa: reaproveita (uma cópia só na placa de 4 GB).
+        shared = _refine_cache.get(name) if device != 'cpu' and compute == 'int8_float16' else None
+        if shared is not None:
+            return shared
         if key not in _cache:
             _cache.clear()  # mantém só um modelo em memória
             _cache[key] = WhisperModel(name, device=device, compute_type=compute)
@@ -100,6 +104,10 @@ def _load_refine_model():
     _cuda_dll_dirs()
     name = config.WHISPER_REFINE_MODEL
     with _lock:
+        # A análise na GPU usa o mesmo large-v3-turbo: reaproveita em vez de carregar uma segunda cópia na VRAM.
+        for (cached_name, device, compute), model in _cache.items():
+            if cached_name == name and device != 'cpu' and compute == 'int8_float16':
+                return model
         if name not in _refine_cache:
             _refine_cache.clear()
             _refine_cache[name] = WhisperModel(name, device='cuda', compute_type='int8_float16')

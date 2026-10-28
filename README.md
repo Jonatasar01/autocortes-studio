@@ -38,6 +38,13 @@ A interface fica em `http://127.0.0.1:8000/` e abre na **página inicial**:
   **Abrir pasta** mostra os arquivos no Explorador.
 - **Vídeo repetido:** ao escolher um vídeo que já está num projeto, o app avisa antes de enviar e oferece abrir o
   projeto existente.
+- **Importar do computador (lives grandes):** no Novo projeto, escolha "Do computador" e cole o caminho do vídeo
+  (no Explorador: botão direito → Copiar como caminho). No mesmo disco da pasta do AutoCortes o vídeo entra na hora,
+  sem cópia e sem ocupar espaço extra; em outro disco é copiado localmente.
+- **Feedback:** marque cortes como 👍 Bom ou 👎 Rejeitar. Isso não muda a exportação: serve para medir e melhorar a
+  seleção automática (`python scripts/avaliar_selecao.py <projeto> <projeto> --feedback`).
+- **Exportação rápida pela placa:** com NVIDIA, a exportação usa a placa (NVENC), cerca de 2× mais rápida e com a
+  mesma qualidade (arquivos ~25% maiores). Configurações → "Exportação rápida pela placa de vídeo".
 
 Barra lateral: Início · Novo projeto · Meus projetos · Editor Studio · Processamentos · Automação ·
 Configurações. As abas do editor (Propriedades, Legendas, Efeitos, Áudio) ficam só no editor.
