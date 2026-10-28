@@ -49,3 +49,12 @@ class FeedbackTests(ServiceBase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_evaluator_help_supports_windows_legacy_encoding():
+    import os, subprocess, sys
+    from app import config
+    result = subprocess.run([sys.executable, str(config.ROOT / 'scripts/avaliar_selecao.py'), '--help'],
+                            env={**os.environ, 'PYTHONIOENCODING': 'cp1252'}, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr.decode('cp1252', errors='replace')
+    assert b'--feedback' in result.stdout

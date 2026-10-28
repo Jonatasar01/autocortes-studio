@@ -27,19 +27,13 @@ rem Pacotes: transcricao e rostos (requirements-ai, ja inclui o basico) e, com p
 rem (requirements-gpu, ~2 GB). AUTOCORTES_MINIMAL=1 instala so o basico (sem transcricao).
 set "DEPS=-r requirements.txt"
 if exist requirements-ai.txt set "DEPS=-r requirements-ai.txt"
-where nvidia-smi >nul 2>&1 && if exist requirements-gpu.txt set "DEPS=%DEPS% -r requirements-gpu.txt"
+call nvidia-smi -L >nul 2>&1 && if exist requirements-gpu.txt set "DEPS=%DEPS% -r requirements-gpu.txt"
 if "%AUTOCORTES_MINIMAL%"=="1" set "DEPS=-r requirements.txt"
-if not exist .venv\.deps-ok (
- echo Instalando dependencias: %DEPS%
- .venv\Scripts\python.exe -m pip install %DEPS%
- if errorlevel 1 goto installerror
- type nul > .venv\.deps-ok
- del .venv\.deps-hash >nul 2>&1
-)
-rem Dependencias (ou a escolha de pacotes) mudaram desde a ultima instalacao: instala o que falta.
-rem Sem hash anterior, so registra o atual. O hash so e gravado depois de uma instalacao bem-sucedida.
-.venv\Scripts\python.exe -c "import hashlib,os,pathlib,re; h=hashlib.sha256(os.environ['DEPS'].encode()); [h.update(pathlib.Path(n).read_bytes()) for n in re.findall(r'-r (\S+)', os.environ['DEPS'])]; import sys; h=h.hexdigest(); p=pathlib.Path('.venv/.deps-hash'); old=p.read_text().strip() if p.exists() else ''; old or p.write_text(h); sys.exit(3 if old and old != h else 0)" >nul 2>&1
+if not exist .venv\.deps-ok goto updatedeps
+rem Sem hash ou com hash diferente, reinstala; registra somente depois de sucesso.
+.venv\Scripts\python.exe -c "import hashlib,os,pathlib,re; h=hashlib.sha256(os.environ['DEPS'].encode()); [h.update(pathlib.Path(n).read_bytes()) for n in re.findall(r'-r (\S+)', os.environ['DEPS'])]; import sys; h=h.hexdigest(); p=pathlib.Path('.venv/.deps-hash'); old=p.read_text().strip() if p.exists() else ''; sys.exit(3 if old != h else 0)" >nul 2>&1
 if errorlevel 3 goto updatedeps
+if errorlevel 1 goto installerror
 :depsok
 where ffmpeg >nul 2>&1
 if errorlevel 1 echo AVISO: ffmpeg ausente no PATH. Instale com:  winget install Gyan.FFmpeg  e abra este arquivo de novo.
@@ -63,6 +57,8 @@ echo Dependencias atualizadas: instalando o que mudou...
 .venv\Scripts\python.exe -m pip install %DEPS%
 if errorlevel 1 goto installerror
 .venv\Scripts\python.exe -c "import hashlib,os,pathlib,re; h=hashlib.sha256(os.environ['DEPS'].encode()); [h.update(pathlib.Path(n).read_bytes()) for n in re.findall(r'-r (\S+)', os.environ['DEPS'])]; pathlib.Path('.venv/.deps-hash').write_text(h.hexdigest())"
+if errorlevel 1 goto installerror
+type nul > .venv\.deps-ok
 goto depsok
 :badvenv
 echo.

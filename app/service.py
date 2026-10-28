@@ -277,6 +277,11 @@ def create_project(chunks: Iterable[bytes], filename: str, form: dict, declared_
 def _local_video(path_text: str) -> Path:
     """Caminho de vídeo digitado pelo usuário (app local): absoluto, existente e com extensão de vídeo."""
     text = str(path_text or '').strip().strip('"').strip("'")
+    # Refuse network/device namespaces and alternate data streams before any filesystem access.
+    normalized = text.replace('\\', '/')
+    if normalized.startswith('//') or ':' in normalized[2:]:
+        raise AppError('Use um arquivo de vídeo em um disco local, sem caminho de rede ou dispositivo.',
+                       400, 'bad_path')
     source = Path(text).expanduser()
     if not text or not source.is_absolute():
         raise AppError('Informe o caminho completo do vídeo (ex.: D:\\lives\\live.mp4).', 400, 'bad_path')
@@ -284,6 +289,14 @@ def _local_video(path_text: str) -> Path:
         raise AppError('Selecione um vídeo válido: MP4, MOV, MKV, WEBM, AVI ou M4V.', 400, 'bad_extension')
     if not source.is_file():
         raise AppError('Arquivo não encontrado nesse caminho.', 404, 'not_found')
+    try:
+        source = source.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise AppError('Não foi possível resolver o caminho do vídeo.', 400, 'bad_path') from None
+    if str(source).replace('\\', '/').startswith('//') or source.suffix.lower() not in media.ALLOWED_EXTENSIONS:
+        raise AppError('O destino precisa ser um vídeo em disco local.', 400, 'bad_path')
+    # Extension alone is insufficient: do not fingerprint arbitrary files disguised as videos.
+    media.probe_media(source)
     return source
 
 
@@ -1037,6 +1050,57 @@ def delete_project(project_id: str) -> None:
     if _jobs().for_project(project_id, active_only=True):
         raise AppError('Cancele as tarefas em andamento antes de excluir o projeto.', 409, 'busy')
     storage.delete_project_dir(project_id)
+
+
+# Caches que o app refaz sozinho quando faltam: miniaturas, onda do áudio, energia, faixas pretas, planos de
+# enquadramento e prévias. Vídeo, transcrição, cortes e exportações nunca entram aqui.
+CACHE_DIRS = {'cache': 'Miniaturas, onda e medidas do vídeo', 'direction': 'Planos de enquadramento',
+              'preview': 'Prévias da edição'}
+
+
+def _dir_size(folder: Path) -> tuple[int, int]:
+    size = count = 0
+    for path in folder.rglob('*') if folder.is_dir() else ():
+        with contextlib.suppress(OSError):
+            if path.is_file() and not path.is_symlink():
+                size += path.stat().st_size
+                count += 1
+    return size, count
+
+
+def cache_usage(project_id: str) -> dict:
+    folder = storage.project_dir(project_id)
+    parts = []
+    for name, label in CACHE_DIRS.items():
+        size, count = _dir_size(folder / name)
+        parts.append({'id': name, 'label': label, 'bytes': size, 'files': count})
+    return {'parts': parts, 'total_bytes': sum(x['bytes'] for x in parts)}
+
+
+def clear_cache(project_id: str) -> dict:
+    """Apaga os caches do projeto (refeitos quando necessário). Recusa com tarefa em andamento no projeto."""
+    folder = storage.project_dir(project_id)
+    if _jobs().for_project(project_id, active_only=True):
+        raise AppError('Espere as tarefas do projeto terminarem (ou cancele) antes de limpar o cache.', 409, 'busy')
+    freed = 0
+    for name in CACHE_DIRS:
+        target = folder / name
+        if target.is_symlink() or not target.is_dir():
+            continue
+        for path in target.iterdir():
+            size = _dir_size(path)[0] if path.is_dir() and not path.is_symlink() else 0
+            with contextlib.suppress(OSError):
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                    freed += size
+                else:
+                    size = path.stat().st_size
+                    path.unlink()
+                    freed += size
+    with storage.edit_project(project_id) as p:
+        for clip in p.get('clips') or []:   # as prévias apagadas não podem continuar apontadas nos cortes
+            clip.pop('preview', None)
+    return {'freed_bytes': freed, **cache_usage(project_id)}
 
 
 # --------------------------------------------------------------------------- arquivos

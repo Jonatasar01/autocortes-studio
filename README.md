@@ -603,3 +603,29 @@ Os nomes `gpt-6-luna` e `gpt-4o-mini-tts` foram conferidos na documentação ofi
 chamada autenticada neste ambiente. Os snapshots do mini TTS têm retirada anunciada para 06/01/2027;
 revise a integração antes dessa data. A migração para Realtime exige adaptação do protocolo,
 não apenas trocar `OPENAI_TTS_MODEL`. Fontes em `ENTREGA_ETAPA1.md`.
+
+### Validar a seleção com um segundo vídeo (feedback)
+
+A regra de áudio foi escolhida olhando uma única live de 18 cortes aprovados. Antes de ajustar pesos, avalie um **segundo vídeo independente**, de podcast ou IRL, com fala e transcrição. Não use o mesmo material para calibrar e medir o ganho.
+
+1. Crie o projeto no Studio e aguarde a análise local. Anote o ID de 32 caracteres em `?projeto=...` na URL.
+2. Assista aos trechos e marque **👍 Bom** ou **👎 Rejeitado**. “Esconder rejeitados” só filtra a tela; não apaga o feedback. Um segundo clique no mesmo voto o remove. Inclua também cortes manuais bons que o motor deixou passar: aprovar apenas sugestões existentes favorece artificialmente a avaliação.
+3. Defina critérios antes da revisão: trecho compreensível sozinho, início/fim completos, fala legível e momento relevante. Registre o número de positivos/negativos e o tipo de conteúdo. O avaliador compara os intervalos registrados no `feedback_log`, não uma opinião sobre viralização.
+4. Execute no diretório do repositório que contém `data/<ID>`. Atualmente o script usa essa pasta, **não** `AUTOCORTES_DATA`. Os dois IDs podem ser iguais quando fonte/transcrição e feedback estão no mesmo projeto. Se estiverem em projetos separados, use primeiro o da fonte e depois o da referência.
+
+Exemplo em PowerShell (substitua o ID; escolha uma pasta temporária com espaço):
+
+```powershell
+$videoId = 'ID_DE_32_CARACTERES'
+$evaluationDir = Join-Path $env:TEMP 'autocortes-avaliacao-segundo-video'
+New-Item -ItemType Directory -Force -Path $evaluationDir | Out-Null
+$env:AUTOCORTES_SELECTION_ENGINE = 'v1'
+# Sem --audio: referência sem a camada de áudio.
+.venv\Scripts\python.exe scripts\avaliar_selecao.py $videoId $videoId --feedback --json "$evaluationDir\v1-sem-audio.json"
+# Com --audio: gera/reusa somente o cache temporário indicado.
+.venv\Scripts\python.exe scripts\avaliar_selecao.py $videoId $videoId --feedback --audio "$evaluationDir\audio-cache" --json "$evaluationDir\v1-com-audio.json"
+```
+
+O comando lê a fonte, a transcrição e o feedback; **não substitui a seleção salva**. Não usa OpenAI/Anthropic. A primeira leitura do áudio pode demorar. Sem nenhum 👍, o comando termina com uma mensagem e não produz uma comparação válida. Não rode enquanto houver exportação em andamento.
+
+Compare `recall@18`, `recall@50`, erros medianos de início/fim e `rejeitados_no_top10/18/30`. O critério de correspondência por sobreposição é tolerante: recall não substitui revisão editorial nem comprova que os limites do corte são bons. Registre ambos os JSONs, número de referências e versão/commit. Só discuta alteração de pesos após esta avaliação independente; **nenhum peso é alterado por estes comandos**. A mesma cautela vale para comparar v2.

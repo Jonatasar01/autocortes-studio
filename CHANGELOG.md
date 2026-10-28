@@ -1,5 +1,32 @@
 ## Não lançado
 
+### Seguimento — limpeza de cache
+- Painel de mídia: "Liberar cache (tamanho)" quando o projeto tem 1 MB ou mais de cache. Apaga miniaturas, onda do
+  áudio, energia, faixas pretas, planos de enquadramento e prévias (`cache/`, `direction/`, `preview/`), que o app refaz
+  quando precisa; vídeo, transcrição, cortes e exportações ficam. Recusa com tarefa em andamento no projeto.
+- API: `GET /api/projects/{id}/cache` (tamanho por parte) e `DELETE /api/projects/{id}/cache`.
+
+### Seguimento — avaliação independente
+- README descreve feedback em segundo vídeo de podcast/IRL, comparação v1 com/sem áudio, caminhos temporários e limitações do recall; não altera pesos.
+
+
+### Seguimento — cobertura de concorrência e caminhos
+- Testes simultâneos de análise/refinamento verificam uma única construção do modelo GPU compatível; CPU e tipos de cálculo diferentes permanecem separados.
+- Testes rejeitam UNC, dispositivos e streams antes de acessar arquivos; destinos de links são simulados sem exigir privilégios de symlink no Windows.
+
+
+### Seguimento — mensagens de acesso
+- Studio solicita senha em 401 `auth_required`, mantém credencial somente na memória e limita a uma nova tentativa; cancelar não repete a operação.
+- API e upload mostram orientação para respostas 413, inclusive HTML de proxies/túneis. Não habilita acesso de rede nem implementa os PRs de LAN/Cloudflare.
+
+
+### Seguimento — correções verificadas
+- Importação local valida vídeo real e destino canônico antes do fingerprint; bloqueia rede, dispositivos e streams.
+- Timeline calcula escala com o editor visível; perfis mostram opções efetivas do plano e deixam de indicar um perfil incompatível.
+- Inicializador testa a resposta da NVIDIA e reinstala dependências quando o hash está ausente ou mudou; só grava marcadores após sucesso.
+- Mensagem NVENC informa que desempenho, compressão e tamanho dependem do conteúdo, sem promessa universal de qualidade idêntica.
+
+
 - Fase 4 de melhorias:
   - **Perfis de exportação:** formato, enquadramento, legenda, filtro, volume e gancho de uma vez. Quatro prontos por
     tipo de conteúdo (Live de jogo, IRL / rua, Podcast / entrevista, YouTube horizontal) e até 20 salvos pelo

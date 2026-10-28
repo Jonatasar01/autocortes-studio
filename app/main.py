@@ -218,6 +218,18 @@ def delete_project(project_id: str):
     return {'ok': True}
 
 
+@app.get('/api/projects/{project_id}/cache')
+def project_cache(project_id: str):
+    """Espaço dos caches do projeto (miniaturas, onda, planos de enquadramento, prévias)."""
+    return service.cache_usage(project_id)
+
+
+@app.delete('/api/projects/{project_id}/cache')
+def clear_project_cache(project_id: str):
+    """Apaga só os caches refeitos sozinhos; vídeo, transcrição, cortes e exportações ficam."""
+    return service.clear_cache(project_id)
+
+
 @app.post('/api/projects/{project_id}/reanalyze')
 def reanalyze(project_id: str):
     return service.reanalyze(project_id)

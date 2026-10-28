@@ -77,7 +77,7 @@ def main() -> None:
     ap.add_argument('--json')
     ap.add_argument('--audio', help='pasta de cache para a energia do áudio; liga a camada de áudio')
     ap.add_argument('--feedback', action='store_true',
-                    help='referência = cortes marcados "bom" no projeto de referência (botões 👍/👎 do Studio)')
+                    help='referência = cortes marcados "bom" no projeto de referência (botões Bom/Rejeitado do Studio)')
     args = ap.parse_args()
     data = ROOT / 'data'
     proj = json.loads((data / args.fonte / 'project.json').read_text(encoding='utf-8'))

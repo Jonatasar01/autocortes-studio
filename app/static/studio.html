@@ -176,6 +176,7 @@
             <button type="button" class="btn ghost" data-go="projects">Meus projetos</button>
           </div>
           <button id="reanalyze" type="button" class="btn ghost block" hidden title="Analisar o vídeo do zero: transcrição, cenas e cortes"><svg class="ic"><use href="#i-refresh"/></svg><span>Analisar de novo</span></button>
+          <button id="clearCache" type="button" class="btn ghost block" hidden title="Apaga miniaturas, onda do áudio, planos de enquadramento e prévias; tudo é refeito quando necessário. Vídeo, transcrição, cortes e exportações ficam."><svg class="ic"><use href="#i-trash"/></svg><span id="clearCacheText">Liberar cache</span></button>
 
         </div>
 
@@ -563,7 +564,7 @@
     <label class="field" for="prefSubtitle">Estilo da legenda</label>
     <select id="prefSubtitle"><option value="dinamica">Dinâmica (palavra a palavra)</option><option value="classica">Clássica</option></select>
     <label class="switch"><input id="prefRefine" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda precisa</strong><small>Retranscreve o trecho de cada corte ao exportar (precisa de GPU).</small></span></label>
-    <label class="switch"><input id="prefGpuExport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Exportação rápida pela placa de vídeo</strong><small>Usa a NVIDIA (NVENC) quando houver: cerca de 2× mais rápido, mesma qualidade, arquivos ~25% maiores. Sem a placa, usa o processador.</small></span></label>
+    <label class="switch"><input id="prefGpuExport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Exportação rápida pela placa de vídeo</strong><small>Usa a NVIDIA (NVENC) quando disponível. Pode acelerar a exportação mantendo resolução e taxa de quadros; tempo, qualidade de compressão e tamanho variam com o vídeo e os efeitos. Se falhar, usa o processador.</small></span></label>
     <span class="eyebrow spaced">Escolha dos cortes</span>
     <button id="settingsSelection" type="button" class="btn ghost block">Curadoria com IA e foco…</button>
     <span class="eyebrow spaced">Pastas</span>
@@ -655,6 +656,18 @@
       <button class="btn ghost" type="button" data-close>Cancelar</button>
       <button class="btn primary" type="submit">Salvar</button>
     </footer>
+  </form>
+</dialog>
+
+<dialog id="authDialog" class="dialog narrow" aria-labelledby="authTitle">
+  <form method="dialog">
+    <header><h2 id="authTitle">Senha do AutoCortes</h2></header>
+    <div class="dialogbody">
+      <p>Informe a senha configurada no computador que executa o projeto.</p>
+      <label class="field" for="authPassword">Senha</label>
+      <input id="authPassword" type="password" autocomplete="current-password" required>
+    </div>
+    <footer><button class="btn ghost" value="cancel" formnovalidate>Cancelar</button><button class="btn primary" value="login">Entrar</button></footer>
   </form>
 </dialog>
 
