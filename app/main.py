@@ -426,6 +426,30 @@ def update_plan(project_id: str, clip_id: int, name: str, changes: PlanUpdate):
     return service.update_edit_plan(project_id, clip_id, name, changes.model_dump())
 
 
+class SubtitleLine(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    start: float
+    end: float
+    text: str = Field(default='', max_length=400)
+
+
+class SubtitleEdit(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    segments: list[SubtitleLine] = Field(max_length=500)
+
+
+@app.get('/api/projects/{project_id}/clips/{clip_id}/subtitles')
+def clip_subtitles(project_id: str, clip_id: int):
+    """Frases da legenda do corte (texto da transcrição)."""
+    return service.clip_subtitles(project_id, clip_id)
+
+
+@app.put('/api/projects/{project_id}/clips/{clip_id}/subtitles')
+def set_clip_subtitles(project_id: str, clip_id: int, body: SubtitleEdit):
+    """Corrige o texto das frases; as corrigidas não são substituídas pela legenda precisa."""
+    return service.set_clip_subtitles(project_id, clip_id, [s.model_dump() for s in body.segments])
+
+
 @app.delete('/api/projects/{project_id}/clips/{clip_id}/exports')
 def delete_export(project_id: str, clip_id: int, format: Literal['9:16', '16:9', '1:1', 'original']):
     """Exclui uma exportação concluída do corte (a cópia na pasta de saída fica)."""

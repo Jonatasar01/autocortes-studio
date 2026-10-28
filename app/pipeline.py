@@ -470,8 +470,15 @@ def run_export(ctx: JobContext) -> dict:
     return record
 
 
+REFINE_VERSION = 2   # muda quando a retranscrição muda (v2: sem o contexto da frase anterior); refaz os cortes
+
+
+def _refine_tag() -> str:
+    return f'{config.WHISPER_REFINE_MODEL}:v{REFINE_VERSION}'
+
+
 def _refined(p: dict, start: float, end: float) -> bool:
-    model = config.WHISPER_REFINE_MODEL
+    model = _refine_tag()
     return any(a <= start + 0.05 and end - 0.05 <= b and m == model for a, b, m in p.get('transcript_refined') or [])
 
 
@@ -521,9 +528,12 @@ def _refine_transcript(ctx: JobContext, folder: Path, p: dict, info: dict, start
     inside = lambda seg: start <= (seg['start'] + seg['end']) / 2 <= end  # noqa: E731
     fresh = [seg for seg in map(shift, segments) if inside(seg)]
     with storage.edit_project(ctx.project_id) as q:
-        kept = [seg for seg in q.get('transcript') or [] if not inside(seg)]
+        # Frases corrigidas à mão (``edited``) ficam: a retranscrição não as desfaz, e a nova não as cobre.
+        edited = [seg for seg in q.get('transcript') or [] if inside(seg) and seg.get('edited')]
+        fresh = [seg for seg in fresh if not any(seg['start'] < e['end'] and e['start'] < seg['end'] for e in edited)]
+        kept = [seg for seg in q.get('transcript') or [] if not inside(seg) or seg.get('edited')]
         q['transcript'] = sorted(kept + fresh, key=lambda seg: seg['start'])
-        q.setdefault('transcript_refined', []).append([round(start, 3), round(end, 3), config.WHISPER_REFINE_MODEL])
+        q.setdefault('transcript_refined', []).append([round(start, 3), round(end, 3), _refine_tag()])
         updated = q
     return updated
 

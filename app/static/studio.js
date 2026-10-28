@@ -600,6 +600,49 @@ $('fbBad').onclick = () => sendFeedback('rejeitado');
 $('hideRejected').checked = store.get('hideRejected') === '1';
 $('hideRejected').onchange = () => { store.set('hideRejected', $('hideRejected').checked ? '1' : '0'); render(); };
 
+// ------------------------------------------------------------------ corrigir o texto da legenda
+
+// Lista as frases do corte com o texto editável; clicar no tempo leva o vídeo até a frase. Só as frases
+// alteradas são enviadas; a legenda precisa não desfaz as corrigidas.
+state.subs = null;
+$('editSubtitles').onclick = async () => {
+  const c = current();
+  if (!c || !state.project) return;
+  try {
+    const r = await api('/api/projects/' + state.project.id + '/clips/' + c.id + '/subtitles');
+    state.subs = {clip: c.id, segments: r.segments};
+    $('subsNote').textContent = (r.segments.length ? '' : 'Este corte ainda não tem fala transcrita. ') +
+      (r.refined ? 'Texto da legenda precisa.' : 'Ainda é o texto da análise: na próxima prévia ou exportação a ' +
+        'legenda precisa refaz as frases que você não corrigir.') + ' Apague o texto de uma frase para tirá-la da legenda.';
+    $('subsList').innerHTML = r.segments.map((s, i) =>
+      '<li><button type="button" class="subtime" data-subseek="' + i + '" title="Ir para este ponto">' +
+      escape(fmt(Math.max(0, s.start - c.start))) + '</button><input data-sub="' + i + '" maxlength="400" ' +
+      'aria-label="Texto da frase ' + (i + 1) + '" value="' + escape(s.text) + '">' +
+      (s.edited ? '<small class="subedited">corrigida</small>' : '') + '</li>').join('');
+    $('subsDialog').showModal();
+  } catch (err) { toast(err.message, true); }
+};
+$('subsList').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-subseek]');
+  if (b && state.subs) video.currentTime = state.subs.segments[Number(b.dataset.subseek)].start;
+});
+$('subsForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const s = state.subs;
+  if (!s || !state.project) return;
+  const changed = [...$('subsList').querySelectorAll('[data-sub]')]
+    .map((input) => ({seg: s.segments[Number(input.dataset.sub)], text: input.value.trim()}))
+    .filter(({seg, text}) => text !== seg.text.trim())
+    .map(({seg, text}) => ({start: seg.start, end: seg.end, text}));
+  if (!changed.length) { $('subsDialog').close(); return; }
+  try {
+    const r = await api('/api/projects/' + state.project.id + '/clips/' + s.clip + '/subtitles', 'PUT', {segments: changed});
+    $('subsDialog').close();
+    toast(r.changed === 1 ? '1 frase corrigida. Vale na próxima prévia ou exportação.'
+      : r.changed + ' frases corrigidas. Valem na próxima prévia ou exportação.');
+  } catch (err) { toast(err.message, true); }
+};
+
 // ------------------------------------------------------------------ seleção múltipla e exportação em lote
 
 const cutSort = () => (store.get('cutSort') === 'time' ? 'time' : 'score');

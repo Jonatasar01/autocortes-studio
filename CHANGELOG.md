@@ -1,5 +1,16 @@
 ## Não lançado
 
+### Legenda: sem repetições e com correção à mão
+- **Legenda precisa sem o contexto da frase anterior:** com ele, numa live barulhenta o modelo entrava em laço e
+  repetia a mesma frase por cima da fala real ("Porra, viado!" 8× no lugar de "Ô louco! … Eu ia comer teu bolo!"
+  no corte #10), e levava 67 s em vez de 15 s. Cortes refinados com a configuração antiga são refeitos na próxima
+  prévia ou exportação (marca `large-v3-turbo:v2`).
+- **Corrigir texto da legenda** (aba Legendas): lista as frases do corte com o texto editável; clicar no tempo leva
+  o vídeo até a frase; texto vazio tira a frase. As palavras ganham tempo de novo para a legenda animada, e as frases
+  corrigidas ficam marcadas: a legenda precisa não as desfaz. Erros de áudio que nenhum ajuste corrige ("pra ele dar
+  sem deficiência" no lugar de "pra acender aqui", com a torcida ao fundo) se resolvem aqui.
+  API: `GET`/`PUT /api/projects/{id}/clips/{n}/subtitles`.
+
 ### Render mais rápido e "Só o streamer" em transmissões
 - **Exportação com pausas cortadas** (plano de edição ou "encurtar pausas"): a leitura da origem para no fim do corte.
   Antes, a saída ficava mais curta que o trecho e o FFmpeg seguia decodificando o resto da live até preencher a

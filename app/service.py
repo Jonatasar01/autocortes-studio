@@ -466,6 +466,66 @@ def edit_clip(project_id: str, clip_id: int, start: float, end: float, title: st
         return dict(clip)
 
 
+# --------------------------------------------------------------------------- texto da legenda
+
+def _in_clip(seg: dict, clip: dict) -> bool:
+    return clip['start'] <= (seg['start'] + seg['end']) / 2 <= clip['end']
+
+
+def clip_subtitles(project_id: str, clip_id: int) -> dict:
+    """Frases da transcrição dentro do corte, na ordem: o texto que vira a legenda."""
+    p = storage.read_project(project_id)
+    clip = _find_clip(p, clip_id)
+    segs = [s for s in p.get('transcript') or [] if _in_clip(s, clip)]
+    refined = pipeline._refined(p, clip['start'], clip['end'])
+    return {'clip_id': clip_id, 'refined': refined,
+            'segments': [{'start': s['start'], 'end': s['end'], 'text': s.get('text', ''),
+                          'edited': bool(s.get('edited'))} for s in segs]}
+
+
+def _retime_words(seg: dict, text: str) -> list[dict]:
+    """Palavras do texto corrigido com tempo: as originais quando a quantidade bate; senão, a duração da frase
+    dividida pelo tamanho de cada palavra (a legenda animada destaca uma por vez)."""
+    words = text.split()
+    old = seg.get('words') or []
+    if len(old) == len(words):
+        return [{**w, 'word': new} for w, new in zip(old, words)]
+    start, end = seg['start'], seg['end']
+    total = sum(len(w) + 1 for w in words) or 1
+    out, t = [], start
+    for w in words:
+        dt = (end - start) * (len(w) + 1) / total
+        out.append({'start': round(t, 2), 'end': round(t + dt, 2), 'word': w})
+        t += dt
+    return out
+
+
+def set_clip_subtitles(project_id: str, clip_id: int, segments: list[dict]) -> dict:
+    """Corrige o texto das frases do corte (identificadas por início e fim). Texto vazio apaga a frase.
+    As frases corrigidas ficam marcadas e a "legenda precisa" não as substitui depois."""
+    with storage.edit_project(project_id) as p:
+        _require_ready(p)
+        clip = _find_clip(p, clip_id)
+        # Cópia: a transcrição lida fica em cache, e o storage só regrava quando recebe uma lista nova.
+        transcript = copy.deepcopy(p.get('transcript') or [])
+        changed = 0
+        for item in segments:
+            text = _clean_text(str(item.get('text') or ''), 400)
+            seg = next((s for s in transcript if _in_clip(s, clip) and abs(s['start'] - float(item['start'])) < 0.01
+                        and abs(s['end'] - float(item['end'])) < 0.01), None)
+            if seg is None:
+                raise AppError('A legenda mudou enquanto você editava. Abra o corte de novo.', 409, 'stale')
+            if text == seg.get('text', '').strip():
+                continue
+            changed += 1
+            if not text:
+                transcript.remove(seg)
+                continue
+            seg.update({'text': text, 'words': _retime_words(seg, text), 'edited': True})
+        p['transcript'] = transcript
+    return clip_subtitles(project_id, clip_id) | {'changed': changed}
+
+
 
 # --------------------------------------------------------------------------- enquadramento por trecho
 

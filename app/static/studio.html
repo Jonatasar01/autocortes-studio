@@ -291,6 +291,7 @@
               </select>
               <p id="subtitleStyleNote" class="hint" hidden>O plano de edição em uso define o estilo da legenda.</p>
               <label class="switch"><input id="refineSubtitles" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda precisa</strong><small>Retranscreve só o corte com um modelo maior antes de exportar (GPU). Corrige nomes e gírias; leva alguns segundos a mais na primeira vez.</small></span></label>
+              <button id="editSubtitles" type="button" class="btn ghost block"><svg class="ic"><use href="#i-pencil"/></svg><span>Corrigir texto da legenda</span></button>
             </div>
 
             <div role="tabpanel" id="panelEffects" aria-labelledby="tabEffects" hidden>
@@ -642,6 +643,20 @@
     <button id="confirmNo" class="btn ghost" type="button">Cancelar</button>
     <button id="confirmYes" class="btn primary" type="button">Confirmar</button>
   </footer>
+</dialog>
+
+<dialog id="subsDialog" class="dialog" aria-labelledby="subsTitle">
+  <form id="subsForm" method="dialog">
+    <header><h2 id="subsTitle">Corrigir texto da legenda</h2></header>
+    <div class="dialogbody">
+      <p id="subsNote" class="hint"></p>
+      <ol id="subsList" class="subslist"></ol>
+    </div>
+    <footer>
+      <button class="btn ghost" type="button" data-close>Cancelar</button>
+      <button class="btn primary" type="submit">Salvar correções</button>
+    </footer>
+  </form>
 </dialog>
 
 <dialog id="profileDialog" class="dialog narrow" aria-labelledby="profileDialogTitle">

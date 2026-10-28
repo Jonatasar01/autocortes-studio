@@ -58,6 +58,30 @@ class RefineTranscriptTests(ServiceBase):
         _, _, _, again = self.run_refine(4.0, 12.0)
         again.assert_not_called()
 
+    def test_old_refine_marker_is_redone_and_hand_fixes_survive(self):
+        # Corte refinado com a configuração antiga (marca sem versão) é refeito; frase corrigida à mão fica.
+        clip_id = storage.read_project(self.pid)['clips'][0]['id']
+        with storage.edit_project(self.pid) as p:
+            p['transcript_refined'] = [[4.0, 12.0, 'large-v3-turbo']]
+            c = next(x for x in p['clips'] if x['id'] == clip_id)
+            c['start'], c['end'] = 4.0, 12.0
+        subs = service.clip_subtitles(self.pid, clip_id)
+        self.assertFalse(subs['refined'])
+        self.assertEqual([s['text'] for s in subs['segments']], ['curinguinha a júnior', 'meio'])
+        out = service.set_clip_subtitles(self.pid, clip_id, [
+            {'start': 5, 'end': 7, 'text': 'segura o bolinho pra acender aqui'}, {'start': 9, 'end': 11, 'text': ''}])
+        self.assertEqual(out['changed'], 2)
+        fixed = storage.read_project(self.pid)['transcript']
+        self.assertEqual([s['text'] for s in fixed], ['antes', 'segura o bolinho pra acender aqui', 'depois'])
+        words = fixed[1]['words']
+        self.assertEqual([w['word'] for w in words], 'segura o bolinho pra acender aqui'.split())
+        self.assertEqual((words[0]['start'], words[-1]['end']), (5, 7))
+        _, _, _, fake = self.run_refine(4.0, 12.0, segments=[seg(2.0, 4.0, 'deficiência'), seg(7.0, 9.0, 'nova')])
+        fake.assert_called_once()
+        texts = [s['text'] for s in storage.read_project(self.pid)['transcript']]
+        self.assertEqual(texts, ['antes', 'segura o bolinho pra acender aqui', 'nova', 'depois'])
+        self.assertTrue(service.clip_subtitles(self.pid, clip_id)['refined'])
+
     def test_refines_even_when_the_analysis_used_the_same_model(self):
         # A análise da live inteira vai em lotes e sem contexto: errava "esse x1" como "este zoom".
         with storage.edit_project(self.pid) as p:
