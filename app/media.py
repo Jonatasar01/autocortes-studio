@@ -780,7 +780,9 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
     facecam = (track or {}).get('facecam')
     for seg in segments:
         kind = seg['framing']
-        if kind in ('streamer', 'split') and not (facecam and split_top):
+        if kind == 'streamer' and not (facecam and split_top) and has_track and track.get('main_set'):
+            kind = 'main'       # sem janela de webcam: segue rostos só na cena principal (bancada)
+        elif kind in ('streamer', 'split') and not (facecam and split_top):
             kind = 'track'      # sem janela de webcam: segue o rosto
         if kind == 'track' and not has_track:
             kind = 'blur'
@@ -791,6 +793,8 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
         only = kinds[0]
         if only == 'track':
             return _track_graph(src, pre, subs, W, H, track)
+        if only == 'main':
+            return _track_graph(src, pre, subs, W, H, track['main_set'])
         if only == 'blur':
             return _blur_branch(f'{src}{pre}', W, H, f',setsar=1{subs}[vout]')
         if only == 'streamer':
@@ -814,13 +818,14 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
             parts.append(f'[mx{k}]scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'
                          f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[mv{k}]')
         else:  # seguir rosto, com fundo desfocado nas cenas sem rosto (como no modo "seguir rosto")
-            enable = reframe.fit_enable_expression(track['shots'])
+            plan = track['main_set'] if kind == 'main' else track
+            enable = reframe.fit_enable_expression(plan['shots'])
             if enable:
-                parts.append(f'[mx{k}]split=2[mt{k}][mf{k}];[mt{k}]{_track_crop(W, H, track)}[mtc{k}];'
+                parts.append(f'[mx{k}]split=2[mt{k}][mf{k}];[mt{k}]{_track_crop(W, H, plan)}[mtc{k}];'
                              + _blur_branch(f'[mf{k}]', W, H, f',setsar=1[mtf{k}]')
                              + f";[mtc{k}][mtf{k}]overlay=0:0:enable='{enable}'[mv{k}]")
             else:
-                parts.append(f'[mx{k}]{_track_crop(W, H, track)}[mv{k}]')
+                parts.append(f'[mx{k}]{_track_crop(W, H, plan)}[mv{k}]')
     # A primeira versão é a base; as outras entram por cima só nos seus trechos.
     current = '[mv0]'
     for k, kind in enumerate(kinds[1:], start=1):

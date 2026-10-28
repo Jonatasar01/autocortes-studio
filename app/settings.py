@@ -59,7 +59,55 @@ def defaults() -> dict:
         'output': {'enabled': True},
         # Exportação: auto = placa de vídeo NVIDIA (NVENC) quando houver, senão processador; x264 = sempre processador.
         'export': {'encoder': 'auto'},
+        # Perfis de exportação salvos pelo usuário (os de tipo de conteúdo ficam em BUILTIN_PROFILES).
+        'export_profiles': [],
     }
+
+
+# Perfis prontos por tipo de conteúdo: o usuário aplica no painel do corte ou escolhe ao criar o projeto.
+BUILTIN_PROFILES = [
+    {'id': 'live_jogo', 'name': 'Live de jogo', 'builtin': True, 'format': '9:16', 'framing': 'split',
+     'subtitles': True, 'subtitle_style': 'dinamica', 'refine_subtitles': True, 'normalize_audio': True,
+     'hook': True, 'filter': None},
+    {'id': 'irl', 'name': 'IRL / rua', 'builtin': True, 'format': '9:16', 'framing': 'streamer',
+     'subtitles': True, 'subtitle_style': 'dinamica', 'refine_subtitles': True, 'normalize_audio': True,
+     'hook': True, 'filter': None},
+    {'id': 'podcast', 'name': 'Podcast / entrevista', 'builtin': True, 'format': '9:16', 'framing': 'track',
+     'subtitles': True, 'subtitle_style': 'dinamica', 'refine_subtitles': True, 'normalize_audio': True,
+     'hook': True, 'filter': None},
+    {'id': 'youtube', 'name': 'YouTube horizontal', 'builtin': True, 'format': '16:9', 'framing': 'fit',
+     'subtitles': True, 'subtitle_style': 'classica', 'refine_subtitles': True, 'normalize_audio': True,
+     'hook': False, 'filter': None},
+]
+PROFILE_FIELDS = ('format', 'framing', 'subtitles', 'subtitle_style', 'refine_subtitles', 'normalize_audio', 'hook',
+                  'filter')
+MAX_PROFILES = 20
+
+
+def _profiles(raw) -> list[dict]:
+    if not isinstance(raw, list) or len(raw) > MAX_PROFILES:
+        raise AppError(f'Guarde no máximo {MAX_PROFILES} perfis.', 400, 'bad_settings')
+    from .filters import FILTERS
+    out, names = [], {p['name'].casefold() for p in BUILTIN_PROFILES}
+    for item in raw:
+        if not isinstance(item, dict):
+            raise AppError('Perfil inválido.', 400, 'bad_settings')
+        name = ' '.join(str(item.get('name') or '').split())[:40]
+        if not name:
+            raise AppError('Dê um nome ao perfil.', 400, 'bad_settings')
+        if name.casefold() in names:
+            raise AppError(f'Já existe um perfil chamado "{name}".', 400, 'bad_settings')
+        names.add(name.casefold())
+        profile = {'name': name,
+                   'format': _choice(item.get('format'), media.FORMATS, 'Formato do perfil'),
+                   'framing': _choice(item.get('framing'), media.FRAMINGS, 'Enquadramento do perfil'),
+                   'subtitle_style': _choice(item.get('subtitle_style'), SUBTITLE_STYLES, 'Estilo de legenda'),
+                   'filter': item.get('filter') if item.get('filter') in FILTERS and item['filter'] != 'nenhum'
+                   else None}
+        for key in ('subtitles', 'refine_subtitles', 'normalize_audio', 'hook'):
+            profile[key] = _bool(item.get(key, False))
+        out.append(profile)
+    return out
 
 
 def _path():
@@ -161,6 +209,7 @@ def validate(s: dict) -> dict:
     s['watch']['autopilot'] = _bool(s['watch']['autopilot'])
     s['output']['enabled'] = _bool(s['output']['enabled'])
     s['export']['encoder'] = _choice(s['export']['encoder'], ('auto', 'x264'), 'Codificador da exportação')
+    s['export_profiles'] = _profiles(s['export_profiles'])
     return s
 
 
@@ -192,4 +241,5 @@ def update(changes: dict) -> dict:
 def public() -> dict:
     s = load()
     s['paths'] = {'watch_dir': str(config.WATCH_DIR), 'output_dir': str(config.OUTPUT_DIR)}
+    s['builtin_profiles'] = BUILTIN_PROFILES
     return s

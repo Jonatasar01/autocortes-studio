@@ -1,5 +1,19 @@
 ## Não lançado
 
+- Fase 4 de melhorias:
+  - **Perfis de exportação:** formato, enquadramento, legenda, filtro, volume e gancho de uma vez. Quatro prontos por
+    tipo de conteúdo (Live de jogo, IRL / rua, Podcast / entrevista, YouTube horizontal) e até 20 salvos pelo
+    usuário; lembrado por projeto; "Tipo de conteúdo" ao criar o projeto já deixa o perfil escolhido.
+  - **"Só o streamer" no "Por trecho"** numa transmissão sem janela de webcam: esses trechos seguem rostos só na cena
+    principal (bancada), como o modo "Só o streamer"; os de "seguir rosto" continuam seguindo todos.
+  - **Inicializador Windows:** instala também transcrição e rostos (`requirements-ai.txt`) e, com placa NVIDIA, as
+    bibliotecas de CUDA (`requirements-gpu.txt`); `AUTOCORTES_MINIMAL=1` para só o básico; mostra o comando do
+    `winget` quando falta o FFmpeg. Antes, uma instalação nova ficava sem transcrição.
+  - **Motor:** custo da camada de áudio medido com a máquina parada (sem custo mensurável na seleção); camada visual
+    (movimento na tela) medida e **não integrada**: os cortes aprovados são mais calmos, mas o reforço piorou o
+    ranking na validação cruzada (−0,03 de recall). Relatório em `ANALISE_MOTOR_CORTES.md` (seção 9).
+  - Documentos: `REVISAO_PRS_ANTIGOS.md` (revisão dos PRs #2, #3 e #4) e `ESTUDO_INSTALADOR_WINDOWS.md`.
+
 - Fase 3 (desempenho e confiabilidade):
   - **Faixas pretas:** leituras do vídeo inteiro em cache e as do trecho em paralelo. Live 1080p60: 35 s → 11 s na
     primeira exportação do vídeo e 5,3 s nas seguintes.

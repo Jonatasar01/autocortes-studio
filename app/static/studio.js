@@ -1011,6 +1011,8 @@ $('uploadForm').onsubmit = async (e) => {
   btn.disabled = true;
   btn.setAttribute('aria-busy', 'true');
   store.set('pref.mode', editMode());
+  state.pendingProfile = $('contentProfile').value || null;
+  store.set('pref.contentProfile', $('contentProfile').value);
   if (editMode() === 'advanced') store.set('pref.target', String(clamp(Number($('target').value) || 35, 10, 90)));
   try {
     if (sourceMode() === 'path') {
@@ -1034,6 +1036,7 @@ $('uploadForm').onsubmit = async (e) => {
       await openProject(d.id);
     }
   } catch (err) {
+    state.pendingProfile = null;
     setLoading(null);
     setStatus('Falha na importação', 'error');
     toast(err.message, true);
@@ -1096,6 +1099,10 @@ async function openProject(id) {
     computeScale();
     video.src = '/api/projects/' + id + '/source';
     history.replaceState({}, '', '/?projeto=' + id);
+    // Perfil do projeto: o tipo de conteúdo escolhido ao criar, ou o último perfil usado nele.
+    if (state.pendingProfile) store.set('profile.' + id, state.pendingProfile);
+    state.pendingProfile = null;
+    applyStoredProfile();
   } else if (!p.clips.some((c) => c.id === state.selected)) {
     state.selected = p.clips[0]?.id || null;
   }
@@ -2003,6 +2010,140 @@ for (const b of document.querySelectorAll('[data-format]')) {
     }
   };
 }
+
+// ------------------------------------------------------------------ perfis de exportação
+
+// Prontos (tipo de conteúdo, vêm do servidor) + salvos pelo usuário em Configurações. O perfil escolhido fica
+// lembrado por projeto; mudar qualquer opção à mão volta para "Personalizado".
+state.profiles = {builtin: [], saved: []};
+const profileKey = (p) => (p.builtin ? 'b:' + p.id : 'u:' + p.name);
+const allProfiles = () => [...state.profiles.builtin, ...state.profiles.saved];
+const findProfile = (key) => allProfiles().find((p) => profileKey(p) === key);
+
+function currentOptions() {
+  return {format: state.format, framing: $('framing').value, subtitles: $('subtitles').checked,
+    subtitle_style: $('subtitleStyle').value, refine_subtitles: $('refineSubtitles').checked,
+    normalize_audio: $('normalize').checked, hook: $('hook').checked,
+    filter: state.filter === 'nenhum' ? null : state.filter};
+}
+const PROFILE_FIELDS = ['format', 'framing', 'subtitles', 'subtitle_style', 'refine_subtitles', 'normalize_audio',
+  'hook', 'filter'];
+const sameOptions = (p) => { const o = currentOptions(); return PROFILE_FIELDS.every((k) => (p[k] ?? null) === o[k]); };
+
+function renderProfiles() {
+  const opt = (p) => '<option value="' + escape(profileKey(p)) + '">' + escape(p.name) + '</option>';
+  const keep = $('profileSel').value;
+  $('profileSel').innerHTML = '<option value="">Personalizado</option>' +
+    '<optgroup label="Por tipo de conteúdo">' + state.profiles.builtin.map(opt).join('') + '</optgroup>' +
+    (state.profiles.saved.length ? '<optgroup label="Meus perfis">' + state.profiles.saved.map(opt).join('') +
+      '</optgroup>' : '');
+  $('profileSel').value = findProfile(keep) ? keep : '';
+  $('contentProfile').innerHTML = '<option value="">Escolher depois</option>' + allProfiles().map(opt).join('');
+  $('contentProfile').value = findProfile(store.get('pref.contentProfile')) ? store.get('pref.contentProfile') : '';
+  syncProfileButtons();
+}
+function syncProfileButtons() {
+  const p = findProfile($('profileSel').value);
+  $('profileDelete').hidden = !p || p.builtin;
+}
+async function loadProfiles() {
+  try {
+    const s = await api('/api/settings');
+    state.profiles = {builtin: s.builtin_profiles || [], saved: s.export_profiles || []};
+  } catch { /* sem perfis: o painel continua funcionando no modo personalizado */ }
+  renderProfiles();
+  applyStoredProfile();
+}
+function applyStoredProfile() {
+  const key = state.project && store.get('profile.' + state.project.id);
+  if (key && !applyProfile(key)) $('profileSel').value = '';
+  else if (!key) { $('profileSel').value = ''; syncProfileButtons(); }
+}
+
+state.applyingProfile = false;
+function applyProfile(key) {
+  const p = findProfile(key);
+  if (!p) return false;
+  state.applyingProfile = true;
+  try {
+    document.querySelector('[data-format="' + p.format + '"]')?.click();
+    const set = (id, prop, value) => { $(id)[prop] = value; $(id).dispatchEvent(new Event('change')); };
+    set('framing', 'value', p.framing);
+    set('subtitles', 'checked', p.subtitles);
+    set('subtitleStyle', 'value', p.subtitle_style);
+    set('refineSubtitles', 'checked', p.refine_subtitles);
+    set('normalize', 'checked', p.normalize_audio);
+    set('hook', 'checked', p.hook);
+    state.filter = p.filter || 'nenhum';
+    store.set('filter', state.filter);
+    applyFilter();
+  } finally { state.applyingProfile = false; }
+  $('profileSel').value = key;
+  if (state.project) store.set('profile.' + state.project.id, key);
+  syncProfileButtons();
+  return true;
+}
+// Mudou uma opção à mão: o perfil deixa de valer (a menos que tudo continue igual).
+function profileTouched() {
+  if (state.applyingProfile || !$('profileSel').value) return;
+  const p = findProfile($('profileSel').value);
+  if (p && sameOptions(p)) return;
+  $('profileSel').value = '';
+  if (state.project) store.set('profile.' + state.project.id, '');
+  syncProfileButtons();
+}
+for (const id of ['framing', 'subtitles', 'subtitleStyle', 'refineSubtitles', 'normalize', 'hook']) {
+  $(id).addEventListener('change', profileTouched);
+}
+for (const b of document.querySelectorAll('[data-format]')) b.addEventListener('click', () => setTimeout(profileTouched));
+$('filterGrid').addEventListener('click', () => setTimeout(profileTouched));
+
+$('profileSel').onchange = () => {
+  const key = $('profileSel').value;
+  if (key) { applyProfile(key); toast('Perfil "' + findProfile(key).name + '" aplicado.'); }
+  else { if (state.project) store.set('profile.' + state.project.id, ''); syncProfileButtons(); }
+};
+const FRAMING_NAMES = {fit: 'quadro inteiro', blur: 'fundo desfocado', track: 'seguir rosto', streamer: 'só o streamer',
+  split: 'webcam + jogo', mix: 'por trecho'};
+$('profileSave').onclick = () => {
+  const o = currentOptions();
+  $('profileSummary').textContent = [o.format, FRAMING_NAMES[o.framing] || o.framing,
+    o.subtitles ? 'legenda ' + (o.subtitle_style === 'dinamica' ? 'animada' : 'clássica') : 'sem legenda',
+    o.filter ? 'filtro ' + (state.filters.find((f) => f.id === o.filter)?.label || o.filter) : null,
+    o.normalize_audio ? 'volume normalizado' : null, o.hook ? 'gancho' : null].filter(Boolean).join(' · ');
+  $('profileName').value = '';
+  $('profileDialog').showModal();
+  $('profileName').focus();
+};
+$('profileForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const name = $('profileName').value.trim().replace(/\s+/g, ' ');
+  if (!name) return;
+  const saved = state.profiles.saved.filter((p) => p.name.toLowerCase() !== name.toLowerCase());
+  const replacing = saved.length < state.profiles.saved.length;
+  try {
+    const s = await api('/api/settings', 'PUT', {export_profiles: [...saved, {name, ...currentOptions()}]});
+    state.profiles.saved = s.export_profiles;
+    $('profileDialog').close();
+    renderProfiles();
+    applyProfile('u:' + s.export_profiles.find((p) => p.name.toLowerCase() === name.toLowerCase()).name);
+    toast(replacing ? 'Perfil "' + name + '" atualizado.' : 'Perfil "' + name + '" salvo.');
+  } catch (err) { toast(err.message, true); }
+};
+$('profileDelete').onclick = async () => {
+  const p = findProfile($('profileSel').value);
+  if (!p || p.builtin) return;
+  if (!await askConfirm({title: 'Excluir perfil', text: 'Excluir o perfil "' + p.name + '"? Os cortes já exportados não mudam.',
+    yes: 'Excluir', danger: true})) return;
+  try {
+    const s = await api('/api/settings', 'PUT', {export_profiles: state.profiles.saved.filter((x) => x !== p)});
+    state.profiles.saved = s.export_profiles;
+    $('profileSel').value = '';
+    renderProfiles();
+    toast('Perfil excluído.');
+  } catch (err) { toast(err.message, true); }
+};
+loadProfiles();
 
 // ------------------------------------------------------------------ estilo de edição (plano)
 

@@ -71,6 +71,23 @@ class StreamerGraphTests(unittest.TestCase):
         self.assertIn('crop=w=iw*0.3130', graph)
         self.assertIn("enable='between(t,3.000,6.000)'", graph)
 
+    def test_streamer_segment_without_webcam_uses_the_main_set_plan(self):
+        # Sem janela de webcam: o trecho "só o streamer" segue o plano da cena principal (outras cenas em quadro
+        # inteiro com fundo desfocado) e o de "seguir rosto" continua com o plano que segue todos os rostos.
+        main = {'ok': True, 'main_set_only': True, 'crop_frac': 0.3164,
+                'shots': [{'start': 0.0, 'end': 2.0, 'layout': 'fill', 'points': [[0.0, 0.81], [2.0, 0.81]]},
+                          {'start': 2.0, 'end': 6.0, 'layout': 'fit', 'points': []}]}
+        track = {**TRACK, 'facecam': None, 'crop_frac': 0.3164, 'main_set': main}
+        segs = [{'start': 0, 'end': 3, 'framing': 'streamer'}, {'start': 3, 'end': 6, 'framing': 'track'}]
+        graph, _ = media.build_filtergraph(INFO, '9:16', 'mix', None, None, track, '', segs)
+        self.assertIn('0.81', graph)                 # posição da bancada (plano principal)
+        self.assertIn('0.5', graph)                  # plano de seguir rosto
+        self.assertIn("between(t,2.000,6.000)", graph)   # cena fora da bancada: fundo desfocado
+        only, _ = media.build_filtergraph(INFO, '9:16', 'mix', None, None, track, '',
+                                          [{'start': 0, 'end': 6, 'framing': 'streamer'}])
+        self.assertIn('0.81', only)
+        self.assertNotIn('0.5000', only)
+
 
 if __name__ == '__main__':
     unittest.main()

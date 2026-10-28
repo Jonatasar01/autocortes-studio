@@ -321,6 +321,12 @@ def run_export(ctx: JobContext) -> dict:
         ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
         track = _cached_track(folder, p, info, start, end, prm['format'], ctx,
                               main_set_only=prm['framing'] == 'streamer')
+        if segments and 'streamer' in kinds and track['ok'] and not track.get('facecam'):
+            # Por trecho com "só o streamer" sem janela de webcam: esses trechos seguem rostos só na cena
+            # principal (bancada), como no modo "só o streamer"; os de "seguir rosto" continuam seguindo todos.
+            main = _cached_track(folder, p, info, start, end, prm['format'], ctx, main_set_only=True)
+            if main['ok'] and main.get('main_set_only'):
+                track = {**track, 'main_set': main, 'main_set_only': True}
         if not track['ok']:
             warnings.append(track['message'])
         elif 'streamer' in kinds | {prm['framing']} and not track.get('facecam'):

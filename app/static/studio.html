@@ -263,6 +263,14 @@
                 <ul id="whyEvidence" class="whylist"></ul>
                 <ul id="whyWarnings" class="whylist warn"></ul>
               </details>
+              <span class="eyebrow spaced" id="profileLabel">Perfil de exportação</span>
+              <div class="profilerow">
+                <select id="profileSel" aria-labelledby="profileLabel" title="Aplica formato, enquadramento, legenda, filtro e áudio de uma vez">
+                  <option value="">Personalizado</option>
+                </select>
+                <button id="profileSave" type="button" class="iconbtn" title="Salvar as opções atuais como perfil" aria-label="Salvar as opções atuais como perfil"><svg class="ic"><use href="#i-plus"/></svg></button>
+                <button id="profileDelete" type="button" class="iconbtn danger" title="Excluir este perfil" aria-label="Excluir este perfil" hidden><svg class="ic"><use href="#i-trash"/></svg></button>
+              </div>
               <span class="eyebrow spaced" id="formatsLabel">Formato de saída</span>
               <div class="formats" id="formats" role="group" aria-labelledby="formatsLabel">
                 <button type="button" class="active" aria-pressed="true" data-format="9:16">9:16</button>
@@ -474,6 +482,11 @@
               <label class="modecard"><input type="radio" name="editMode" value="advanced"><span><svg class="ic"><use href="#i-sliders"/></svg><strong>Avançado</strong><small>Análise automática com todos os ajustes à mostra.</small></span></label>
             </fieldset>
 
+            <label class="field" for="contentProfile">Tipo de conteúdo <small class="muted">— já deixa o perfil de exportação escolhido</small></label>
+            <select id="contentProfile">
+              <option value="">Escolher depois</option>
+            </select>
+
             <label class="field" for="sourceRights">Direitos do vídeo <small class="muted">— revisados de novo antes de exportar</small></label>
             <select id="sourceRights">
               <option value="unknown">Não verificado</option>
@@ -628,6 +641,21 @@
     <button id="confirmNo" class="btn ghost" type="button">Cancelar</button>
     <button id="confirmYes" class="btn primary" type="button">Confirmar</button>
   </footer>
+</dialog>
+
+<dialog id="profileDialog" class="dialog narrow" aria-labelledby="profileDialogTitle">
+  <form id="profileForm" method="dialog">
+    <header><h2 id="profileDialogTitle">Salvar perfil de exportação</h2></header>
+    <div class="dialogbody">
+      <p id="profileSummary" class="hint"></p>
+      <label class="field" for="profileName">Nome do perfil</label>
+      <input id="profileName" maxlength="40" autocomplete="off" required placeholder="Ex.: Shorts do canal">
+    </div>
+    <footer>
+      <button class="btn ghost" type="button" data-close>Cancelar</button>
+      <button class="btn primary" type="submit">Salvar</button>
+    </footer>
+  </form>
 </dialog>
 
 <div id="toast" class="toast" hidden>
