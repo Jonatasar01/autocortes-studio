@@ -273,6 +273,7 @@ function selectionLabel() {
 function updateControls() {
   const ready = isReady(), c = current(), hasVideo = !!state.project;
   for (const id of ['back', 'play', 'forward', 'seek', 'markIn', 'markOut', 'mute', 'fullscreen']) $(id).disabled = !hasVideo;
+  for (const b of document.querySelectorAll('[data-jump]')) b.disabled = !hasVideo;
   $('add').disabled = !ready;
   $('split').disabled = !ready || !c;
   $('remove').disabled = !ready || !c;
@@ -599,6 +600,49 @@ $('fbGood').onclick = () => sendFeedback('bom');
 $('fbBad').onclick = () => sendFeedback('rejeitado');
 $('hideRejected').checked = store.get('hideRejected') === '1';
 $('hideRejected').onchange = () => { store.set('hideRejected', $('hideRejected').checked ? '1' : '0'); render(); };
+
+// ------------------------------------------------------------------ corrigir o texto da legenda
+
+// Lista as frases do corte com o texto editável; clicar no tempo leva o vídeo até a frase. Só as frases
+// alteradas são enviadas; a legenda precisa não desfaz as corrigidas.
+state.subs = null;
+$('editSubtitles').onclick = async () => {
+  const c = current();
+  if (!c || !state.project) return;
+  try {
+    const r = await api('/api/projects/' + state.project.id + '/clips/' + c.id + '/subtitles');
+    state.subs = {clip: c.id, segments: r.segments};
+    $('subsNote').textContent = (r.segments.length ? '' : 'Este corte ainda não tem fala transcrita. ') +
+      (r.refined ? 'Texto da legenda precisa.' : 'Ainda é o texto da análise: na próxima prévia ou exportação a ' +
+        'legenda precisa refaz as frases que você não corrigir.') + ' Apague o texto de uma frase para tirá-la da legenda.';
+    $('subsList').innerHTML = r.segments.map((s, i) =>
+      '<li><button type="button" class="subtime" data-subseek="' + i + '" title="Ir para este ponto">' +
+      escape(fmt(Math.max(0, s.start - c.start))) + '</button><input data-sub="' + i + '" maxlength="400" ' +
+      'aria-label="Texto da frase ' + (i + 1) + '" value="' + escape(s.text) + '">' +
+      (s.edited ? '<small class="subedited">corrigida</small>' : '') + '</li>').join('');
+    $('subsDialog').showModal();
+  } catch (err) { toast(err.message, true); }
+};
+$('subsList').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-subseek]');
+  if (b && state.subs) video.currentTime = state.subs.segments[Number(b.dataset.subseek)].start;
+});
+$('subsForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const s = state.subs;
+  if (!s || !state.project) return;
+  const changed = [...$('subsList').querySelectorAll('[data-sub]')]
+    .map((input) => ({seg: s.segments[Number(input.dataset.sub)], text: input.value.trim()}))
+    .filter(({seg, text}) => text !== seg.text.trim())
+    .map(({seg, text}) => ({start: seg.start, end: seg.end, text}));
+  if (!changed.length) { $('subsDialog').close(); return; }
+  try {
+    const r = await api('/api/projects/' + state.project.id + '/clips/' + s.clip + '/subtitles', 'PUT', {segments: changed});
+    $('subsDialog').close();
+    toast(r.changed === 1 ? '1 frase corrigida. Vale na próxima prévia ou exportação.'
+      : r.changed + ' frases corrigidas. Valem na próxima prévia ou exportação.');
+  } catch (err) { toast(err.message, true); }
+};
 
 // ------------------------------------------------------------------ seleção múltipla e exportação em lote
 
@@ -1364,6 +1408,7 @@ function render() {
   renderRights(p);
   renderPlans();
   renderMix();
+  syncFocus();
   renderTimeline();
   updateControls();
 }
@@ -1381,10 +1426,17 @@ function renderMix() {
   $('mixPanel').hidden = $('framing').value !== 'mix' || !c;
   if ($('mixPanel').hidden) return;
   const at = video.currentTime - c.start;
-  $('mixSegments').innerHTML = mixSegments(c).map((s, i) =>
+  const segs = mixSegments(c);
+  // Início e fim editáveis (o início do primeiro e o fim do último são os do corte); mudar um limite move
+  // o do trecho vizinho junto. Focar um campo leva o vídeo até aquele ponto.
+  const time = (i, which, value, fixed) => '<input class="t" inputmode="decimal" spellcheck="false" autocomplete="off"' +
+    ' data-segtime="' + i + '" data-which="' + which + '" value="' + fmt(value) + '"' + (fixed ? ' readonly tabindex="-1"' : '') +
+    ' aria-label="' + (which === 'start' ? 'Início' : 'Fim') + ' do trecho ' + (i + 1) + '" title="' +
+    (fixed ? (which === 'start' ? 'Começo do corte' : 'Fim do corte') : 'Digite o tempo (ex.: 0:52.5) e tecle Enter') + '">';
+  $('mixSegments').innerHTML = segs.map((s, i) =>
     '<li' + (at >= s.start && at < s.end ? ' class="here"' : '') + '>' +
-    '<button type="button" class="t" data-seek="' + s.start + '" title="Ir para o início do trecho">' +
-    fmt(s.start) + '–' + fmt(s.end) + '</button>' +
+    '<span class="segtimes">' + time(i, 'start', s.start, i === 0) + '<span aria-hidden="true">–</span>' +
+    time(i, 'end', s.end, i === segs.length - 1) + '</span>' +
     '<select data-seg="' + i + '" aria-label="Enquadramento do trecho ' + (i + 1) + '">' +
     Object.entries(FRAMING_LABELS).map(([v, l]) => '<option value="' + v + '"' + (v === s.framing ? ' selected' : '') +
       '>' + l + '</option>').join('') + '</select>' +
@@ -1404,12 +1456,38 @@ $('framing').addEventListener('change', renderMix);
 video.addEventListener('pause', renderMix);
 $('mixSegments').onclick = (e) => {
   const c = current();
-  const seek = e.target.closest('[data-seek]');
-  if (seek && c) { video.currentTime = c.start + Number(seek.dataset.seek); renderMix(); return; }
   const del = e.target.closest('[data-del]');
   if (del) saveMix(mixSegments(c).filter((_, i) => i !== Number(del.dataset.del)));
 };
+$('mixSegments').addEventListener('focusin', (e) => {
+  const input = e.target.closest('[data-segtime]');
+  const c = current();
+  if (input && c && !Number.isNaN(parseTime(input.value))) video.currentTime = c.start + parseTime(input.value);
+});
+$('mixSegments').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.closest('[data-segtime]')) { e.preventDefault(); e.target.blur(); }
+  if (e.key === 'Escape' && e.target.closest('[data-segtime]')) { e.preventDefault(); renderMix(); }
+});
+// Novo limite entre dois trechos: cada trecho fica com pelo menos MIX_MIN segundos.
+const MIX_MIN = 0.5;
+function moveBoundary(i, which, text) {
+  const c = current();
+  if (!c) return;
+  const segs = mixSegments(c);
+  const t = parseTime(text);
+  const k = which === 'end' ? i : i - 1;     // limite entre os trechos k e k + 1
+  if (Number.isNaN(t)) { toast('Tempo inválido. Use, por exemplo, 52.5 ou 0:52.5.', true); return renderMix(); }
+  if (k < 0 || k >= segs.length - 1) return renderMix();
+  const lo = segs[k].start + MIX_MIN, hi = segs[k + 1].end - MIX_MIN;
+  const v = Math.round(Math.min(hi, Math.max(lo, t)) * 100) / 100;
+  if (Math.abs(v - t) > 0.01) toast('Ajustado para ' + fmt(v) + ': cada trecho precisa de pelo menos ' + MIX_MIN + ' s entre os vizinhos.');
+  if (Math.abs(v - segs[k].end) < 0.005) return renderMix();
+  segs[k].end = segs[k + 1].start = v;
+  saveMix(segs);
+}
 $('mixSegments').onchange = (e) => {
+  const input = e.target.closest('[data-segtime]');
+  if (input) return moveBoundary(Number(input.dataset.segtime), input.dataset.which, input.value);
   const sel = e.target.closest('[data-seg]');
   if (!sel) return;
   const segs = mixSegments(current());
@@ -1431,6 +1509,103 @@ $('mixSplit').onclick = () => {
 };
 $('mixAuto').onclick = () => saveMix(null, {auto: true});
 $('mixClear').onclick = () => saveMix([]);
+
+// ------------------------------------------------------------------ área do streamer desenhada à mão
+
+// Retângulo em fração do quadro inteiro do vídeo. O player encaixa o vídeo na caixa (object-fit: contain),
+// então as contas usam a área onde a imagem aparece de fato.
+state.focusEdit = null;
+function videoArea() {
+  const box = $('videoBox').getBoundingClientRect();
+  const vw = video.videoWidth || 16, vh = video.videoHeight || 9;
+  const s = Math.min(box.width / vw, box.height / vh);
+  const w = vw * s, h = vh * s;
+  return {left: (box.width - w) / 2, top: (box.height - h) / 2, width: w, height: h, box};
+}
+function placeFocus(rect) {
+  const a = videoArea(), el = $('focusArea');
+  el.hidden = !rect;
+  if (!rect) return;
+  el.style.left = (a.left + rect[0] * a.width) + 'px';
+  el.style.top = (a.top + rect[1] * a.height) + 'px';
+  el.style.width = (rect[2] * a.width) + 'px';
+  el.style.height = (rect[3] * a.height) + 'px';
+}
+function syncFocus() {
+  const c = current();
+  const usable = Boolean(c) && ['streamer', 'split', 'mix'].includes($('framing').value);
+  $('focusBox').hidden = !usable;
+  if (state.focusEdit) return;   // desenhando: a camada fica como está
+  const rect = usable ? c.focus_rect : null;
+  $('focusClear').hidden = !rect;
+  $('focusInfo').textContent = rect
+    ? 'Área definida à mão (contorno tracejado no vídeo): o "Só o streamer" mostra só essa parte neste corte.'
+    : 'A área do streamer é achada sozinha (janela da webcam ou da bancada). Se errar, desenhe a área no vídeo.';
+  $('focusLayer').hidden = !rect;
+  $('focusLayer').classList.remove('editing');
+  $('focusBar').hidden = true;
+  placeFocus(rect);
+}
+$('framing').addEventListener('change', syncFocus);
+video.addEventListener('loadedmetadata', syncFocus);
+window.addEventListener('resize', () => (state.focusEdit ? placeFocus(state.focusEdit.rect) : syncFocus()));
+
+$('focusDraw').onclick = () => {
+  const c = current();
+  if (!c) return;
+  if (!video.paused) video.pause();
+  state.focusEdit = {rect: c.focus_rect || null, from: null};
+  $('focusLayer').hidden = false;
+  $('focusLayer').classList.add('editing');
+  $('focusBar').hidden = false;
+  $('focusOk').disabled = !state.focusEdit.rect;
+  placeFocus(state.focusEdit.rect);
+};
+function focusPoint(e) {
+  const a = videoArea();
+  return [Math.min(1, Math.max(0, (e.clientX - a.box.left - a.left) / a.width)),
+    Math.min(1, Math.max(0, (e.clientY - a.box.top - a.top) / a.height))];
+}
+$('focusLayer').addEventListener('pointerdown', (e) => {
+  if (!state.focusEdit || e.target.closest('#focusBar')) return;
+  e.preventDefault();
+  $('focusLayer').setPointerCapture(e.pointerId);
+  state.focusEdit.from = focusPoint(e);
+});
+$('focusLayer').addEventListener('pointermove', (e) => {
+  const f = state.focusEdit;
+  if (!f?.from) return;
+  const [x, y] = focusPoint(e);
+  f.rect = [Math.min(x, f.from[0]), Math.min(y, f.from[1]), Math.abs(x - f.from[0]), Math.abs(y - f.from[1])];
+  placeFocus(f.rect);
+});
+$('focusLayer').addEventListener('pointerup', () => {
+  const f = state.focusEdit;
+  if (!f?.from) return;
+  f.from = null;
+  const big = f.rect && f.rect[2] >= 0.05 && f.rect[3] >= 0.05;
+  $('focusOk').disabled = !big;
+  $('focusHelp').textContent = big ? 'Confira a área. Arraste de novo para refazer.' : 'Área pequena demais: arraste de novo.';
+});
+function endFocusEdit() {
+  state.focusEdit = null;
+  $('focusHelp').textContent = 'Arraste sobre o vídeo para marcar a área do streamer.';
+  syncFocus();
+}
+$('focusCancel').onclick = endFocusEdit;
+async function saveFocus(rect) {
+  const c = current();
+  if (!c || !state.project) return;
+  try {
+    const r = await api('/api/projects/' + state.project.id + '/clips/' + c.id + '/focus', 'PUT', {rect});
+    c.focus_rect = r.focus_rect || undefined;
+    toast(rect ? 'Área do streamer definida para este corte.' : 'Voltou para a área automática.');
+  } catch (err) { toast(err.message, true); }
+  endFocusEdit();
+}
+$('focusOk').onclick = () => state.focusEdit?.rect && saveFocus(state.focusEdit.rect.map((v) => Math.round(v * 10000) / 10000));
+$('focusClear').onclick = () => saveFocus(null);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.focusEdit) { e.preventDefault(); endFocusEdit(); } });
 
 function renderRights(p) {
   const r = p.rights;
@@ -2034,6 +2209,7 @@ $('play').onclick = () => {
 };
 $('back').onclick = () => nudge(-1);
 $('forward').onclick = () => nudge(1);
+for (const b of document.querySelectorAll('[data-jump]')) b.onclick = () => nudge(Number(b.dataset.jump));
 $('markIn').onclick = () => { state.markIn = video.currentTime; selectionLabel(); };
 $('markOut').onclick = () => { state.markOut = video.currentTime; selectionLabel(); };
 $('previewClip').onclick = () => {
@@ -2069,6 +2245,8 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && !e.target.closest('button, a, [role=tab]')) { e.preventDefault(); $('play').click(); }
   else if (k === 'i') $('markIn').click();
   else if (k === 'o') $('markOut').click();
+  else if (k === 'j') nudge(e.shiftKey ? -30 : -10);
+  else if (k === 'l') nudge(e.shiftKey ? 30 : 10);
   else if (k === 'n') create();
   else if (k === 's' && current()) split();
   else if (k === 'm') $('mute').click();
@@ -2357,6 +2535,7 @@ function exportOptions(format, rights) {
     subtitle_style: $('subtitleStyle').value, refine_subtitles: $('refineSubtitles').checked,
     normalize_audio: $('normalize').checked, hook: $('hook').checked, acknowledge_rights: rights,
     edit_plan: exportPlanName(), filter: state.filter === 'nenhum' ? null : state.filter,
+    keep_framing: true,   // o enquadramento escolhido vale mesmo com plano de edição
   };
 }
 
@@ -2437,10 +2616,18 @@ function syncSubtitleStyle() {
   const planned = Boolean(plan);
   if (plan) {
     $('subtitleStyle').value = plan.settings.subtitle_style;
-    $('framing').value = plan.settings.framing;
     $('normalize').checked = plan.settings.normalize_audio;
+    // O plano sugere o enquadramento só quando é escolhido; depois ele continua editável e a escolha vale.
+    const key = state.project?.id + ':' + current()?.id + ':' + exportPlanName();
+    if (state.planFramingKey !== key) {
+      state.planFramingKey = key;
+      $('framing').value = plan.settings.framing;
+      $('framing').dispatchEvent(new Event('change'));
+    }
+  } else {
+    state.planFramingKey = null;
   }
-  $('framing').disabled = planned;
+  $('framing').disabled = false;
   $('normalize').disabled = planned;
   if (state.profiles) profileTouched();
   $('subtitleStyle').disabled = !$('subtitles').checked || planned;
@@ -2603,8 +2790,11 @@ function renderExports() {
         actions: '<span class="qactions"><button type="button" class="iconbtn" title="Assistir" aria-label="Assistir" ' +
           'data-watch="' + c.id + '" data-format="' + escape(format) + '"><svg class="ic"><use href="#i-eye"/></svg></button>' +
           '<a class="iconbtn" title="Baixar MP4" aria-label="Baixar MP4" href="' + downloadUrl(p.id, c.id, format) +
-          '"><svg class="ic"><use href="#i-download"/></svg></a></span>',
-      })).join(''), done.length <= 3) +
+          '"><svg class="ic"><use href="#i-download"/></svg></a>' +
+          '<button type="button" class="iconbtn danger" title="Excluir esta exportação" aria-label="Excluir esta exportação" ' +
+          'data-delexport="' + c.id + '" data-format="' + escape(format) + '"><svg class="ic"><use href="#i-trash"/></svg></button></span>',
+      })).join('') + (done.length > 1 ? '<li class="qrow qbulk"><button type="button" class="btn ghost danger" ' +
+        'data-delallexports>Excluir todas as exportações</button></li>' : ''), done.length <= 3) +
     group('failed', 'Com erro', failed, failed.map((j) =>
       row(clipLabel(j.clip_id), (j.format || '') + ' · ' + (j.error || 'A exportação não terminou.'), {
         tone: 'error',
@@ -2674,8 +2864,44 @@ $('exportQueue').addEventListener('click', async (e) => {
     if (!c) return;
     const format = watch.dataset.format;
     openPreview(downloadUrl(state.project.id, c.id, format), c.exports?.[format], {preview: false});
+    return;
   }
+  const del = e.target.closest('[data-delexport], [data-delallexports]');
+  if (del) deleteExports(del.dataset.delallexports !== undefined ? null
+    : [{clip: Number(del.dataset.delexport), format: del.dataset.format}]);
 });
+
+// Excluir exportações concluídas (uma ou todas do projeto). As cópias na pasta de saída ficam.
+async function deleteExports(items) {
+  const p = state.project;
+  if (!p) return;
+  const all = p.clips.flatMap((c) => Object.keys(c.exports || {}).map((format) => ({clip: c.id, format})));
+  items = items || all;
+  if (!items.length) return;
+  const one = items.length === 1;
+  const ok = await askConfirm({
+    title: one ? 'Excluir exportação' : 'Excluir exportações', danger: true,
+    yes: one ? 'Excluir' : 'Excluir ' + items.length,
+    text: (one ? 'O arquivo de ' + clipLabel(items[0].clip) + ' (' + items[0].format + ') será apagado do projeto. '
+      : 'Os ' + items.length + ' arquivos exportados deste projeto serão apagados. ') +
+      'Os cortes continuam e podem ser exportados de novo. As cópias já salvas na pasta de saída não são apagadas.',
+  });
+  if (!ok) return;
+  let freed = 0, failed = 0;
+  for (const it of items) {
+    try {
+      freed += (await api('/api/projects/' + p.id + '/clips/' + it.clip + '/exports?format=' +
+        encodeURIComponent(it.format), 'DELETE')).freed_bytes;
+      const c = p.clips.find((x) => x.id === it.clip);
+      if (c?.exports) delete c.exports[it.format];
+    } catch (err) { failed++; if (one) toast(err.message, true); }
+  }
+  renderExports();
+  render();
+  if (!one || !failed) toast((items.length - failed) + (items.length - failed === 1 ? ' exportação excluída' : ' exportações excluídas') +
+    (freed ? ' · ' + cacheSize(freed) + ' liberados' : '') + (failed ? ' · ' + failed + ' não puderam ser excluídas' : '') + '.', failed > 0);
+  loadCacheUsage();
+}
 $('exportQueue').addEventListener('toggle', (e) => {
   const d = e.target.closest('details[data-group]');
   if (d) state.queueClosed = {...state.queueClosed, [d.dataset.group]: !d.open};

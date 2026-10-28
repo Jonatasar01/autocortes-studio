@@ -41,7 +41,7 @@ SMOOTHING = 0.18             # fração da distância percorrida a cada amostra
 SIMPLIFY_TOLERANCE = 0.004   # erro máximo (fração da largura) ao simplificar o caminho da câmera
 MAX_POINTS_PER_SHOT = 40
 MIN_SHOT_SECONDS = 0.6
-PLAN_VERSION = 6   # muda quando o algoritmo do plano muda (invalida os planos em cache)
+PLAN_VERSION = 8   # muda quando o algoritmo do plano muda (invalida os planos em cache)
 YUNET_MODEL = 'face_detection_yunet_2023mar.onnx'
 YUNET_SCORE = 0.7            # confiança mínima do YuNet
 MIN_TRACK_HITS = 3           # um rosto precisa aparecer em 3 amostras (0,6 s); falsos positivos piscam
@@ -629,6 +629,8 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
                  zip(samples, samples[1:], main_mask, main_mask[1:]) if x != y]
         cuts = sorted(set(cuts) | set(flips))
         in_main = {id(s): m for s, m in zip(samples, main_mask)}
+    # Fora da bancada, a transmissão costuma mostrar os streamers numa janela no canto: ela vira o enquadramento.
+    pip = detect_pip([s for s, m in zip(samples, main_mask) if not m]) if main_mask else None
     bounds = [0.0]
     for c in cuts:
         if c - bounds[-1] >= MIN_SHOT_SECONDS and duration - c >= MIN_SHOT_SECONDS:
@@ -642,17 +644,21 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
     def add(a: float, b: float, layout: str, points: list) -> None:
         if b - a <= 1e-3:
             return
-        if shots and shots[-1]['layout'] == layout == 'fit':
+        if shots and shots[-1]['layout'] == layout and layout in ('fit', 'pip'):
             shots[-1]['end'] = b
         else:
             shots.append({'start': a, 'end': b, 'layout': layout, 'points': points})
 
-    other_seconds = 0.0
+    other_seconds = pip_seconds = 0.0
     for a, b in zip(bounds, bounds[1:]):
         part = [s for s in samples if a <= s['t'] < b]
         if main_mask and part and sum(in_main[id(s)] for s in part) < len(part) / 2:
-            other_seconds += b - a   # fora da bancada (campo, túnel, jogo): mostra a cena inteira
-            add(a, b, 'fit', [])
+            other_seconds += b - a   # fora da bancada (campo, túnel, jogo)
+            if pip and pip_visible(part, pip):
+                pip_seconds += b - a   # a janela com os streamers, ampliada
+                add(a, b, 'pip', [])
+            else:                      # sem a janela: mostra a cena inteira
+                add(a, b, 'fit', [])
             continue
         targets = _to_visible(speaker_targets(part), media, box)
         seen = sum(1 for tg in targets if tg[1] is not None)
@@ -684,7 +690,12 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
                 'exportado com fundo desfocado.'}
     fit_seconds = sum(s['end'] - s['start'] for s in shots if s['layout'] == 'fit')
     message = 'Enquadramento seguindo o rosto de quem fala.'
-    if main_mask:
+    if main_mask and pip_seconds:
+        message = (f'Rostos seguidos só na cena principal (bancada); em {pip_seconds:.0f} s de outras cenas, a janela '
+                   'com os streamers foi ampliada')
+        rest = other_seconds - pip_seconds
+        message += (f'; {rest:.0f} s sem a janela em quadro inteiro com fundo desfocado.' if rest >= 0.5 else '.')
+    elif main_mask:
         message = (f'Rostos seguidos só na cena principal (bancada); {other_seconds:.0f} s de outras cenas '
                    '(campo, jogo...) em quadro inteiro com fundo desfocado.')
     elif fit_seconds >= 0.5:
@@ -697,9 +708,12 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
                'face_visibility_p05': round(ordered[int(len(ordered) * 0.05)], 3) if ordered else None,
                'unsafe_samples': sum(1 for v in ordered if v < 0.9),
                'unsafe_shots': unsafe_shots, 'fit_seconds': round(fit_seconds, 2),
-               'other_scene_seconds': round(other_seconds, 2) if main_mask else None}
+               'other_scene_seconds': round(other_seconds, 2) if main_mask else None,
+               'pip_seconds': round(pip_seconds, 2) if main_mask else None}
     return {'ok': True, 'shots': shots, 'crop_frac': round(crop_frac, 4), 'message': message, 'metrics': metrics,
-            'facecam': _visible_rect(facecam, media, box), 'main_set_only': bool(main_mask)}
+            'facecam': _visible_rect(facecam, media, box), 'main_set_only': bool(main_mask),
+            'pip': (_visible_rect(pip_inner(pip, samples[0]['gray'].shape[::-1]), media, box)
+                    if pip_seconds else None)}
 
 
 def _visible_rect(rect, media: dict, box: dict | None):
@@ -723,7 +737,11 @@ def detect_facecam(samples: list[dict], targets: list[tuple]) -> tuple[float, fl
     """
     import cv2
     import numpy as np
-    boxes = [tg[2] for tg in targets if len(tg) > 2 and tg[2]]
+    # A webcam fica numa lateral (esquerda ou direita): só rostos ali servem de ponto de partida. Um rosto no meio
+    # da tela é do jogo ou da transmissão (jogadores, personagens), não a câmera do streamer.
+    boxes = _lateral_boxes([tg[2] for tg in targets if len(tg) > 2 and tg[2]])
+    if len(boxes) < 3:   # quem fala está no meio: procura os rostos das laterais em todas as amostras
+        boxes = _lateral_boxes([tuple(f[:4]) for s in samples for f in s.get('faces') or []])
     if len(boxes) < 3:
         return None
     fx, fy, fw, fh = (float(v) for v in np.median(np.asarray(boxes), axis=0))
@@ -757,7 +775,19 @@ def detect_facecam(samples: list[dict], targets: list[tuple]) -> tuple[float, fl
     aspect = (rect[2] * W) / max(1.0, rect[3] * H)
     if not (face_area * 3 <= area <= 0.6 and 0.6 <= aspect <= 2.6):
         return None   # grande demais (a "janela" é a tela) ou formato estranho
+    if rect[0] < FACECAM_SIDE_MAX < rect[0] + rect[2] and rect[0] < 1 - FACECAM_SIDE_MAX < rect[0] + rect[2]:
+        return None   # atravessa o meio da tela: não é a janela lateral da webcam
     return tuple(round(v, 4) for v in rect)
+
+
+FACECAM_SIDE_MAX = 0.42   # centro do rosto da webcam até 42% da largura (esquerda) ou a partir de 58% (direita)
+
+
+def _lateral_boxes(boxes: list) -> list:
+    """Caixas de rosto do lado (esquerdo ou direito) com mais ocorrências; nenhuma se só houver rostos no meio."""
+    left = [b for b in boxes if b[0] + b[2] / 2 <= FACECAM_SIDE_MAX]
+    right = [b for b in boxes if b[0] + b[2] / 2 >= 1 - FACECAM_SIDE_MAX]
+    return left if len(left) >= len(right) else right
 
 
 def _to_visible(targets: list[tuple], media: dict, box: dict | None) -> list[tuple]:
@@ -810,8 +840,84 @@ def crop_x_expression(shots: list[dict]) -> str:
     return media.expr_sum(terms)
 
 
-def fit_enable_expression(shots: list[dict]) -> str | None:
-    spans = [s for s in shots if s['layout'] == 'fit']
+def fit_enable_expression(shots: list[dict], layout: str = 'fit') -> str | None:
+    spans = [s for s in shots if s['layout'] == layout]
     if not spans:
         return None
     return media.expr_sum([f'between(t,{s["start"]:.3f},{s["end"]:.3f})' for s in spans])
+
+
+def pip_enable_expression(shots: list[dict]) -> str | None:
+    return fit_enable_expression(shots, 'pip')
+
+
+# Janela dos streamers na transmissão (picture-in-picture): um vídeo 16:9 num canto, com moldura fixa.
+PIP_MIN, PIP_MAX = 0.10, 0.45      # largura e altura, em fração do quadro
+PIP_ASPECT = (1.5, 2.05)           # proporção em pixels (16:9 ≈ 1,78)
+PIP_MOTION = 4.0                   # variação média (0–255) entre amostras dentro da janela: é vídeo, não arte fixa
+PIP_BORDER = 0.6                   # fração da moldura visível numa cena para usar a janela nela
+
+
+def _persistent_edges(samples: list[dict], need: float):
+    import cv2
+    import numpy as np
+    kernel = np.ones((3, 3), np.uint8)
+    return np.mean([cv2.dilate(cv2.Canny(s['gray'], 60, 160), kernel) > 0 for s in samples], axis=0) >= need
+
+
+def detect_pip(samples: list[dict]) -> tuple[float, float, float, float] | None:
+    """Janela com os streamers que a transmissão mostra num canto nas cenas fora da bancada, ou ``None``.
+
+    Procura, nas amostras dessas cenas, um retângulo de moldura fixa numa lateral, em proporção de vídeo (16:9),
+    com imagem em movimento dentro (placares e artes fixas ficam de fora).
+    """
+    import cv2
+    import numpy as np
+    if len(samples) < 8:
+        return None
+    picked = samples[::max(1, len(samples) // FACECAM_SAMPLES)]
+    H, W = picked[0]['gray'].shape
+    persist = _persistent_edges(picked, 0.8).astype(np.uint8) * 255
+    contours, _ = cv2.findContours(persist, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    best = None
+    for c in contours:
+        x, y, w, h = cv2.boundingRect(c)
+        fw, fh, aspect = w / W, h / H, w / max(1, h)
+        cx = (x + w / 2) / W
+        if not (PIP_MIN <= fw <= PIP_MAX and PIP_MIN <= fh <= PIP_MAX and PIP_ASPECT[0] <= aspect <= PIP_ASPECT[1]):
+            continue
+        if FACECAM_SIDE_MAX < cx < 1 - FACECAM_SIDE_MAX:
+            continue   # no meio da tela não é a janela lateral
+        inner = [s['gray'][y + 3:y + h - 3, x + 3:x + w - 3].astype(np.float32) for s in picked]
+        motion = float(np.mean([np.abs(a - b).mean() for a, b in zip(inner, inner[1:])]))
+        if motion < PIP_MOTION:
+            continue
+        score = fw * fh - abs(aspect - 16 / 9) * 0.01
+        if best is None or score > best[0]:
+            best = (score, (x / W, y / H, fw, fh))
+    return tuple(round(v, 4) for v in best[1]) if best else None
+
+
+def pip_inner(rect, size: tuple[int, int]) -> tuple[float, float, float, float]:
+    """Só o vídeo de dentro da janela: sem a moldura e em 16:9 a partir do topo (a faixa de texto da transmissão
+    costuma ficar embaixo, dentro da mesma moldura)."""
+    W, H = size
+    x, y, w, h = rect[0] * W, rect[1] * H, rect[2] * W, rect[3] * H
+    inset = max(2.0, w * 0.015)
+    x, y, w, h = x + inset, y + inset, w - 2 * inset, h - 2 * inset
+    h = min(h, w * 9 / 16)
+    return tuple(round(v, 4) for v in (x / W, y / H, w / W, h / H))
+
+
+def pip_visible(samples: list[dict], rect) -> bool:
+    """A moldura da janela aparece nestas amostras (a cena tem a janela)?"""
+    import numpy as np
+    if not samples:
+        return False
+    H, W = samples[0]['gray'].shape
+    x0, y0 = int(round(rect[0] * W)), int(round(rect[1] * H))
+    x1 = min(W - 1, int(round((rect[0] + rect[2]) * W)) - 1)
+    y1 = min(H - 1, int(round((rect[1] + rect[3]) * H)) - 1)
+    edges = _persistent_edges(samples, 0.6)
+    border = np.concatenate([edges[y0, x0:x1], edges[y1, x0:x1], edges[y0:y1, x0], edges[y0:y1, x1]])
+    return float(border.mean()) >= PIP_BORDER

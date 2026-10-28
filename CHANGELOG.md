@@ -1,5 +1,42 @@
 ## Não lançado
 
+### Player: pular 10 s e 30 s
+- Botões **-30**, **-10**, **+10** e **+30** ao lado do voltar/avançar 1 s; atalhos **J** / **L** (10 s) e
+  **Shift+J** / **Shift+L** (30 s), também na ajuda de teclado.
+
+### "Só o streamer": área desenhada à mão
+- **Desenhar área no vídeo** (aba Efeitos, com "Só o streamer", "Webcam + jogo" ou "Por trecho"): arraste um
+  retângulo sobre o player; a área fica no corte e a exportação recorta só ela, com fundo desfocado, sem detecção
+  automática nem análise de rostos. Nos trechos "seguir rosto" do "Por trecho" os rostos continuam sendo seguidos.
+  "Usar a automática" volta para a detecção. `PUT /api/projects/{id}/clips/{n}/focus`.
+- "Só o streamer" num trecho do "Por trecho" em formato horizontal passa a usar a janela (antes seguia o rosto).
+
+### Por trecho: tempos editáveis
+- Cada trecho tem início e fim em campos de texto (`52.5`, `0:52.5`); mudar um limite move o do vizinho junto,
+  com mínimo de 0,5 s por trecho. Focar o campo leva o vídeo até o ponto; Enter confirma, Esc desfaz.
+
+### Legenda: sem repetições e com correção à mão
+- **Legenda precisa sem o contexto da frase anterior:** com ele, numa live barulhenta o modelo entrava em laço e
+  repetia a mesma frase por cima da fala real ("Porra, viado!" 8× no lugar de "Ô louco! … Eu ia comer teu bolo!"
+  no corte #10), e levava 67 s em vez de 15 s. Cortes refinados com a configuração antiga são refeitos na próxima
+  prévia ou exportação (marca `large-v3-turbo:v2`).
+- **Corrigir texto da legenda** (aba Legendas): lista as frases do corte com o texto editável; clicar no tempo leva
+  o vídeo até a frase; texto vazio tira a frase. As palavras ganham tempo de novo para a legenda animada, e as frases
+  corrigidas ficam marcadas: a legenda precisa não as desfaz. Erros de áudio que nenhum ajuste corrige ("pra ele dar
+  sem deficiência" no lugar de "pra acender aqui", com a torcida ao fundo) se resolvem aqui.
+  API: `GET`/`PUT /api/projects/{id}/clips/{n}/subtitles`.
+
+### Render mais rápido e "Só o streamer" em transmissões
+- **Exportação com pausas cortadas** (plano de edição ou "encurtar pausas"): a leitura da origem para no fim do corte.
+  Antes, a saída ficava mais curta que o trecho e o FFmpeg seguia decodificando o resto da live até preencher a
+  duração (a barra parava em ~85%). Corte de 108 s de uma live: 1060 s → 63 s; prévia: ~30 min → 60 s.
+- Fundo desfocado: escurece antes de ampliar e amplia em bilinear (mesmo resultado, ~13% menos tempo no ramo).
+- **"Só o streamer"**: a janela da webcam é procurada só nas laterais (rostos no meio da tela não servem de ponto
+  de partida). Em transmissões sem webcam, a **janela dos streamers no canto** (picture-in-picture) é achada pela
+  moldura fixa, formato 16:9 e vídeo dentro; nas cenas fora da bancada em que ela aparece, o recorte é o vídeo de
+  dentro, ampliado com fundo desfocado. Corte #10 do vídeo IRL: 50 s de campo passaram de jogadores para os
+  streamers. Planos de enquadramento em cache são refeitos (versão 8).
+
 ### Seguimento — limpeza de cache
 - Painel de mídia: "Liberar cache (tamanho)" quando o projeto tem 1 MB ou mais de cache. Apaga miniaturas, onda do
   áudio, energia, faixas pretas, planos de enquadramento e prévias (`cache/`, `direction/`, `preview/`), que o app refaz

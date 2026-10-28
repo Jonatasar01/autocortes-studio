@@ -466,6 +466,93 @@ def edit_clip(project_id: str, clip_id: int, start: float, end: float, title: st
         return dict(clip)
 
 
+# --------------------------------------------------------------------------- área do streamer definida à mão
+
+FOCUS_MIN = 0.05   # lado mínimo da área (fração do quadro)
+
+
+def set_focus_rect(project_id: str, clip_id: int, rect: list | None) -> dict:
+    """Área do quadro (``x, y, largura, altura`` em fração do vídeo inteiro) que o "Só o streamer" mostra neste corte,
+    no lugar da janela achada sozinha. ``None`` volta para a detecção automática."""
+    if rect is not None:
+        if (not isinstance(rect, (list, tuple)) or len(rect) != 4
+                or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in rect)):
+            raise AppError('Área inválida.', 400, 'bad_input')
+        x, y, w, h = (float(v) for v in rect)
+        x, y = min(max(x, 0.0), 1.0), min(max(y, 0.0), 1.0)
+        w, h = min(w, 1.0 - x), min(h, 1.0 - y)
+        if w < FOCUS_MIN or h < FOCUS_MIN:
+            raise AppError('Desenhe uma área maior (pelo menos 5% do vídeo em cada lado).', 400, 'bad_input')
+        rect = [round(x, 4), round(y, 4), round(w, 4), round(h, 4)]
+    with storage.edit_project(project_id) as p:
+        clip = _find_clip(p, clip_id)
+        if rect is None:
+            clip.pop('focus_rect', None)
+        else:
+            clip['focus_rect'] = rect
+        return {'clip_id': clip_id, 'focus_rect': clip.get('focus_rect')}
+
+
+# --------------------------------------------------------------------------- texto da legenda
+
+def _in_clip(seg: dict, clip: dict) -> bool:
+    return clip['start'] <= (seg['start'] + seg['end']) / 2 <= clip['end']
+
+
+def clip_subtitles(project_id: str, clip_id: int) -> dict:
+    """Frases da transcrição dentro do corte, na ordem: o texto que vira a legenda."""
+    p = storage.read_project(project_id)
+    clip = _find_clip(p, clip_id)
+    segs = [s for s in p.get('transcript') or [] if _in_clip(s, clip)]
+    refined = pipeline._refined(p, clip['start'], clip['end'])
+    return {'clip_id': clip_id, 'refined': refined,
+            'segments': [{'start': s['start'], 'end': s['end'], 'text': s.get('text', ''),
+                          'edited': bool(s.get('edited'))} for s in segs]}
+
+
+def _retime_words(seg: dict, text: str) -> list[dict]:
+    """Palavras do texto corrigido com tempo: as originais quando a quantidade bate; senão, a duração da frase
+    dividida pelo tamanho de cada palavra (a legenda animada destaca uma por vez)."""
+    words = text.split()
+    old = seg.get('words') or []
+    if len(old) == len(words):
+        return [{**w, 'word': new} for w, new in zip(old, words)]
+    start, end = seg['start'], seg['end']
+    total = sum(len(w) + 1 for w in words) or 1
+    out, t = [], start
+    for w in words:
+        dt = (end - start) * (len(w) + 1) / total
+        out.append({'start': round(t, 2), 'end': round(t + dt, 2), 'word': w})
+        t += dt
+    return out
+
+
+def set_clip_subtitles(project_id: str, clip_id: int, segments: list[dict]) -> dict:
+    """Corrige o texto das frases do corte (identificadas por início e fim). Texto vazio apaga a frase.
+    As frases corrigidas ficam marcadas e a "legenda precisa" não as substitui depois."""
+    with storage.edit_project(project_id) as p:
+        _require_ready(p)
+        clip = _find_clip(p, clip_id)
+        # Cópia: a transcrição lida fica em cache, e o storage só regrava quando recebe uma lista nova.
+        transcript = copy.deepcopy(p.get('transcript') or [])
+        changed = 0
+        for item in segments:
+            text = _clean_text(str(item.get('text') or ''), 400)
+            seg = next((s for s in transcript if _in_clip(s, clip) and abs(s['start'] - float(item['start'])) < 0.01
+                        and abs(s['end'] - float(item['end'])) < 0.01), None)
+            if seg is None:
+                raise AppError('A legenda mudou enquanto você editava. Abra o corte de novo.', 409, 'stale')
+            if text == seg.get('text', '').strip():
+                continue
+            changed += 1
+            if not text:
+                transcript.remove(seg)
+                continue
+            seg.update({'text': text, 'words': _retime_words(seg, text), 'edited': True})
+        p['transcript'] = transcript
+    return clip_subtitles(project_id, clip_id) | {'changed': changed}
+
+
 
 # --------------------------------------------------------------------------- enquadramento por trecho
 
@@ -764,8 +851,10 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
             if _plans_stale(clip):
                 raise AppError('Os tempos do corte mudaram depois que o plano foi gerado. Gere o plano de novo.',
                                409, 'plan_stale')
-            # O plano decide enquadramento, estilo de legenda, tratamento de áudio e pausas.
-            options = {**options, 'framing': plan['settings']['framing'],
+            # O plano decide enquadramento, estilo de legenda, tratamento de áudio e pausas. O enquadramento
+            # escolhido no editor (``keep_framing``) vale sobre o do plano.
+            options = {**options, 'framing': options['framing'] if options.get('keep_framing') and
+                       options.get('framing') in media.FRAMINGS else plan['settings']['framing'],
                        'subtitle_style': plan['settings']['subtitle_style'],
                        'normalize_audio': plan['settings']['normalize_audio'], 'shorten_pauses': False}
             framing = options['framing']
@@ -797,6 +886,8 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
         if plan is not None:
             params['edit_plan'] = copy.deepcopy(plan)
             params['edit_plan_name'] = plan_name
+        if clip.get('focus_rect') and framing in ('streamer', 'split', 'mix'):
+            params['focus_rect'] = list(clip['focus_rect'])   # área do streamer desenhada à mão
         if framing == 'mix':
             # Por trecho: usa os trechos marcados no corte; sem trechos, a variação automática.
             clip_len = clip['end'] - clip['start']
@@ -1133,6 +1224,39 @@ def export_path(project_id: str, clip_id: int, fmt: str | None, kind: str = 'mp4
         raise AppError('Arquivo não encontrado. Exporte novamente.', 404, 'not_found')
     slug = media.FORMAT_SLUG.get(record.get('format'), 'corte')
     return path, safe_download_name(record.get('title') or clip['title'], f'_{slug}.{kind}')
+
+
+def delete_export(project_id: str, clip_id: int, fmt: str) -> dict:
+    """Exclui uma exportação concluída do corte (MP4, legenda e pacote em ``clips/``). As cópias já feitas na pasta
+    de saída não são apagadas: são arquivos do usuário fora do projeto."""
+    folder = storage.project_dir(project_id)
+    busy = [j for j in _jobs().for_project(project_id, active_only=True)
+            if j.get('kind') == 'export' and (j.get('params') or {}).get('clip_id') == clip_id
+            and (j.get('params') or {}).get('format') == fmt]
+    if busy:
+        raise AppError('Este corte está sendo exportado neste formato; espere terminar ou cancele.', 409, 'busy')
+    with storage.edit_project(project_id) as p:
+        clip = _find_clip(p, clip_id)
+        record = (clip.get('exports') or {}).pop(fmt, None)
+        if record is None:
+            raise AppError('Exportação não encontrada.', 404, 'not_exported')
+        if (clip.get('export_metadata') or {}).get('file') == record.get('file'):
+            latest = max((clip.get('exports') or {}).values(), key=lambda r: r.get('created_at') or 0, default=None)
+            clip['export_file'] = latest.get('file') if latest else None
+            clip['export_metadata'] = latest
+            if latest is None:
+                clip.pop('export_file', None)
+                clip.pop('export_metadata', None)
+    freed = 0
+    for name in filter(None, (record.get('file'), record.get('srt_file'), record.get('package_file'))):
+        path = folder / 'clips' / name
+        if path.parent == folder / 'clips' and path.is_file():   # só nomes simples dentro de clips/
+            with contextlib.suppress(OSError):
+                size = path.stat().st_size
+                path.unlink()
+                freed += size
+    return {'clip_id': clip_id, 'format': fmt, 'freed_bytes': freed,
+            'output_kept': bool((record.get('output') or {}).get('files'))}
 
 
 def report(project_id: str) -> dict:

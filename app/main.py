@@ -384,6 +384,7 @@ class ExportOptions(BaseModel):
     shorten_pauses: bool = False
     filter: Optional[str] = Field(default=None, max_length=20)   # filtro de cor (app/filters.py)
     edit_plan: Optional[str] = Field(default=None, pattern=r'^[a-z_]{1,40}$')
+    keep_framing: bool = False   # com plano de edição: usa o enquadramento enviado em vez do sugerido pelo plano
 
 
 class PlanToggles(BaseModel):
@@ -423,6 +424,47 @@ def get_plans(project_id: str, clip_id: int):
 @app.patch('/api/projects/{project_id}/clips/{clip_id}/plans/{name}')
 def update_plan(project_id: str, clip_id: int, name: str, changes: PlanUpdate):
     return service.update_edit_plan(project_id, clip_id, name, changes.model_dump())
+
+
+class FocusRect(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    rect: Optional[list[float]] = Field(default=None, min_length=4, max_length=4)
+
+
+@app.put('/api/projects/{project_id}/clips/{clip_id}/focus')
+def clip_focus(project_id: str, clip_id: int, body: FocusRect):
+    """Área do "Só o streamer" desenhada à mão (fração do quadro); ``null`` volta para a automática."""
+    return service.set_focus_rect(project_id, clip_id, body.rect)
+
+
+class SubtitleLine(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    start: float
+    end: float
+    text: str = Field(default='', max_length=400)
+
+
+class SubtitleEdit(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    segments: list[SubtitleLine] = Field(max_length=500)
+
+
+@app.get('/api/projects/{project_id}/clips/{clip_id}/subtitles')
+def clip_subtitles(project_id: str, clip_id: int):
+    """Frases da legenda do corte (texto da transcrição)."""
+    return service.clip_subtitles(project_id, clip_id)
+
+
+@app.put('/api/projects/{project_id}/clips/{clip_id}/subtitles')
+def set_clip_subtitles(project_id: str, clip_id: int, body: SubtitleEdit):
+    """Corrige o texto das frases; as corrigidas não são substituídas pela legenda precisa."""
+    return service.set_clip_subtitles(project_id, clip_id, [s.model_dump() for s in body.segments])
+
+
+@app.delete('/api/projects/{project_id}/clips/{clip_id}/exports')
+def delete_export(project_id: str, clip_id: int, format: Literal['9:16', '16:9', '1:1', 'original']):
+    """Exclui uma exportação concluída do corte (a cópia na pasta de saída fica)."""
+    return service.delete_export(project_id, clip_id, format)
 
 
 @app.post('/api/projects/{project_id}/clips/{clip_id}/export')

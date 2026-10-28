@@ -128,8 +128,11 @@ def refine(audio_path: Path, *, prompt: str | None = None,
     language = None if config.WHISPER_LANGUAGE.lower() == 'auto' else config.WHISPER_LANGUAGE
     try:
         model = _load_refine_model()
+        # Sem o contexto da frase anterior: com ele, numa live barulhenta o modelo entrava em laço e repetia a
+        # mesma frase por cima da fala real ("Porra, viado!" 8 vezes no lugar de "Ô louco! … Eu ia comer teu
+        # bolo!"), e levava 67 s em vez de 15 s no mesmo corte de 108 s. O prompt continua dando o vocabulário.
         segments_iter, _info = model.transcribe(str(audio_path), language=language, vad_filter=True,
-                                                word_timestamps=True, beam_size=5, condition_on_previous_text=True,
+                                                word_timestamps=True, beam_size=5, condition_on_previous_text=False,
                                                 initial_prompt=(prompt or '')[:200] or None)
         result = []
         for seg in segments_iter:

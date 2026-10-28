@@ -302,6 +302,17 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .videobox { position: relative; flex: 1 1 auto; min-height: 120px; overflow: hidden; display: grid; place-items: center; background: var(--stage); border: 1px solid var(--border-soft); border-radius: var(--radius); }
 .videobox video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--stage); }
 .videobox:fullscreen { border: 0; border-radius: 0; }
+.iconbtn.jump { width: auto; min-width: 34px; padding: 0 6px; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-2); }
+.focuslayer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.focuslayer.editing { pointer-events: auto; cursor: crosshair; background: rgb(0 0 0 / 0.25); touch-action: none; }
+.focusarea { position: absolute; border: 2px solid var(--primary); border-radius: 4px; box-shadow: 0 0 0 9999px rgb(0 0 0 / 0.35); }
+.focuslayer:not(.editing) .focusarea { box-shadow: none; border-style: dashed; opacity: 0.85; }
+.focusbar { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
+  max-width: calc(100% - 20px); padding: 6px 8px 6px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); font-size: 12.5px; color: var(--text-2); pointer-events: auto; cursor: default; }
+.focusbar span { min-width: 0; }
+.focusbox { display: grid; gap: 6px; margin-top: 8px; }
+.focusbox .planbtns { margin-top: 0; flex-wrap: wrap; }
 .novideo { display: grid; justify-items: center; gap: 8px; padding: 24px; text-align: center; color: var(--text-3); }
 .novideo strong { color: var(--text-2); font-weight: 600; }
 .novideo p { max-width: 280px; font-size: 12.5px; }
@@ -343,9 +354,12 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .mixpanel { display: grid; gap: 8px; margin-top: 10px; }
 .mixsegments { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; max-height: 220px; overflow-y: auto; }
 .mixsegments li { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center; }
-.mixsegments .t { padding: 4px 6px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--field);
-  color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
-.mixsegments li.here .t { border-color: var(--primary); color: var(--text); }
+.mixsegments .segtimes { display: flex; align-items: center; gap: 2px; color: var(--text-3); font-size: 12px; }
+#mixSegments input.t { width: 62px; min-height: 0; padding: 4px 5px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+  background: var(--field); color: var(--text-2); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; }
+.mixsegments .t:focus { border-color: var(--primary-hover); color: var(--text); outline: none; }
+.mixsegments .t[readonly] { background: transparent; border-color: transparent; color: var(--text-3); }
+.mixsegments li.here .t:not([readonly]) { border-color: var(--primary); color: var(--text); }
 .mixsplit { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
 .planbtns { display: flex; gap: 6px; margin-top: 12px; }
 .planbtns .btn { flex: 1; }
@@ -390,6 +404,14 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .qmain progress { margin-top: 4px; height: 4px; }
 .qrow.error small { color: var(--danger); }
 .qactions { display: flex; gap: 2px; flex: none; }
+.qactions .iconbtn.danger:not(:hover) { background: transparent; border-color: transparent; }
+.qrow.qbulk { justify-content: flex-end; }
+.subslist { display: grid; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; max-height: 60vh; overflow: auto; }
+.subslist li { display: flex; align-items: center; gap: 8px; }
+.subslist input { flex: 1; min-width: 0; }
+.subtime { flex: none; min-width: 64px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--field); color: var(--text-2); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.subtime:hover { color: var(--text); border-color: var(--primary-hover); }
+.subedited { flex: none; color: var(--success, var(--text-3)); font-size: 11.5px; }
 .qcancel { flex: none; height: 28px; padding: 0 8px; gap: 4px; font-size: 12px; border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); }
 #downloads .btn { margin-top: 10px; }
 #downloads .hint { margin-top: 8px; }

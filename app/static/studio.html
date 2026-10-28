@@ -195,6 +195,14 @@
       <section class="player" aria-label="Pré-visualização">
         <div class="videobox" id="videoBox">
           <video id="video" playsinline preload="metadata"></video>
+          <div id="focusLayer" class="focuslayer" hidden>
+            <div id="focusArea" class="focusarea" hidden></div>
+            <div id="focusBar" class="focusbar" hidden>
+              <span id="focusHelp">Arraste sobre o vídeo para marcar a área do streamer.</span>
+              <button id="focusCancel" class="btn ghost" type="button">Cancelar</button>
+              <button id="focusOk" class="btn primary" type="button" disabled>Usar esta área</button>
+            </div>
+          </div>
           <div id="noVideo" class="novideo">
             <svg class="ic xl"><use href="#i-play"/></svg>
             <strong>Nenhum vídeo aberto</strong>
@@ -207,11 +215,15 @@
           <div class="controlrow">
             <div class="timecode"><span id="currentTime" class="tc strong">00:00.0</span><span class="tc dim"> / </span><span id="duration" class="tc dim">00:00.0</span></div>
             <div class="transport">
+              <button class="iconbtn jump" data-jump="-30" title="Voltar 30 s (Shift+J)"aria-label="Voltar 30 segundos" disabled>-30</button>
+              <button class="iconbtn jump" data-jump="-10" title="Voltar 10 s (J)" aria-label="Voltar 10 segundos" disabled>-10</button>
               <button id="back" class="iconbtn" title="Voltar 1 s (←)" aria-label="Voltar 1 segundo" disabled><svg class="ic"><use href="#i-back"/></svg></button>
               <button id="play" class="playbtn" title="Reproduzir/pausar (Espaço)" aria-label="Reproduzir" data-state="paused" disabled>
                 <svg class="ic i-play"><use href="#i-play"/></svg><svg class="ic i-pause"><use href="#i-pause"/></svg>
               </button>
               <button id="forward" class="iconbtn" title="Avançar 1 s (→)" aria-label="Avançar 1 segundo" disabled><svg class="ic"><use href="#i-forward"/></svg></button>
+              <button class="iconbtn jump" data-jump="10" title="Avançar 10 s (L)" aria-label="Avançar 10 segundos" disabled>+10</button>
+              <button class="iconbtn jump" data-jump="30" title="Avançar 30 s (Shift+L)"aria-label="Avançar 30 segundos" disabled>+30</button>
             </div>
             <div class="playeropts">
               <button id="mute" class="iconbtn" title="Silenciar (M)" aria-label="Silenciar" aria-pressed="false" disabled><svg class="ic i-vol"><use href="#i-volume"/></svg><svg class="ic i-mute"><use href="#i-mute"/></svg></button>
@@ -291,6 +303,7 @@
               </select>
               <p id="subtitleStyleNote" class="hint" hidden>O plano de edição em uso define o estilo da legenda.</p>
               <label class="switch"><input id="refineSubtitles" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda precisa</strong><small>Retranscreve só o corte com um modelo maior antes de exportar (GPU). Corrige nomes e gírias; leva alguns segundos a mais na primeira vez.</small></span></label>
+              <button id="editSubtitles" type="button" class="btn ghost block"><svg class="ic"><use href="#i-pencil"/></svg><span>Corrigir texto da legenda</span></button>
             </div>
 
             <div role="tabpanel" id="panelEffects" aria-labelledby="tabEffects" hidden>
@@ -353,6 +366,13 @@
                 <option value="split">Webcam + jogo (tela dividida)</option>
                 <option value="mix">Por trecho (variar no vídeo)</option>
               </select>
+              <div id="focusBox" class="focusbox" hidden>
+                <p id="focusInfo" class="hint"></p>
+                <div class="planbtns">
+                  <button id="focusDraw" class="btn ghost" type="button"><svg class="ic"><use href="#i-pencil"/></svg><span>Desenhar área no vídeo</span></button>
+                  <button id="focusClear" class="btn ghost" type="button" hidden>Usar a automática</button>
+                </div>
+              </div>
               <div id="mixPanel" class="mixpanel" hidden>
                 <p class="hint">Cada trecho do corte usa um enquadramento. Pare o vídeo onde quer trocar e use “Mudar a partir daqui”.</p>
                 <ol id="mixSegments" class="mixsegments" aria-label="Trechos de enquadramento"></ol>
@@ -611,6 +631,7 @@
     <div><dt><kbd>S</kbd></dt><dd>Dividir o corte no cursor</dd></div>
     <div><dt><kbd>Delete</kbd></dt><dd>Excluir o corte selecionado</dd></div>
     <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Voltar ou avançar 1 s (com <kbd>Shift</kbd>: 5 s)</dd></div>
+    <div><dt><kbd>J</kbd> <kbd>L</kbd></dt><dd>Voltar ou avançar 10 s (com <kbd>Shift</kbd>: 30 s)</dd></div>
     <div><dt><kbd>M</kbd></dt><dd>Silenciar</dd></div>
     <div><dt><kbd>F</kbd></dt><dd>Tela cheia</dd></div>
     <div><dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom da linha do tempo</dd></div>
@@ -642,6 +663,20 @@
     <button id="confirmNo" class="btn ghost" type="button">Cancelar</button>
     <button id="confirmYes" class="btn primary" type="button">Confirmar</button>
   </footer>
+</dialog>
+
+<dialog id="subsDialog" class="dialog" aria-labelledby="subsTitle">
+  <form id="subsForm" method="dialog">
+    <header><h2 id="subsTitle">Corrigir texto da legenda</h2></header>
+    <div class="dialogbody">
+      <p id="subsNote" class="hint"></p>
+      <ol id="subsList" class="subslist"></ol>
+    </div>
+    <footer>
+      <button class="btn ghost" type="button" data-close>Cancelar</button>
+      <button class="btn primary" type="submit">Salvar correções</button>
+    </footer>
+  </form>
 </dialog>
 
 <dialog id="profileDialog" class="dialog narrow" aria-labelledby="profileDialogTitle">

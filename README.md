@@ -409,7 +409,19 @@ embaixo. A legenda fica logo abaixo da webcam.
 A janela é achada sozinha na análise de rostos: a partir do rosto real (o que se mexe; ícones e personagens
 do jogo ficam de fora), procura a borda reta, contínua e presente em todos os quadros mais próxima de cada lado,
 enquanto o jogo atrás muda. Lado sem borda (janela encostada na margem) vai até a margem. Se não houver janela
-(câmera em tela cheia), o modo segue o rosto e avisa. Também pode ser usado em trechos do **Por trecho**:
+(câmera em tela cheia), o modo segue o rosto e avisa. A janela só é procurada nas laterais (esquerda ou direita):
+rostos no meio da tela (jogadores, personagens) não contam. Em transmissões que alternam a bancada com campo ou
+jogo, a bancada é seguida e, nas outras cenas, a **janela com os streamers no canto** (picture-in-picture) é
+recortada e ampliada; cena sem essa janela aparece inteira com fundo desfocado. O plano de edição define o próprio
+enquadramento: para usar "Só o streamer", exporte sem plano.
+
+**Área desenhada à mão:** com "Só o streamer" (ou "Webcam + jogo", ou "Por trecho") escolhido, **Desenhar área no
+vídeo** abre uma camada sobre o player: arraste um retângulo em volta do streamer e use **Usar esta área** (Esc
+cancela). A área fica guardada no corte (contorno tracejado no player) e a exportação mostra só essa parte, com fundo
+desfocado, sem analisar rostos (mais rápido). **Usar a automática** apaga a área. API:
+`PUT /api/projects/{id}/clips/{n}/focus` com `{"rect": [x, y, largura, altura]}` em fração do quadro, ou `null`.
+
+Também pode ser usado em trechos do **Por trecho**:
 numa transmissão sem janela de webcam, esses trechos seguem rostos só na cena principal (bancada) e mostram as
 outras cenas inteiras com fundo desfocado, enquanto os trechos de "seguir rosto" continuam seguindo todos.
 
@@ -431,8 +443,10 @@ com um enquadramento diferente: **seguir rosto**, **fundo desfocado** ou **quadr
   o vídeo está é dividido nesse ponto.
 - **Variar automaticamente:** alterna seguir rosto e fundo desfocado a cada troca de cena do corte (cenas
   com menos de 2,5 s se juntam à seguinte); sem trocas de cena, alterna a cada ~6 s.
-- Cada trecho da lista pode ter o enquadramento trocado ou ser removido (o vizinho ocupa o espaço);
-  clicar no tempo leva o vídeo ao início do trecho.
+- Cada trecho da lista pode ter o enquadramento trocado ou ser removido (o vizinho ocupa o espaço).
+- **Início e fim editáveis:** digite o tempo (ex.: `52.5` ou `0:52.5`) e tecle Enter; o limite muda nos dois
+  trechos vizinhos (cada trecho fica com pelo menos 0,5 s; valor fora disso é ajustado com aviso). O início do
+  primeiro e o fim do último são os do corte. Clicar num campo leva o vídeo até aquele ponto; Esc desfaz.
 - Sem trechos marcados, a exportação "por trecho" usa a variação automática.
 
 Na exportação, o FFmpeg monta uma versão do vídeo para cada enquadramento usado e liga cada uma no tempo
