@@ -488,6 +488,26 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .filterthumb.loading { opacity: .3; }
 .filterthumb { transition: opacity .2s; }
 .filtername { font-size: 11.5px; line-height: 1.2; }
+.cuttools { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 10px; margin-bottom: 10px; }
+.cuttools .check { margin: 0; }
+.cuttools select { min-width: 0; }
+.cuttools .btn.block { grid-column: 1 / -1; margin-top: 0; }
+.cutRow { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: stretch; gap: 6px; }
+.pick { display: grid; place-items: center; width: 26px; cursor: pointer; }
+.pick input { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; }
+.exportheadactions { display: flex; align-items: center; gap: 4px; }
+.exportheadactions .ic, .sechead .linkbtn .ic { width: 14px; height: 14px; margin-right: 4px; }
+.batchbody { display: grid; gap: 10px; }
+.batchbody p { margin: 0; }
+.batchcount { color: var(--text); font-weight: 600; }
+.presetgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+.preset input { position: absolute; opacity: 0; pointer-events: none; }
+.preset span { display: grid; gap: 2px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--field); cursor: pointer; }
+.preset small { color: var(--text-3); font-size: 11.5px; }
+.preset input:checked + span { border-color: var(--primary-hover); background: var(--primary-soft); }
+.preset input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+.batchsummary { color: var(--text-2); }
+#fileInfo .btn { margin-top: 10px; }
 .selectionbody { display: grid; gap: 8px; }
 .selectionbody p { margin: 0; }
 .selectionbody .hint.warn { color: var(--danger); }

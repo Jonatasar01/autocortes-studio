@@ -32,6 +32,13 @@ A interface fica em `http://127.0.0.1:8000/` e abre na **página inicial**:
 - **Este computador:** FFmpeg, legendas, reconhecimento de fala (GPU ou CPU), seguir rosto e espaço
   livre. O que faltar vem com a instrução de como resolver.
 
+- **Exportar vários cortes:** na aba Cortes, marque os cortes (ou "Todos") e use **Exportar selecionados**. Escolha
+  os destinos (Shorts, Reels, TikTok, Horizontal, Original); o app mostra quantos arquivos serão gerados, o tamanho
+  estimado e avisa cortes longos demais para cada rede. O andamento aparece como "Lote: 4 de 12 prontos".
+  **Abrir pasta** mostra os arquivos no Explorador.
+- **Vídeo repetido:** ao escolher um vídeo que já está num projeto, o app avisa antes de enviar e oferece abrir o
+  projeto existente.
+
 Barra lateral: Início · Novo projeto · Meus projetos · Editor Studio · Processamentos · Automação ·
 Configurações. As abas do editor (Propriedades, Legendas, Efeitos, Áudio) ficam só no editor.
 **Configurações** guarda o modo padrão, a duração alvo, o estilo da legenda e a legenda precisa,

@@ -1,5 +1,16 @@
 ## Não lançado
 
+- Interface, fase 2 (fluxo de trabalho):
+  - **Exportar selecionados:** caixa de seleção em cada corte, "Todos" e ordem (melhores primeiro ou ordem do vídeo);
+    o lote escolhe destinos (Shorts, Reels, TikTok, Horizontal, Original), mostra quantos arquivos e o tamanho
+    estimado, avisa cortes longos demais para Shorts/Reels/TikTok e usa as opções do editor. Shorts, Reels e TikTok
+    geram um único arquivo 9:16. A Revisão de direitos continua exigindo confirmação.
+  - **Progresso do lote:** "Lote: 4 de 12 prontos · renderizando corte 3 de 6" e "Corte 3 de 6" em cada exportação.
+  - **Abrir pasta:** no painel de exportações (pasta do projeto) e na página inicial (pasta de saída).
+  - **Vídeo duplicado:** antes do envio, o navegador calcula uma impressão rápida (tamanho + SHA-256 de 3 blocos de
+    4 MB) e o app avisa se o vídeo já está num projeto, com atalho para abri-lo e confirmação para importar de novo.
+  - Exportar 18 cortes: de 36 cliques (um por um) para 3 (Todos, Exportar selecionados, Exportar).
+
 - Motor de cortes, fase 3 (camada de áudio, `app/audio_events.py`):
   - Energia do áudio do vídeo inteiro (FFmpeg, 0,2 s, em cache por arquivo) e eventos com evidência: pico de volume,
     possível risada/reação, silêncio, áudio estourado, fala acelerada.

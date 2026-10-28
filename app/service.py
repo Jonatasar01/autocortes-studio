@@ -874,6 +874,84 @@ def reselect(project_id: str) -> dict:
     return public_job(job)
 
 
+# --------------------------------------------------------------------------- duplicados e pastas
+
+QUICK_BLOCK = 4 * 1024 * 1024
+
+
+def quick_fingerprint(path: Path) -> str:
+    """Impressão rápida do vídeo: tamanho + SHA-256 de três blocos de 4 MB (início, meio e fim).
+
+    O navegador calcula a mesma coisa antes do envio (``studio.js``, ``quickFingerprint``), então dá para avisar
+    que o vídeo já está num projeto sem enviar nem ler 20 GB. Arquivos de até 12 MB entram inteiros.
+    """
+    size = path.stat().st_size
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        if size <= 3 * QUICK_BLOCK:
+            digest.update(handle.read())
+        else:
+            for offset in (0, size // 2 - QUICK_BLOCK // 2, size - QUICK_BLOCK):
+                handle.seek(offset)
+                digest.update(handle.read(QUICK_BLOCK))
+    return f'quick:{size}:{digest.hexdigest()}'
+
+
+def find_duplicate(size: int, quick: str) -> dict | None:
+    """Projeto que já tem este vídeo (mesmo tamanho e mesma impressão rápida), ou ``None``."""
+    if not re.fullmatch(r'quick:\d+:[0-9a-f]{64}', quick or '') or not quick.startswith(f'quick:{int(size)}:'):
+        raise AppError('Impressão do vídeo inválida.', 400, 'bad_input')
+    for item in storage.list_projects():
+        try:
+            p = storage.read_project(item['id'])
+            source = storage.project_dir(item['id']) / p['filename']
+            if source.stat().st_size != int(size):
+                continue
+            saved = p.get('quick_fingerprint')
+            if not saved:
+                saved = quick_fingerprint(source)
+                with storage.edit_project(item['id']) as current:
+                    current['quick_fingerprint'] = saved
+        except (AppError, OSError, KeyError):
+            continue
+        if saved == quick:
+            return {'id': item['id'], 'name': item['name'], 'status': item.get('status'), 'clips': item.get('clips'),
+                    'size_bytes': int(size)}
+    return None
+
+
+def open_folder(project_id: str | None = None) -> dict:
+    """Abre no Explorador a pasta dos arquivos exportados (do projeto, ou a pasta de saída geral).
+
+    Só pastas do próprio app: a pasta de saída do projeto (cópias com nome legível) ou, sem ela, a pasta de
+    cortes do projeto. Funciona apenas com o app rodando no computador do usuário (servidor local).
+    """
+    if project_id:
+        p = storage.read_project(project_id)
+        folder = publish.output_folder(p)
+        if not folder.is_dir():
+            folder = storage.project_dir(project_id) / 'clips'
+    else:
+        folder = config.OUTPUT_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    _reveal(folder)
+    return {'folder': str(folder)}
+
+
+def _reveal(folder: Path) -> None:
+    import subprocess
+    import sys
+    try:
+        if os.name == 'nt':
+            os.startfile(str(folder))  # noqa: S606 (pasta do próprio app, servidor só local)
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', str(folder)])
+        else:
+            subprocess.Popen(['xdg-open', str(folder)])
+    except OSError as exc:
+        raise AppError(f'Não foi possível abrir a pasta: {folder}', 500, 'open_failed') from exc
+
+
 def delete_project(project_id: str) -> None:
     storage.project_dir(project_id)
     if _jobs().for_project(project_id, active_only=True):

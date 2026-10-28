@@ -450,9 +450,31 @@ def update_narration(project_id: str, clip_id: int, edit: NarrationEdit):
 
 class ExportAllOptions(ExportOptions):
     formats: list[Literal['9:16', '16:9', '1:1', 'original']] = Field(default=['9:16'], min_length=1, max_length=4)
-    clip_ids: Optional[list[int]] = Field(default=None, max_length=50)
+    clip_ids: Optional[list[int]] = Field(default=None, max_length=500)
     min_score: Optional[int] = Field(default=None, ge=0, le=100)
     shorten_pauses: bool = False
+
+
+class DuplicateCheck(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    size: int = Field(ge=0)
+    quick: str = Field(max_length=100)
+
+
+@app.post('/api/projects/check-duplicate')
+def check_duplicate(body: DuplicateCheck):
+    """O vídeo (pela impressão rápida calculada no navegador) já está em algum projeto?"""
+    return {'duplicate': service.find_duplicate(body.size, body.quick)}
+
+
+@app.post('/api/projects/{project_id}/open-folder')
+def open_project_folder(project_id: str):
+    return service.open_folder(project_id)
+
+
+@app.post('/api/open-output')
+def open_output_folder():
+    return service.open_folder(None)
 
 
 @app.post('/api/projects/{project_id}/export-all')
