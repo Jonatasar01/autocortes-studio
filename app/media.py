@@ -704,14 +704,34 @@ def _blur_branch(inp: str, W: int, H: int, out: str) -> str:
 
 def _track_graph(src: str, pre: str, subs: str, W: int, H: int, track: dict) -> str:
     """Recorte que segue o rosto (expressão de tempo no crop) e fundo desfocado nas cenas sem rosto."""
+    return _follow_branch(src, W, H, track, '[mix]') + f';[mix]{pre}setsar=1{subs}[vout]'
+
+
+def _follow_branch(inp: str, W: int, H: int, track: dict, out: str, tag: str = '') -> str:
+    """Seguir rosto + as cenas sem rosto (quadro inteiro com fundo desfocado) + as cenas com a janela dos
+    streamers (``pip``: a janela recortada e ampliada, com fundo desfocado). ``tag`` diferencia os rótulos
+    quando o ramo aparece mais de uma vez no grafo."""
     from . import reframe
     crop = _track_crop(W, H, track)
-    enable = reframe.fit_enable_expression(track['shots'])
-    if not enable:
-        return f'{src}{crop},{pre}setsar=1{subs}[vout]'
-    return (f'{src}split=2[tsrc][fsrc];[tsrc]{crop}[trk];'
-            + _blur_branch('[fsrc]', W, H, ',setsar=1[fitv]') +
-            f";[trk][fitv]overlay=0:0:enable='{enable}'[mix];[mix]{pre}setsar=1{subs}[vout]")
+    fit = reframe.fit_enable_expression(track['shots'])
+    pip_rect = track.get('pip')
+    pip = reframe.pip_enable_expression(track['shots']) if pip_rect else None
+    if not fit and not pip:
+        return f'{inp}{crop}{out}'
+    layers = [('fit', fit), ('pip', pip)]
+    layers = [(k, e) for k, e in layers if e]
+    labels = ''.join(f'[{k}s{tag}]' for k, _ in layers)
+    parts = [f'{inp}split={len(layers) + 1}[ts{tag}]{labels}', f'[ts{tag}]{crop}[trk{tag}]']
+    current = f'[trk{tag}]'
+    for i, (kind, enable) in enumerate(layers):
+        source = f'[{kind}s{tag}]' + (_facecam_crop(pip_rect) if kind == 'pip' else '')
+        parts.append(_blur_branch(source, W, H, f',setsar=1[{kind}v{tag}]')
+                     .replace('[bgsrc]', f'[bgsrc{kind}{tag}]').replace('[fgsrc]', f'[fgsrc{kind}{tag}]')
+                     .replace('[bg]', f'[bg{kind}{tag}]').replace('[fg]', f'[fg{kind}{tag}]'))
+        nxt = out if i == len(layers) - 1 else f'[ov{kind}{tag}]'
+        parts.append(f"{current}[{kind}v{tag}]overlay=0:0:enable='{enable}'{nxt}")
+        current = nxt
+    return ';'.join(parts)
 
 
 def _track_crop(W: int, H: int, track: dict) -> str:
@@ -776,7 +796,6 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
     As versões são montadas sobre o vídeo antes de ``pre`` (fps, corte de pausas), então os tempos dos
     trechos são os do corte original, como no recorte que segue o rosto.
     """
-    from . import reframe
     kinds = []
     has_track = bool(track and track.get('ok'))
     facecam = (track or {}).get('facecam')
@@ -821,13 +840,7 @@ def _mixed_graph(src: str, pre: str, subs: str, W: int, H: int, segments: list[d
                          f'pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[mv{k}]')
         else:  # seguir rosto, com fundo desfocado nas cenas sem rosto (como no modo "seguir rosto")
             plan = track['main_set'] if kind == 'main' else track
-            enable = reframe.fit_enable_expression(plan['shots'])
-            if enable:
-                parts.append(f'[mx{k}]split=2[mt{k}][mf{k}];[mt{k}]{_track_crop(W, H, plan)}[mtc{k}];'
-                             + _blur_branch(f'[mf{k}]', W, H, f',setsar=1[mtf{k}]')
-                             + f";[mtc{k}][mtf{k}]overlay=0:0:enable='{enable}'[mv{k}]")
-            else:
-                parts.append(f'[mx{k}]{_track_crop(W, H, plan)}[mv{k}]')
+            parts.append(_follow_branch(f'[mx{k}]', W, H, plan, f'[mv{k}]', tag=f'm{k}'))
     # A primeira versão é a base; as outras entram por cima só nos seus trechos.
     current = '[mv0]'
     for k, kind in enumerate(kinds[1:], start=1):

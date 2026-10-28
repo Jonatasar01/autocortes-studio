@@ -76,6 +76,40 @@ class FacecamDetectionTests(unittest.TestCase):
         self.assertIsNotNone(rect)
         self.assertLess(rect[0] + rect[2], 0.42)
 
+    def broadcast(self, x0: int, x1: int, y0: int, y1: int, moving: bool = True):
+        """Cena de campo (fundo que muda) com uma janela de moldura fixa; dentro, vídeo (muda) ou arte fixa."""
+        np = self.np
+        rng = np.random.default_rng(11)
+
+        def blocks():   # imagem em blocos de 10 px em posição sorteada: muda a cada quadro, sem bordas fixas
+            img = np.kron(rng.integers(40, 215, (28, 49)), np.ones((10, 10))).astype('uint8')
+            dy, dx = rng.integers(0, 10, 2)
+            return img[dy:dy + 270, dx:dx + 480]
+        art = blocks()[y0:y1, x0:x1]
+        out = []
+        for i in range(30):
+            gray = blocks()
+            gray[y0:y1, x0:x1] = blocks()[y0:y1, x0:x1] if moving else art
+            gray[y0:y0 + 2, x0:x1] = gray[y1 - 2:y1, x0:x1] = 255
+            gray[y0:y1, x0:x0 + 2] = gray[y0:y1, x1 - 2:x1] = 255
+            out.append({'t': i / 5, 'gray': gray, 'faces': []})
+        return out
+
+    def test_finds_the_streamers_window_of_the_broadcast(self):
+        s = self.broadcast(360, 474, 4, 68)                 # canto superior direito, 16:9
+        rect = reframe.detect_pip(s)
+        self.assertIsNotNone(rect)
+        self.assertAlmostEqual(rect[0], 360 / 480, delta=0.02)
+        self.assertAlmostEqual(rect[2], 114 / 480, delta=0.03)
+        self.assertTrue(reframe.pip_visible(s[:10], rect))
+        inner = reframe.pip_inner(rect, (480, 270))
+        self.assertGreater(inner[0], rect[0])
+        self.assertLessEqual(inner[3] * 270, inner[2] * 480 * 9 / 16 + 1)   # 16:9 no máximo
+
+    def test_static_art_and_central_windows_are_not_the_streamers(self):
+        self.assertIsNone(reframe.detect_pip(self.broadcast(360, 474, 4, 68, moving=False)))   # placar/arte
+        self.assertIsNone(reframe.detect_pip(self.broadcast(183, 297, 100, 164)))              # meio da tela
+
     def test_window_in_the_middle_is_ignored(self):
         s = self.framed_at(165, 315, 0.47)
         self.assertIsNone(reframe.detect_facecam(s, reframe.speaker_targets(s)))
@@ -91,6 +125,20 @@ class StreamerGraphTests(unittest.TestCase):
     def test_without_webcam_follows_the_face(self):
         graph, _ = media.build_filtergraph(INFO, '9:16', 'streamer', None, None, {**TRACK, 'facecam': None}, '')
         self.assertIn("crop=w='2*trunc(", graph)
+
+    def test_streamers_window_is_cropped_in_its_scenes(self):
+        track = {'ok': True, 'facecam': None, 'crop_frac': 0.3164, 'pip': [0.75, 0.02, 0.236, 0.236],
+                 'shots': [{'start': 0.0, 'end': 2.0, 'layout': 'pip', 'points': []},
+                           {'start': 2.0, 'end': 5.0, 'layout': 'fill', 'points': [[2.0, 0.4], [5.0, 0.4]]},
+                           {'start': 5.0, 'end': 6.0, 'layout': 'fit', 'points': []}]}
+        graph, _ = media.build_filtergraph(INFO, '9:16', 'streamer', None, None, track, '')
+        self.assertIn('crop=w=iw*0.2360:h=ih*0.2360:x=iw*0.7500:y=ih*0.0200', graph)
+        self.assertIn("enable='between(t,0.000,2.000)'", graph)    # janela
+        self.assertIn("enable='between(t,5.000,6.000)'", graph)    # cena inteira
+        segs = [{'start': 0, 'end': 3, 'framing': 'streamer'}, {'start': 3, 'end': 6, 'framing': 'blur'}]
+        mixed, _ = media.build_filtergraph(INFO, '9:16', 'mix', None, None,
+                                           {**track, 'main_set': track, 'main_set_only': True}, '', segs)
+        self.assertIn('x=iw*0.7500', mixed)
 
     def test_band_follows_the_webcam_height(self):
         top, bottom = media.content_band('9:16', 'streamer', INFO, (1080, 1920), TRACK['facecam'])
