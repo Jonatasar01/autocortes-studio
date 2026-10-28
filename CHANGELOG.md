@@ -1,5 +1,16 @@
 ## Não lançado
 
+### Render mais rápido e "Só o streamer" em transmissões
+- **Exportação com pausas cortadas** (plano de edição ou "encurtar pausas"): a leitura da origem para no fim do corte.
+  Antes, a saída ficava mais curta que o trecho e o FFmpeg seguia decodificando o resto da live até preencher a
+  duração (a barra parava em ~85%). Corte de 108 s de uma live: 1060 s → 63 s; prévia: ~30 min → 60 s.
+- Fundo desfocado: escurece antes de ampliar e amplia em bilinear (mesmo resultado, ~13% menos tempo no ramo).
+- **"Só o streamer"**: a janela da webcam é procurada só nas laterais (rostos no meio da tela não servem de ponto
+  de partida). Em transmissões sem webcam, a **janela dos streamers no canto** (picture-in-picture) é achada pela
+  moldura fixa, formato 16:9 e vídeo dentro; nas cenas fora da bancada em que ela aparece, o recorte é o vídeo de
+  dentro, ampliado com fundo desfocado. Corte #10 do vídeo IRL: 50 s de campo passaram de jogadores para os
+  streamers. Planos de enquadramento em cache são refeitos (versão 8).
+
 ### Seguimento — limpeza de cache
 - Painel de mídia: "Liberar cache (tamanho)" quando o projeto tem 1 MB ou mais de cache. Apaga miniaturas, onda do
   áudio, energia, faixas pretas, planos de enquadramento e prévias (`cache/`, `direction/`, `preview/`), que o app refaz

@@ -409,7 +409,11 @@ embaixo. A legenda fica logo abaixo da webcam.
 A janela é achada sozinha na análise de rostos: a partir do rosto real (o que se mexe; ícones e personagens
 do jogo ficam de fora), procura a borda reta, contínua e presente em todos os quadros mais próxima de cada lado,
 enquanto o jogo atrás muda. Lado sem borda (janela encostada na margem) vai até a margem. Se não houver janela
-(câmera em tela cheia), o modo segue o rosto e avisa. Também pode ser usado em trechos do **Por trecho**:
+(câmera em tela cheia), o modo segue o rosto e avisa. A janela só é procurada nas laterais (esquerda ou direita):
+rostos no meio da tela (jogadores, personagens) não contam. Em transmissões que alternam a bancada com campo ou
+jogo, a bancada é seguida e, nas outras cenas, a **janela com os streamers no canto** (picture-in-picture) é
+recortada e ampliada; cena sem essa janela aparece inteira com fundo desfocado. O plano de edição define o próprio
+enquadramento: para usar "Só o streamer", exporte sem plano. Também pode ser usado em trechos do **Por trecho**:
 numa transmissão sem janela de webcam, esses trechos seguem rostos só na cena principal (bancada) e mostram as
 outras cenas inteiras com fundo desfocado, enquanto os trechos de "seguir rosto" continuam seguindo todos.
 
