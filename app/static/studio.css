@@ -512,7 +512,9 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .segmented.three:has(#linkOption[hidden]) { grid-template-columns: 1fr 1fr; }
 .fileproblems .ok { color: var(--success); }
 #pathInfo .btn { margin-top: 10px; }
-.feedbackrow { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 12.5px; color: var(--text-2); }
+.profilerow { display: flex; gap: 6px; align-items: center; }
+.profilerow select { flex: 1; min-width: 0; }
+.feedbackrow {display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 12.5px; color: var(--text-2); }
 .feedbackrow span { margin-right: auto; }
 .feedbackrow .btn { min-height: 30px; padding: 0 10px; }
 .feedbackrow .btn[aria-pressed=true] { background: var(--primary-soft); border-color: var(--primary-hover); color: var(--text); }

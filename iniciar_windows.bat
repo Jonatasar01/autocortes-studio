@@ -23,19 +23,26 @@ call python -m venv .venv
 if not exist .venv\Scripts\python.exe goto nopython
 .venv\Scripts\python.exe -c "import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] <= (3, 12) else 1)" >nul 2>&1
 if errorlevel 1 goto badvenv
+rem Pacotes: transcricao e rostos (requirements-ai, ja inclui o basico) e, com placa NVIDIA, as DLLs de CUDA
+rem (requirements-gpu, ~2 GB). AUTOCORTES_MINIMAL=1 instala so o basico (sem transcricao).
+set "DEPS=-r requirements.txt"
+if exist requirements-ai.txt set "DEPS=-r requirements-ai.txt"
+where nvidia-smi >nul 2>&1 && if exist requirements-gpu.txt set "DEPS=%DEPS% -r requirements-gpu.txt"
+if "%AUTOCORTES_MINIMAL%"=="1" set "DEPS=-r requirements.txt"
 if not exist .venv\.deps-ok (
- .venv\Scripts\python.exe -m pip install -r requirements.txt
+ echo Instalando dependencias: %DEPS%
+ .venv\Scripts\python.exe -m pip install %DEPS%
  if errorlevel 1 goto installerror
  type nul > .venv\.deps-ok
  del .venv\.deps-hash >nul 2>&1
 )
-rem Dependencias mudaram desde a ultima instalacao (atualizacao do AutoCortes): instala o que falta.
+rem Dependencias (ou a escolha de pacotes) mudaram desde a ultima instalacao: instala o que falta.
 rem Sem hash anterior, so registra o atual. O hash so e gravado depois de uma instalacao bem-sucedida.
-.venv\Scripts\python.exe -c "import hashlib,pathlib,sys; h=hashlib.sha256(pathlib.Path('requirements.txt').read_bytes()).hexdigest(); p=pathlib.Path('.venv/.deps-hash'); old=p.read_text().strip() if p.exists() else ''; old or p.write_text(h); sys.exit(3 if old and old != h else 0)" >nul 2>&1
+.venv\Scripts\python.exe -c "import hashlib,os,pathlib,re; h=hashlib.sha256(os.environ['DEPS'].encode()); [h.update(pathlib.Path(n).read_bytes()) for n in re.findall(r'-r (\S+)', os.environ['DEPS'])]; import sys; h=h.hexdigest(); p=pathlib.Path('.venv/.deps-hash'); old=p.read_text().strip() if p.exists() else ''; old or p.write_text(h); sys.exit(3 if old and old != h else 0)" >nul 2>&1
 if errorlevel 3 goto updatedeps
 :depsok
 where ffmpeg >nul 2>&1
-if errorlevel 1 echo AVISO: ffmpeg ausente no PATH.
+if errorlevel 1 echo AVISO: ffmpeg ausente no PATH. Instale com:  winget install Gyan.FFmpeg  e abra este arquivo de novo.
 where ffprobe >nul 2>&1
 if errorlevel 1 echo AVISO: ffprobe ausente no PATH.
 rem O navegador so abre quando o servidor responder (antes abria cedo demais e mostrava erro de conexao).
@@ -53,9 +60,9 @@ if not "%AUTOCORTES_NO_BROWSER%"=="1" pause
 exit /b %RC%
 :updatedeps
 echo Dependencias atualizadas: instalando o que mudou...
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install %DEPS%
 if errorlevel 1 goto installerror
-.venv\Scripts\python.exe -c "import hashlib,pathlib; pathlib.Path('.venv/.deps-hash').write_text(hashlib.sha256(pathlib.Path('requirements.txt').read_bytes()).hexdigest())"
+.venv\Scripts\python.exe -c "import hashlib,os,pathlib,re; h=hashlib.sha256(os.environ['DEPS'].encode()); [h.update(pathlib.Path(n).read_bytes()) for n in re.findall(r'-r (\S+)', os.environ['DEPS'])]; pathlib.Path('.venv/.deps-hash').write_text(h.hexdigest())"
 goto depsok
 :badvenv
 echo.

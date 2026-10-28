@@ -361,3 +361,52 @@ Custo (medido com a máquina ocupada por uma exportação, por isso os tempos ab
 ### Reversão
 `AUTOCORTES_AUDIO_LAYER=0` desliga a camada; voltar à `feature/motor-fase2` desfaz a fase. O cache de energia pode ser
 apagado sem efeito colateral (é refeito).
+
+### Custo medido com a máquina parada (Fase 4 de melhorias)
+- Energia do vídeo inteiro a partir do arquivo original, sem cache, mais os eventos: **106 s** (antes, com a máquina
+  ocupada, 86 s + 1,7 s; a diferença vem do disco: a leitura das 8,5 h do arquivo domina o tempo). Na análise de
+  verdade a energia sai do WAV já extraído para a transcrição; em "Refazer seleção", do cache (0,01 s).
+- Seleção com e sem áudio, alternadas: 72,8 / 79,8 s com áudio × 83,5 / 71,6 s sem. A diferença (média 76,3 × 77,6 s)
+  fica dentro da variação entre rodadas: **a camada de áudio não tem custo mensurável na seleção**.
+
+## 9. Relatório da Fase 4 — camada visual (medida, não integrada)
+
+### O que foi medido
+Diferença entre quadros (`scene_score` do FFmpeg) a 4 quadros/s em todas as 8,5 h, a mesma decodificação da
+detecção de cenas (NVDEC, `-skip_frame noref`, 192 px): 121 784 quadros em **1268 s** como passada separada
+(a máquina rodava testes ao mesmo tempo). Por corte: movimento médio, movimento relativo aos ±60 s, cortes de cena
+por minuto, pico no fim, movimento no fim × começo e fração de tela parada (diferença < 0,002).
+
+| Mediana | Aprovados (18) | Topo não aprovado (25) | Aleatórios (300) |
+|---|---|---|---|
+| Movimento médio (×100) | 0,86 | 2,12 | 4,28 |
+| Tela parada | **47%** | **17%** | 11% |
+| Pico no fim (× referência local) | 9,9 | 7,5 | 14,3 |
+| Cortes de cena por minuto | 0 | 0 | 1,7 |
+
+AUC aprovados × topo não aprovado (0,5 = não separa): tela parada 0,66, movimento médio 0,34 (ou seja, 0,66 no
+sentido inverso), pico no fim 0,61; o resto ≈ 0,5.
+
+**Leitura:** o contrário do que a Fase 4 previa. Os cortes bons desta live são **calmos** (conversa na bancada,
+câmera parada); movimento intenso é o jogo, que aparece mais nos candidatos não aprovados e nos aleatórios.
+
+### O sinal melhora o ranking?
+Reforço de `w × (tela parada − 0,25)` na nota dos 34 candidatos do automático (v1 + áudio):
+
+| Peso | R@5 | R@10 | R@18 | R@30 | R@50 |
+|---|---|---|---|---|---|
+| 0 (atual) | 0,17 | 0,17 | 0,33 | 0,50 | 0,56 |
+| 5 | 0,06 | 0,17 | 0,39 | 0,50 | 0,56 |
+| 10 | 0,17 | 0,17 | 0,39 | 0,50 | 0,56 |
+| 20 | 0,17 | 0,22 | 0,28 | 0,50 | 0,56 |
+
+Validação cruzada (20 divisões: metade dos aprovados escolhe o peso, a outra metade mede): ganho médio de recall
+**−0,032** (mínimo −0,133, máximo 0). O texto e o áudio já colocam as conversas calmas no topo; o visual só
+embaralha a ordem.
+
+### Decisão
+- **Não integrado à seleção.** Com uma referência de 18 cortes de um só vídeo, o sinal não se sustenta fora da amostra
+  e custaria uma passada a mais (ou um arquivo de medidas maior na detecção de cenas) sem ganho.
+- O script da medição fica descrito aqui para repetir quando houver mais marcações (👍/👎 da Fase 3 de desempenho,
+  `scripts/avaliar_selecao.py --feedback`), de preferência num vídeo de outro tipo (podcast, IRL).
+- O visual continua sendo usado onde já provou valor: enquadramento (rostos, janela da webcam, cena principal).

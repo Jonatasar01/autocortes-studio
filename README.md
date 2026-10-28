@@ -88,6 +88,9 @@ dependências travadas, execução em contêiner e persistência de projetos. A 
 a detecção de duplicatas e a contabilização de resultados do piloto automático.
 
 **Windows:** extraia o ZIP e execute `iniciar_windows.bat`. O navegador abre em http://127.0.0.1:8000.
+Ele instala também a transcrição e a detecção de rostos (`requirements-ai.txt`) e, se houver placa NVIDIA
+(`nvidia-smi`), as bibliotecas de CUDA (`requirements-gpu.txt`, cerca de 2 GB). `AUTOCORTES_MINIMAL=1` instala só o
+básico. Planos de instalador: [ESTUDO_INSTALADOR_WINDOWS.md](ESTUDO_INSTALADOR_WINDOWS.md).
 
 **Linux/macOS:** `./iniciar_linux_mac.sh`
 
@@ -406,7 +409,18 @@ embaixo. A legenda fica logo abaixo da webcam.
 A janela é achada sozinha na análise de rostos: a partir do rosto real (o que se mexe; ícones e personagens
 do jogo ficam de fora), procura a borda reta, contínua e presente em todos os quadros mais próxima de cada lado,
 enquanto o jogo atrás muda. Lado sem borda (janela encostada na margem) vai até a margem. Se não houver janela
-(câmera em tela cheia), o modo segue o rosto e avisa. Também pode ser usado em trechos do **Por trecho**.
+(câmera em tela cheia), o modo segue o rosto e avisa. Também pode ser usado em trechos do **Por trecho**:
+numa transmissão sem janela de webcam, esses trechos seguem rostos só na cena principal (bancada) e mostram as
+outras cenas inteiras com fundo desfocado, enquanto os trechos de "seguir rosto" continuam seguindo todos.
+
+## Perfis de exportação
+
+No painel do corte, **Perfil de exportação** aplica de uma vez formato, enquadramento, legenda (estilo e legenda
+precisa), filtro de cor, volume normalizado e gancho. Já vêm quatro por tipo de conteúdo: **Live de jogo**
+(9:16, webcam + jogo), **IRL / rua** (9:16, só o streamer), **Podcast / entrevista** (9:16, seguir rosto) e
+**YouTube horizontal** (16:9, quadro inteiro). O botão **+** salva as opções atuais como um perfil seu (até 20,
+guardados em `data/settings.json`); a lixeira exclui. O perfil fica lembrado por projeto, e mudar uma opção à mão
+volta para "Personalizado". Ao criar um projeto, **Tipo de conteúdo** já deixa o perfil escolhido.
 
 ## Enquadramento por trecho
 
