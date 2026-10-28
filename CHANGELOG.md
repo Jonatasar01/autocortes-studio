@@ -1,5 +1,9 @@
 ## Não lançado
 
+### Seguimento — avaliação independente
+- README descreve feedback em segundo vídeo de podcast/IRL, comparação v1 com/sem áudio, caminhos temporários e limitações do recall; não altera pesos.
+
+
 ### Seguimento — cobertura de concorrência e caminhos
 - Testes simultâneos de análise/refinamento verificam uma única construção do modelo GPU compatível; CPU e tipos de cálculo diferentes permanecem separados.
 - Testes rejeitam UNC, dispositivos e streams antes de acessar arquivos; destinos de links são simulados sem exigir privilégios de symlink no Windows.
