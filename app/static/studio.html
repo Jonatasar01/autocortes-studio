@@ -215,11 +215,15 @@
           <div class="controlrow">
             <div class="timecode"><span id="currentTime" class="tc strong">00:00.0</span><span class="tc dim"> / </span><span id="duration" class="tc dim">00:00.0</span></div>
             <div class="transport">
+              <button class="iconbtn jump" data-jump="-30" title="Voltar 30 s (Shift+J)"aria-label="Voltar 30 segundos" disabled>-30</button>
+              <button class="iconbtn jump" data-jump="-10" title="Voltar 10 s (J)" aria-label="Voltar 10 segundos" disabled>-10</button>
               <button id="back" class="iconbtn" title="Voltar 1 s (←)" aria-label="Voltar 1 segundo" disabled><svg class="ic"><use href="#i-back"/></svg></button>
               <button id="play" class="playbtn" title="Reproduzir/pausar (Espaço)" aria-label="Reproduzir" data-state="paused" disabled>
                 <svg class="ic i-play"><use href="#i-play"/></svg><svg class="ic i-pause"><use href="#i-pause"/></svg>
               </button>
               <button id="forward" class="iconbtn" title="Avançar 1 s (→)" aria-label="Avançar 1 segundo" disabled><svg class="ic"><use href="#i-forward"/></svg></button>
+              <button class="iconbtn jump" data-jump="10" title="Avançar 10 s (L)" aria-label="Avançar 10 segundos" disabled>+10</button>
+              <button class="iconbtn jump" data-jump="30" title="Avançar 30 s (Shift+L)"aria-label="Avançar 30 segundos" disabled>+30</button>
             </div>
             <div class="playeropts">
               <button id="mute" class="iconbtn" title="Silenciar (M)" aria-label="Silenciar" aria-pressed="false" disabled><svg class="ic i-vol"><use href="#i-volume"/></svg><svg class="ic i-mute"><use href="#i-mute"/></svg></button>
@@ -627,6 +631,7 @@
     <div><dt><kbd>S</kbd></dt><dd>Dividir o corte no cursor</dd></div>
     <div><dt><kbd>Delete</kbd></dt><dd>Excluir o corte selecionado</dd></div>
     <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Voltar ou avançar 1 s (com <kbd>Shift</kbd>: 5 s)</dd></div>
+    <div><dt><kbd>J</kbd> <kbd>L</kbd></dt><dd>Voltar ou avançar 10 s (com <kbd>Shift</kbd>: 30 s)</dd></div>
     <div><dt><kbd>M</kbd></dt><dd>Silenciar</dd></div>
     <div><dt><kbd>F</kbd></dt><dd>Tela cheia</dd></div>
     <div><dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom da linha do tempo</dd></div>

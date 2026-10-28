@@ -273,6 +273,7 @@ function selectionLabel() {
 function updateControls() {
   const ready = isReady(), c = current(), hasVideo = !!state.project;
   for (const id of ['back', 'play', 'forward', 'seek', 'markIn', 'markOut', 'mute', 'fullscreen']) $(id).disabled = !hasVideo;
+  for (const b of document.querySelectorAll('[data-jump]')) b.disabled = !hasVideo;
   $('add').disabled = !ready;
   $('split').disabled = !ready || !c;
   $('remove').disabled = !ready || !c;
@@ -2208,6 +2209,7 @@ $('play').onclick = () => {
 };
 $('back').onclick = () => nudge(-1);
 $('forward').onclick = () => nudge(1);
+for (const b of document.querySelectorAll('[data-jump]')) b.onclick = () => nudge(Number(b.dataset.jump));
 $('markIn').onclick = () => { state.markIn = video.currentTime; selectionLabel(); };
 $('markOut').onclick = () => { state.markOut = video.currentTime; selectionLabel(); };
 $('previewClip').onclick = () => {
@@ -2243,6 +2245,8 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && !e.target.closest('button, a, [role=tab]')) { e.preventDefault(); $('play').click(); }
   else if (k === 'i') $('markIn').click();
   else if (k === 'o') $('markOut').click();
+  else if (k === 'j') nudge(e.shiftKey ? -30 : -10);
+  else if (k === 'l') nudge(e.shiftKey ? 30 : 10);
   else if (k === 'n') create();
   else if (k === 's' && current()) split();
   else if (k === 'm') $('mute').click();

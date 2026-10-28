@@ -1,5 +1,9 @@
 ## Não lançado
 
+### Player: pular 10 s e 30 s
+- Botões **-30**, **-10**, **+10** e **+30** ao lado do voltar/avançar 1 s; atalhos **J** / **L** (10 s) e
+  **Shift+J** / **Shift+L** (30 s), também na ajuda de teclado.
+
 ### "Só o streamer": área desenhada à mão
 - **Desenhar área no vídeo** (aba Efeitos, com "Só o streamer", "Webcam + jogo" ou "Por trecho"): arraste um
   retângulo sobre o player; a área fica no corte e a exportação recorta só ela, com fundo desfocado, sem detecção
