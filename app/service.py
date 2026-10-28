@@ -274,6 +274,58 @@ def create_project(chunks: Iterable[bytes], filename: str, form: dict, declared_
     return upload.finish()
 
 
+def _local_video(path_text: str) -> Path:
+    """Caminho de vídeo digitado pelo usuário (app local): absoluto, existente e com extensão de vídeo."""
+    text = str(path_text or '').strip().strip('"').strip("'")
+    source = Path(text).expanduser()
+    if not text or not source.is_absolute():
+        raise AppError('Informe o caminho completo do vídeo (ex.: D:\\lives\\live.mp4).', 400, 'bad_path')
+    if source.suffix.lower() not in media.ALLOWED_EXTENSIONS:
+        raise AppError('Selecione um vídeo válido: MP4, MOV, MKV, WEBM, AVI ou M4V.', 400, 'bad_extension')
+    if not source.is_file():
+        raise AppError('Arquivo não encontrado nesse caminho.', 404, 'not_found')
+    return source
+
+
+def check_path(path_text: str) -> dict:
+    """O que acontece ao importar este arquivo do disco: tamanho, se vai copiar e se já está num projeto."""
+    source = _local_video(path_text)
+    size = source.stat().st_size
+    same_disk = source.stat().st_dev == storage.data_dir().stat().st_dev
+    return {'name': source.name, 'size_bytes': size, 'no_copy': same_disk,
+            'too_big': size > config.MAX_UPLOAD_BYTES,
+            'duplicate': find_duplicate(size, quick_fingerprint(source))}
+
+
+def create_from_path(path_text: str, form: dict) -> dict:
+    """Projeto a partir de um vídeo que já está no computador, sem enviar pelo navegador.
+
+    No mesmo disco da pasta de dados vira um *hard link*: instantâneo e sem ocupar espaço (o projeto continua com o
+    vídeo mesmo que o original seja apagado ou movido). Em outro disco, cópia local.
+    """
+    source = _local_video(path_text)
+    size = source.stat().st_size
+    upload = Upload(source.name, form, size, origin='disco')
+    try:
+        upload.handle.close()
+        upload.part.unlink(missing_ok=True)
+        try:
+            os.link(source, upload.part)
+            how = 'link'
+        except OSError:        # outro disco (ou sistema de arquivos sem hard link): cópia
+            shutil.copyfile(source, upload.part)
+            how = 'copia'
+        upload.size = size
+    except BaseException:
+        upload.abort()
+        raise
+    result = upload.finish()
+    with storage.edit_project(result['id']) as p:
+        p['source_link'] = how
+        p['quick_fingerprint'] = quick_fingerprint(storage.project_dir(result['id']) / p['filename'])
+    return result | {'no_copy': how == 'link'}
+
+
 # --------------------------------------------------------------------------- consultas
 
 def public_job(job: dict | None) -> dict | None:
@@ -349,6 +401,34 @@ def _find_clip(p: dict, clip_id: int) -> dict:
 def _require_ready(p: dict) -> None:
     if p.get('status') != 'ready':
         raise AppError('A análise ainda não foi concluída.', 409, 'not_ready')
+
+
+FEEDBACK = ('bom', 'rejeitado')
+
+
+def set_feedback(project_id: str, clip_id: int, verdict: str | None, reason: str = '') -> dict:
+    """Marca o corte como bom ou rejeitado (``None`` limpa).
+
+    Fica no corte (``feedback``) e num registro do projeto (``feedback_log``) com o trecho e o título, que sobrevive a
+    "Refazer seleção" e "Analisar de novo": é a referência para medir o motor (``scripts/avaliar_selecao.py``).
+    Só local; nada é enviado para fora.
+    """
+    if verdict not in (None, *FEEDBACK):
+        raise AppError('Use "bom", "rejeitado" ou vazio.', 400, 'bad_input')
+    with storage.edit_project(project_id) as p:
+        clip = _find_clip(p, clip_id)
+        log_entries = [e for e in p.get('feedback_log') or []
+                       if not (abs(e['start'] - clip['start']) < 0.5 and abs(e['end'] - clip['end']) < 0.5)]
+        if verdict is None:
+            clip.pop('feedback', None)
+        else:
+            entry = {'verdict': verdict, 'reason': _clean_text(reason, 200), 'at': time.time()}
+            clip['feedback'] = entry
+            log_entries.append({**entry, 'start': clip['start'], 'end': clip['end'], 'title': clip.get('title'),
+                                'score': clip.get('score'), 'sources': clip.get('sources')})
+        p['feedback_log'] = log_entries
+        return {'clip_id': clip_id, 'feedback': clip.get('feedback'),
+                'counts': {v: sum(1 for e in log_entries if e['verdict'] == v) for v in FEEDBACK}}
 
 
 def edit_clip(project_id: str, clip_id: int, start: float, end: float, title: str) -> dict:

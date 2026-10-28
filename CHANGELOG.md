@@ -1,5 +1,23 @@
 ## Não lançado
 
+- Fase 3 (desempenho e confiabilidade):
+  - **Faixas pretas:** leituras do vídeo inteiro em cache e as do trecho em paralelo. Live 1080p60: 35 s → 11 s na
+    primeira exportação do vídeo e 5,3 s nas seguintes.
+  - **Exportação pela placa de vídeo (NVENC)**, com volta automática para o processador se a placa falhar. CQ 28 até
+    30 fps e 30 a 60 fps, com B-frames, calibrados para SSIM/PSNR iguais ou acima do x264 CRF 20. Corte de 62 s:
+    82–95 s → 30–51 s, arquivo cerca de 29% maior. Desliga em Configurações ou com `AUTOCORTES_ENCODER=x264`.
+  - **Um só modelo Whisper na placa:** a análise e a legenda precisa reaproveitam o mesmo `large-v3-turbo`
+    (antes, duas cópias: cerca de 1 GB a menos de memória de vídeo).
+  - **Importar do computador sem enviar:** cole o caminho do vídeo; no mesmo disco da pasta do AutoCortes vira um
+    hard link (instantâneo, sem ocupar espaço); em outro disco, cópia local. Avisa se o vídeo já está num projeto.
+  - **Feedback nos cortes:** 👍 Bom / 👎 Rejeitar, "Esconder rejeitados" e "Por que este corte foi sugerido"
+    (evidências e alertas do motor). As marcações ficam num registro do projeto que sobrevive a refazer a seleção;
+    `scripts/avaliar_selecao.py --feedback` mede o motor contra elas.
+  - **Tentar de novo** em exportações com erro (mesmas opções, tempos e título atuais do corte), no painel de
+    exportações e em Processamentos.
+  - **Inicializador Windows:** abre o navegador só quando o servidor responde, mostra o que verificar quando ele
+    para (porta em uso, dependências) e reinstala as dependências quando o `requirements.txt` muda.
+
 - Interface, fase 2 (fluxo de trabalho):
   - **Exportar selecionados:** caixa de seleção em cada corte, "Todos" e ordem (melhores primeiro ou ordem do vídeo);
     o lote escolhe destinos (Shorts, Reels, TikTok, Horizontal, Original), mostra quantos arquivos e o tamanho

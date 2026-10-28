@@ -2,7 +2,10 @@
 
 Uso (somente leitura; não altera projetos):
 
-    python scripts/avaliar_selecao.py <projeto_com_transcricao> <projeto_referencia> [--json saida.json]
+    python scripts/avaliar_selecao.py <projeto_com_transcricao> <projeto_referencia> [--json saida.json] [--feedback]
+
+Com --feedback, a referência são os cortes que você marcou como bom (👍) no projeto de referência, e o relatório
+conta também quantos rejeitados (👎) o motor ainda põe entre os primeiros.
 
 - ``projeto_com_transcricao``: pasta em ``data/`` com ``transcript.json`` e ``project.json`` (cenas e duração).
 - ``projeto_referencia``: projeto cujos cortes são a referência humana (mesmo vídeo).
@@ -73,6 +76,8 @@ def main() -> None:
     ap.add_argument('referencia')
     ap.add_argument('--json')
     ap.add_argument('--audio', help='pasta de cache para a energia do áudio; liga a camada de áudio')
+    ap.add_argument('--feedback', action='store_true',
+                    help='referência = cortes marcados "bom" no projeto de referência (botões 👍/👎 do Studio)')
     args = ap.parse_args()
     data = ROOT / 'data'
     proj = json.loads((data / args.fonte / 'project.json').read_text(encoding='utf-8'))
@@ -80,7 +85,16 @@ def main() -> None:
     segments = tr['transcript'] if isinstance(tr, dict) and 'transcript' in tr else tr
     if isinstance(segments, dict):
         segments = segments.get('segments') or []
-    refs = json.loads((data / args.referencia / 'project.json').read_text(encoding='utf-8'))['clips']
+    ref_project = json.loads((data / args.referencia / 'project.json').read_text(encoding='utf-8'))
+    rejected = []
+    if args.feedback:
+        log = ref_project.get('feedback_log') or []
+        refs = [e for e in log if e['verdict'] == 'bom']
+        rejected = [e for e in log if e['verdict'] == 'rejeitado']
+        if not refs:
+            sys.exit('Nenhum corte marcado como bom nesse projeto.')
+    else:
+        refs = ref_project['clips']
     target = proj.get('target_seconds') or 35
     audio = None
     if args.audio:
@@ -97,6 +111,10 @@ def main() -> None:
               'referencias': len(refs),
               'segundos_selecao': round(elapsed, 1), 'candidatos_avaliados': info.get('candidates_evaluated'),
               **evaluate(clips, refs)}
+    if rejected:   # quantos cortes rejeitados por você o motor ainda coloca no topo
+        ranked = sorted(clips, key=lambda c: c.get('rank') or 0)
+        for k in (10, 18, 30):
+            report[f'rejeitados_no_top{k}'] = sum(any(matches(r, c) for r in rejected) for c in ranked[:k])
     print(json.dumps(report, ensure_ascii=False, indent=1))
     if args.json:
         Path(args.json).write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding='utf-8')

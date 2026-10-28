@@ -51,6 +51,10 @@ ANALYSIS_WORKERS = _int('AUTOCORTES_ANALYSIS_WORKERS', 1, 1, 4)
 EXPORT_WORKERS = _int('AUTOCORTES_EXPORT_WORKERS', 1, 1, 4)
 FFMPEG_THREADS = _int('AUTOCORTES_FFMPEG_THREADS', 0, 0, 64)  # 0 = automático
 FFMPEG_PRESET = os.getenv('AUTOCORTES_X264_PRESET', 'veryfast')
+# Codificador da exportação: auto (placa NVIDIA quando disponível, senão CPU), x264 (sempre CPU) ou nvenc.
+# Medido (30 s, 1080×1920): NVENC CQ 27 codifica ~3× mais rápido que o x264 veryfast CRF 20, com SSIM/PSNR iguais
+# ou melhores contra uma referência quase sem perdas, e arquivos ~27% maiores.
+ENCODER = os.getenv('AUTOCORTES_ENCODER', 'auto').strip().lower()
 LOW_PRIORITY = _flag('AUTOCORTES_LOW_PRIORITY', True)
 
 # IA local

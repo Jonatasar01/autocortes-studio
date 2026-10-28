@@ -77,6 +77,10 @@ def dependencies() -> list[dict]:
         {'id': 'rostos', 'label': 'Seguir rosto e webcam', 'ok': reframe.available(),
          'detail': 'Disponível' if reframe.available() else 'Não instalado',
          'fix': 'Rode: pip install -r requirements-ai.txt'},
+        {'id': 'codificacao', 'label': 'Exportação', 'ok': True,
+         'detail': ('Placa de vídeo (NVENC): cerca de 2× mais rápida' if media.choose_encoder() == 'nvenc'
+                    else 'Processador (x264)'),
+         'fix': 'Para exportar pela placa: NVIDIA com driver atualizado e a opção ligada em Configurações.'},
         {'id': 'disco', 'label': 'Espaço livre', 'ok': free >= 20, 'detail': f'{free:.0f} GB',
          'fix': 'Libere espaço: cada live importada ocupa o tamanho do arquivo original.'},
     ]

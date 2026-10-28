@@ -312,6 +312,18 @@ def split_clip(project_id: str, clip_id: int, body: SplitClipRequest):
     return service.split_manual_clip(project_id, clip_id, body.at)
 
 
+class Feedback(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    verdict: Optional[Literal['bom', 'rejeitado']] = None
+    reason: str = Field(default='', max_length=200)
+
+
+@app.put('/api/projects/{project_id}/clips/{clip_id}/feedback')
+def clip_feedback(project_id: str, clip_id: int, body: Feedback):
+    """Corte bom ou rejeitado: referência local para medir e calibrar a seleção."""
+    return service.set_feedback(project_id, clip_id, body.verdict, body.reason)
+
+
 @app.patch('/api/projects/{project_id}/clips/{clip_id}')
 def edit_clip(project_id: str, clip_id: int, edit: ClipEdit):
     return service.edit_clip(project_id, clip_id, edit.start, edit.end, edit.title)
@@ -453,6 +465,24 @@ class ExportAllOptions(ExportOptions):
     clip_ids: Optional[list[int]] = Field(default=None, max_length=500)
     min_score: Optional[int] = Field(default=None, ge=0, le=100)
     shorten_pauses: bool = False
+
+
+class LocalPath(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    path: str = Field(min_length=3, max_length=1000)
+    options: dict = Field(default_factory=dict)
+
+
+@app.post('/api/projects/check-path')
+def check_local_path(body: LocalPath):
+    """Vídeo que já está no computador: tamanho, se a importação vai copiar e se ele já está num projeto."""
+    return service.check_path(body.path)
+
+
+@app.post('/api/projects/from-path')
+def create_from_local_path(body: LocalPath):
+    """Cria o projeto a partir de um arquivo local, sem enviar pelo navegador (hard link no mesmo disco)."""
+    return service.create_from_path(body.path, {k: str(v) for k, v in body.options.items()})
 
 
 class DuplicateCheck(BaseModel):

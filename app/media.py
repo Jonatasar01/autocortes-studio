@@ -449,23 +449,65 @@ def _cropdetect(source: Path, at: float, cancel_event: threading.Event | None) -
     return tuple(int(v) for v in found[-1]) if found else None
 
 
+LETTERBOX_CACHE_VERSION = 1
+
+
+def _cropdetect_many(source: Path, points: list[float], duration: float,
+                     cancel_event: threading.Event | None) -> list:
+    """Várias leituras do cropdetect em paralelo (cada uma é um FFmpeg curto, limitado pela busca no arquivo)."""
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(6, len(points) or 1)) as pool:
+        return list(pool.map(lambda at: _cropdetect(source, min(max(0.0, at), max(0.0, duration - 1.6)),
+                                                     cancel_event), points))
+
+
+def _global_boxes(source: Path, duration: float, cache_dir: Path | None,
+                  cancel_event: threading.Event | None) -> list:
+    """As 6 leituras espalhadas pelo vídeo inteiro: iguais para todo corte do mesmo arquivo, então ficam em cache."""
+    points = [duration * (i + 0.5) / 6 for i in range(6)]
+    cache = cache_dir / f'letterbox_v{LETTERBOX_CACHE_VERSION}.json' if cache_dir else None
+    st = source.stat()
+    stamp = [st.st_size, int(st.st_mtime)]
+    if cache and cache.is_file():
+        try:
+            data = json.loads(cache.read_text(encoding='utf-8'))
+            if data.get('stamp') == stamp:
+                return [tuple(b) if b else None for b in data['boxes']]
+        except (ValueError, KeyError, TypeError):
+            pass
+    boxes = _cropdetect_many(source, points, duration, cancel_event)
+    if cancel_event is not None and cancel_event.is_set():
+        raise Cancelled()
+    if cache:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_suffix('.tmp')
+        tmp.write_text(json.dumps({'stamp': stamp, 'boxes': [list(b) if b else None for b in boxes]}), encoding='utf-8')
+        tmp.replace(cache)
+    return boxes
+
+
 def detect_letterbox(source: Path, media: dict, start: float, end: float, *,
-                     cancel_event: threading.Event | None = None) -> dict | None:
+                     cancel_event: threading.Event | None = None, cache_dir: Path | None = None) -> dict | None:
     """Faixas pretas gravadas dentro do quadro (filme widescreen em 16:9, vídeo 4:3 em 16:9…).
 
     Amostra o trecho e o vídeo inteiro e une as áreas com conteúdo, de modo que uma cena
     escura não faça cortar imagem de verdade. Só aceita barras simétricas e consistentes;
     em caso de dúvida devolve ``None`` (nada é cortado).
     Retorna ``{'w', 'h', 'x', 'y'}`` em pixels do quadro exibido.
+
+    As leituras do vídeo inteiro ficam em ``cache_dir`` (mesmo arquivo, mesmo resultado) e as do trecho rodam
+    em paralelo: numa live 1080p60, de 35 s para poucos segundos por exportação.
     """
     W, H = int(media['width']), int(media['height'])
     duration = float(media['duration'])
     span = max(0.1, end - start)
-    points = [start + span * (i + 0.5) / 6 for i in range(6)]
-    points += [duration * (i + 0.5) / 6 for i in range(6)]
+    clip_points = [start + span * (i + 0.5) / 6 for i in range(6)]
+    found = _cropdetect_many(source, clip_points, duration, cancel_event)
+    if cancel_event is not None and cancel_event.is_set():
+        raise Cancelled()
+    found += _global_boxes(source, duration, cache_dir, cancel_event)
     boxes = []
-    for at in points:
-        box = _cropdetect(source, min(max(0.0, at), max(0.0, duration - 1.6)), cancel_event)
+    for box in found:
         # Quadro quase todo preto (fade, cena noturna) não diz nada sobre as barras.
         if box and box[0] >= W * 0.25 and box[1] >= H * 0.25:
             boxes.append(box)
@@ -846,13 +888,59 @@ def _narration_audio_graph(media: dict, narration: list[dict], original_volume: 
     return ';'.join(parts)
 
 
+_NVENC: dict = {}
+
+
+def nvenc_available() -> bool:
+    """A placa NVIDIA codifica H.264? Testado uma vez por execução com um vídeo de 0,2 s (driver, sessões livres)."""
+    if 'ok' not in _NVENC:
+        try:
+            run_ffmpeg(['-f', 'lavfi', '-i', 'color=black:s=256x256:d=0.2', '-c:v', 'h264_nvenc', '-pix_fmt',
+                        'yuv420p', '-f', 'null', '-'], duration=0.2, timeout=30)
+            _NVENC['ok'] = True
+        except (FFmpegError, OSError):
+            _NVENC['ok'] = False
+    return _NVENC['ok']
+
+
+def choose_encoder() -> str:
+    """``nvenc`` ou ``x264``: a variável ``AUTOCORTES_ENCODER`` manda; em ``auto``, vale a escolha das
+    Configurações ("Exportação rápida pela placa de vídeo") e a placa precisa responder."""
+    preference = config.ENCODER
+    if preference == 'auto':
+        from . import settings   # aqui dentro: settings importa media
+        preference = settings.load().get('export', {}).get('encoder', 'auto')
+    if preference == 'x264':
+        return 'x264'
+    return 'nvenc' if nvenc_available() else 'x264'
+
+
+NVENC_CQ_30FPS, NVENC_CQ_60FPS = 28, 30
+
+
+def video_codec_args(encoder: str, preview: bool, fps: float | None = None) -> list[str]:
+    """Codificador de vídeo da exportação.
+
+    NVENC: CQ escolhido para ficar com SSIM/PSNR iguais ou acima do x264 CRF 20 contra uma referência quase sem
+    perdas (medido em 1080×1920): CQ 28 até 30 fps e CQ 30 a 60 fps (a 60 fps o NVENC gasta mais bits por segundo).
+    """
+    if encoder == 'nvenc':
+        cq = NVENC_CQ_60FPS if (fps or 30) > 40 else NVENC_CQ_30FPS
+        quality = (['-preset', 'p2', '-rc', 'vbr', '-cq', '32', '-b:v', '0'] if preview else
+                   ['-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq', str(cq), '-b:v', '0', '-spatial-aq', '1',
+                    '-bf', '3', '-b_ref_mode', 'middle', '-rc-lookahead', '20'])
+        return ['-c:v', 'h264_nvenc', *quality]
+    quality = ['-preset', 'ultrafast', '-crf', '30'] if preview else ['-preset', config.FFMPEG_PRESET, '-crf', '20']
+    return ['-c:v', 'libx264', *quality]
+
+
 def build_export_args(source: Path, media: dict, start: float, duration: float, fmt: str, framing: str,
                       subtitles_file: str | None, normalize_audio: bool, output_name: str,
                       narration: list[dict] | None = None, original_volume: float = 1.0,
                       keep: list[tuple[float, float]] | None = None,
                       track: dict | None = None, post: str = '',
                       audio_extra: str = '', preview: bool = False,
-                      segments: list[dict] | None = None) -> tuple[list[str], tuple[int, int]]:
+                      segments: list[dict] | None = None, encoder: str = 'x264') -> tuple[list[str], tuple[int, int]]:
     graph, size = build_filtergraph(media, fmt, framing, subtitles_file, keep, track, post, segments)
     if preview:
         # Prévia: o mesmo grafo (layout, legenda, efeitos) e só no fim reduz à metade para codificar rápido.
@@ -883,8 +971,7 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
                  '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2']
     else:
         args += ['-an']
-    quality = ['-preset', 'ultrafast', '-crf', '30'] if preview else ['-preset', config.FFMPEG_PRESET, '-crf', '20']
-    args += ['-c:v', 'libx264', *quality, '-pix_fmt', 'yuv420p',
+    args += [*video_codec_args(encoder, preview, output_fps(media) or media.get('fps')), '-pix_fmt', 'yuv420p',
              '-profile:v', 'high', '-movflags', '+faststart', '-avoid_negative_ts', 'make_zero',
              # Remove metadados do original (ex.: localização GPS de celulares)
              '-map_metadata', '-1', '-map_chapters', '-1', '-sn', '-dn', output_name]
@@ -1003,15 +1090,28 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
             subtitles_file = 'legenda.ass'
         render = 'render.mp4'
 
+        used = {'encoder': choose_encoder()}
+
         def attempt(subs: str | None):
             if cancel_event is not None and cancel_event.is_set():
                 raise Cancelled()
-            args, size = build_export_args(source, media, start, duration, fmt, framing, subs,
-                                           normalize_audio, render, narration, original_volume, keep, track,
-                                           post, audio_extra, preview, segments)
-            run_ffmpeg(args, duration=out_duration, cwd=work, cancel_event=cancel_event,
-                       on_progress=lambda p, m: progress(p * 0.85, 'Renderizando'))
-            return size
+
+            def render_with(encoder: str):
+                args, size = build_export_args(source, media, start, duration, fmt, framing, subs,
+                                               normalize_audio, render, narration, original_volume, keep, track,
+                                               post, audio_extra, preview, segments, encoder)
+                run_ffmpeg(args, duration=out_duration, cwd=work, cancel_event=cancel_event,
+                           on_progress=lambda p, m: progress(p * 0.85, 'Renderizando'))
+                return size
+
+            if used['encoder'] == 'nvenc':
+                try:
+                    return render_with('nvenc')
+                except FFmpegError as exc:   # placa ocupada, sem sessão livre, driver: refaz na CPU
+                    log.warning('NVENC falhou; exportando com x264: %s', sanitize(exc.stderr_tail[-300:], 300))
+                    (work / render).unlink(missing_ok=True)
+                    used['encoder'] = 'x264'
+            return render_with('x264')
 
         subtitles_burned = bool(subtitles_file)
         try:
@@ -1057,7 +1157,7 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                 'face_tracking': bool(framing == 'track' and track and track.get('ok')),
                 'width': size[0], 'height': size[1], 'start': round(start, 3), 'end': round(end, 3),
                 'subtitles_burned': subtitles_burned, 'normalize_audio': normalize_audio,
-                'ai_narration': bool(narration),
+                'ai_narration': bool(narration), 'encoder': used['encoder'],
                 'shortened': ({'removed_seconds': round(duration - out_duration, 2), 'segments': len(keep)}
                               if keep else None),
                 'warnings': warnings + report['warnings'], 'validation': report}

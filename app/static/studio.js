@@ -466,6 +466,8 @@ function jobRow(j, {project = true, actions = true} = {}) {
     : JOB_STATUS[j.status] + (elapsed ? ' · ' + elapsed : '') + (j.error ? ' · ' + j.error : '');
   const buttons = !actions ? '' : (active && j.status !== 'cancelling'
     ? '<button type="button" class="btn ghost danger qcancel" data-jobcancel="' + j.id + '"><svg class="ic"><use href="#i-x"/></svg><span>Cancelar</span></button>' : '') +
+    (['failed', 'interrupted'].includes(j.status) && ['export', 'analysis', 'download'].includes(j.kind) && !j.narration
+      ? '<button type="button" class="btn ghost" data-retry="' + j.id + '">Tentar de novo</button>' : '') +
     (j.project_id && j.kind !== 'download' ? '<button type="button" class="btn ghost" data-jobopen="' + escape(j.project_id) + '">Abrir</button>' : '');
   return '<li class="jobrow" data-status="' + j.status + '"><div class="qmain"><strong>' + escape(project ? j.project_name : what) +
     '</strong><small>' + escape(project ? what + ' — ' + detail : detail) + '</small>' +
@@ -495,8 +497,20 @@ function renderDeps(box, deps) {
     (d.ok ? (d.hint ? ' — ' + escape(d.hint) : '') : ' — ' + escape(d.fix)) + '</small></div></li>').join('');
 }
 
-// Ações das listas de tarefas (página inicial e Processamentos).
+// Ações das listas de tarefas (página inicial, Processamentos e painel de exportações).
 document.addEventListener('click', async (e) => {
+  const retry = e.target.closest('[data-retry]');
+  if (retry) {
+    retry.disabled = true;
+    try {
+      const j = await api('/api/jobs/' + retry.dataset.retry + '/retry', 'POST');
+      toast(j.duplicate ? 'Essa exportação já está na fila.' : 'Tarefa enviada de novo para a fila.');
+      if (state.project) { state.project.jobs = [j, ...(state.project.jobs || [])]; renderExports(); }
+    } catch (err) { toast(err.message, true); retry.disabled = false; }
+    if ($('jobsDialog').open) loadJobs();
+    loadProjects();
+    return;
+  }
   const cancel = e.target.closest('[data-jobcancel]');
   if (cancel) {
     cancel.disabled = true;
@@ -514,6 +528,37 @@ document.addEventListener('click', async (e) => {
     openProject(open.dataset.jobopen).catch((err) => { setLoading(null); toast(err.message, true); });
   }
 });
+
+// ------------------------------------------------------------------ feedback e motivo da sugestão
+
+function renderFeedback(c) {
+  const verdict = c.feedback?.verdict || null;
+  $('fbGood').setAttribute('aria-pressed', String(verdict === 'bom'));
+  $('fbBad').setAttribute('aria-pressed', String(verdict === 'rejeitado'));
+  const evidence = c.evidence || [], warnings = c.warnings || [];
+  $('whyBox').hidden = !evidence.length && !warnings.length && !(c.reasons || []).length;
+  $('whyEvidence').innerHTML = (evidence.length ? evidence.map((e) => '<li><b>' + escape(e.tipo) + '</b> · ' +
+    escape(e.detalhe || '') + ' <small>(' + escape(e.origem) + ')</small></li>') : (c.reasons || []).map((r) =>
+    '<li>' + escape(r) + '</li>')).join('') + ((c.sources || []).length ? '<li><small>Origem: ' +
+    escape(c.sources.join(' + ')) + '</small></li>' : '');
+  $('whyWarnings').innerHTML = warnings.map((w) => '<li>' + escape(w) + '</li>').join('');
+}
+async function sendFeedback(verdict) {
+  const c = current();
+  if (!c || !state.project) return;
+  const next = c.feedback?.verdict === verdict ? null : verdict;   // clicar de novo desmarca
+  try {
+    const r = await api('/api/projects/' + state.project.id + '/clips/' + c.id + '/feedback', 'PUT', {verdict: next});
+    c.feedback = r.feedback || undefined;
+    render();
+    if (next) toast((next === 'bom' ? 'Marcado como bom' : 'Rejeitado') + ' · ' + r.counts.bom + ' bons e ' +
+      r.counts.rejeitado + ' rejeitados neste projeto.');
+  } catch (e) { toast(e.message, true); }
+}
+$('fbGood').onclick = () => sendFeedback('bom');
+$('fbBad').onclick = () => sendFeedback('rejeitado');
+$('hideRejected').checked = store.get('hideRejected') === '1';
+$('hideRejected').onchange = () => { store.set('hideRejected', $('hideRejected').checked ? '1' : '0'); render(); };
 
 // ------------------------------------------------------------------ seleção múltipla e exportação em lote
 
@@ -682,12 +727,16 @@ async function openSettings() {
   $('settingsDialog').showModal();
   try {
     const [cfg, d] = await Promise.all([api('/api/settings'), state.dashboard ? state.dashboard : api('/api/dashboard')]);
+    $('prefGpuExport').checked = (cfg.export?.encoder || 'auto') === 'auto';
     $('settingsPaths').innerHTML = '<dt>Pasta monitorada (entrada)</dt><dd>' + escape(cfg.paths.watch_dir) + '</dd>' +
       '<dt>Pasta de saída</dt><dd>' + escape(cfg.paths.output_dir) + '</dd>';
     renderDeps($('settingsDeps'), d.dependencies);
   } catch (e) { toast(e.message, true); }
 }
-$('settingsSave').onclick = () => {
+$('settingsSave').onclick = async () => {
+  try {
+    await api('/api/settings', 'PUT', {export: {encoder: $('prefGpuExport').checked ? 'auto' : 'x264'}});
+  } catch (e) { toast(e.message, true); }
   store.set('pref.mode', $('prefMode').value);
   store.set('pref.target', String(clamp(Number($('prefTarget').value) || 35, 10, 90)));
   $('subtitleStyle').value = $('prefSubtitle').value;
@@ -714,7 +763,9 @@ const editMode = () => document.querySelector('[name=editMode]:checked')?.value 
 for (const r of document.querySelectorAll('[name=sourceMode]')) {
   r.onchange = () => {
     $('fileWrap').hidden = sourceMode() !== 'file';
+    $('pathWrap').hidden = sourceMode() !== 'path';
     $('urlWrap').hidden = sourceMode() !== 'link';
+    if (sourceMode() === 'path') $('videoPath').focus();
   };
 }
 for (const r of document.querySelectorAll('[name=editMode]')) r.onchange = syncMode;
@@ -820,8 +871,11 @@ function openNewProject(file = null) {
   $('uploadForm').reset();
   for (const r of document.querySelectorAll('[name=editMode]')) r.checked = r.value === PREFS.mode();
   $('target').value = PREFS.target();
-  $('sourceSwitch').hidden = !state.dashboard?.links_enabled;
+  $('linkOption').hidden = !state.dashboard?.links_enabled;
   $('fileWrap').hidden = false;
+  $('pathWrap').hidden = true;
+  $('pathInfo').hidden = true;
+  state.pathInfo = null;
   $('urlWrap').hidden = true;
   if (file) {
     const dt = new DataTransfer();
@@ -834,7 +888,56 @@ function openNewProject(file = null) {
   $('newDialog').showModal();
   if (!state.dashboard) loadProjects();
 }
+// Vídeo que já está no computador: o servidor (local) confere o arquivo, se vai copiar e se já existe num projeto.
+async function checkPath() {
+  const path = $('videoPath').value.trim();
+  state.pathInfo = null;
+  if (!path) { $('pathInfo').hidden = true; return null; }
+  const box = $('pathInfo');
+  box.hidden = false;
+  box.textContent = 'Verificando o arquivo…';
+  try {
+    const info = await api('/api/projects/check-path', 'POST', {path});
+    if ($('videoPath').value.trim() !== path) return null;
+    state.pathInfo = info;
+    const lines = [];
+    if (info.too_big) lines.push(['bad', 'O arquivo passa do limite de envio. Aumente MAX_UPLOAD_GB no iniciar_windows.bat.']);
+    lines.push(info.no_copy ? ['ok', 'Mesmo disco do AutoCortes: entra na hora, sem copiar e sem ocupar espaço extra.']
+      : ['info', 'Outro disco: o vídeo será copiado para a pasta do AutoCortes (bem mais rápido que enviar).']);
+    if (info.duplicate) lines.push(['warn', 'Este vídeo já está no projeto "' + info.duplicate.name + '" (' +
+      (info.duplicate.clips || 0) + ' cortes).']);
+    box.innerHTML = '<dl><dt>Arquivo</dt><dd>' + escape(info.name) + '</dd><dt>Tamanho</dt><dd>' +
+      fmtSize(info.size_bytes) + '</dd></dl><ul class="fileproblems">' +
+      lines.map(([tone, t]) => '<li class="' + tone + '">' + escape(t) + '</li>').join('') + '</ul>';
+    if (info.duplicate) {
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'btn';
+      open.dataset.jobopen = info.duplicate.id;
+      open.textContent = 'Abrir o projeto existente';
+      open.onclick = () => $('newDialog').close();
+      box.append(open);
+    }
+    return info;
+  } catch (e) {
+    box.innerHTML = '<ul class="fileproblems"><li class="bad">' + escape(e.message) + '</li></ul>';
+    return null;
+  }
+}
+let pathTimer = null;
+$('videoPath').addEventListener('input', () => { clearTimeout(pathTimer); pathTimer = setTimeout(checkPath, 500); });
+
 $('stepNext').onclick = async () => {
+  if (sourceMode() === 'path') {
+    const info = state.pathInfo || await checkPath();
+    if (!info) return toast('Confira o caminho do vídeo.', true);
+    if (info.too_big) return toast('O arquivo passa do limite de envio.', true);
+    if (info.duplicate && !await askConfirm({
+      title: 'Vídeo já importado', yes: 'Importar mesmo assim',
+      text: 'Este vídeo já está no projeto "' + info.duplicate.name + '". Importar de novo refaz a análise.',
+    })) return;
+    return wizardStep(2);
+  }
   if (sourceMode() === 'file' && !$('file').files[0]) return toast('Selecione um vídeo para continuar.', true);
   if (sourceMode() === 'link' && !$('videoUrl').value.trim()) return toast('Cole o link do vídeo.', true);
   if ((state.fileProblems || []).some(([tone]) => tone === 'bad')) return toast('Resolva o problema do arquivo antes de continuar.', true);
@@ -904,12 +1007,20 @@ $('uploadForm').onsubmit = async (e) => {
   const f = $('file').files[0], p = params(), btn = $('importButton');
   if (sourceMode() === 'file' && !f) return toast('Selecione um arquivo de vídeo.', true);
   if (sourceMode() === 'link' && !$('videoUrl').value.trim()) return toast('Cole o link do vídeo.', true);
+  if (sourceMode() === 'path' && !$('videoPath').value.trim()) return toast('Informe o caminho do vídeo.', true);
   btn.disabled = true;
   btn.setAttribute('aria-busy', 'true');
   store.set('pref.mode', editMode());
   if (editMode() === 'advanced') store.set('pref.target', String(clamp(Number($('target').value) || 35, 10, 90)));
   try {
-    if (sourceMode() === 'link') {
+    if (sourceMode() === 'path') {
+      setStatus('Importando do computador…', 'busy');
+      $('importButton').textContent = state.pathInfo?.no_copy ? 'Importando…' : 'Copiando o vídeo…';
+      const d = await api('/api/projects/from-path', 'POST', {path: $('videoPath').value.trim(), options: p});
+      $('newDialog').close();
+      toast(d.no_copy ? 'Vídeo importado sem cópia (mesmo disco).' : 'Vídeo copiado e importado.');
+      await openProject(d.id);
+    } else if (sourceMode() === 'link') {
       setStatus('Baixando vídeo…', 'busy');
       setLoading('Baixando vídeo…');
       const result = await api('/api/imports/link', 'POST', {url: $('videoUrl').value.trim(), options: p});
@@ -930,6 +1041,7 @@ $('uploadForm').onsubmit = async (e) => {
     btn.disabled = false;
     btn.removeAttribute('aria-busy');
     $('uploadProgress').hidden = true;
+    syncMode();   // volta o texto do botão
   }
 };
 
@@ -1119,6 +1231,8 @@ async function refresh() {
 
 function clipBadges(c) {
   const out = [];
+  if (c.feedback?.verdict === 'bom') out.push('👍 Bom');
+  if (c.feedback?.verdict === 'rejeitado') out.push('👎 Rejeitado');
   out.push(c.selection_mode === 'manual' ? 'Manual' : 'Automático');
   if (c.score != null) out.push('Nota ' + Math.round(c.score));
   const exported = Object.keys(c.exports || {});
@@ -1134,6 +1248,7 @@ function syncFields(c) {
   }
   $('clipDuration').value = fmtMs(c.end - c.start);
   $('clipInfo').textContent = c.reasons?.length ? c.reasons.slice(0, 2).join(' · ') : '';
+  renderFeedback(c);
 }
 
 function render() {
@@ -1142,7 +1257,8 @@ function render() {
   const c = current();
   $('count').textContent = p.clips.length;
   renderExports();
-  const ordered = cutSort() === 'time' ? [...p.clips].sort((a, b) => a.start - b.start) : p.clips;
+  let ordered = cutSort() === 'time' ? [...p.clips].sort((a, b) => a.start - b.start) : p.clips;
+  if ($('hideRejected').checked) ordered = ordered.filter((x) => x.feedback?.verdict !== 'rejeitado' || x.id === state.selected);
   for (const id of [...state.picked]) if (!p.clips.some((x) => x.id === id)) state.picked.delete(id);
   $('cutCards').innerHTML = ordered.map((x) =>
     '<div class="cutRow"><label class="pick" title="Selecionar para exportar"><input type="checkbox" data-pick="' + x.id + '"' +
@@ -2259,8 +2375,11 @@ function renderExports() {
           '"><svg class="ic"><use href="#i-download"/></svg></a></span>',
       })).join(''), done.length <= 3) +
     group('failed', 'Com erro', failed, failed.map((j) =>
-      row(clipLabel(j.clip_id), (j.format || '') + ' · ' + (j.error || 'A exportação não terminou.') + ' Exporte de novo.',
-        {tone: 'error'})).join(''));
+      row(clipLabel(j.clip_id), (j.format || '') + ' · ' + (j.error || 'A exportação não terminou.'), {
+        tone: 'error',
+        actions: j.kind === 'export' && !j.narration ? '<button type="button" class="btn ghost" data-retry="' + j.id +
+          '">Tentar de novo</button>' : '',
+      })).join(''));
 
   $('openFolder').hidden = !done.length;
   const batch = batchStatus(p);
