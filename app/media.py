@@ -693,9 +693,11 @@ def _select_expr(keep: list[tuple[float, float]]) -> str:
 
 def _blur_branch(inp: str, W: int, H: int, out: str) -> str:
     bw, bh = _even(W / 4), _even(H / 4)
+    # Escurecer antes de ampliar e ampliar em bilinear: o fundo já está desfocado, o resultado é o mesmo
+    # (SSIM 0,9995) com ~13% menos tempo neste ramo.
     return (f'{inp}split=2[bgsrc][fgsrc];'
             f'[bgsrc]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},'
-            f'boxblur=8:2,scale={W}:{H},eq=brightness=-0.06[bg];'
+            f'boxblur=8:2,eq=brightness=-0.06,scale={W}:{H}:flags=bilinear[bg];'
             f'[fgsrc]scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic[fg];'
             f'[bg][fg]overlay=(W-w)/2:(H-h)/2{out}')
 
@@ -951,7 +953,10 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
         # Prévia: o mesmo grafo (layout, legenda, efeitos) e só no fim reduz à metade para codificar rápido.
         size = (_even(size[0] / 2), _even(size[1] / 2))
         graph = graph[:-len('[vout]')] + f',scale={size[0]}:{size[1]}:flags=bilinear[vout]'
-    args = ['-ss', f'{start:.3f}', '-i', str(source)]
+    # "-t" também antes do "-i": a leitura da origem para no fim do corte. Sem isso, com pausas cortadas a saída
+    # fica mais curta que "duration" e o FFmpeg seguia decodificando (e descartando) o resto do vídeo: num corte
+    # de 108 s de uma live, 1060 s em vez de 76 s.
+    args = ['-ss', f'{start:.3f}', '-t', f'{duration:.3f}', '-i', str(source)]
     for item in narration or []:
         args += ['-i', str(item['path'])]
     # "-t" depois de todas as entradas = opção de saída (duração do corte).

@@ -17,6 +17,36 @@ from tests.test_service import OWNED, ServiceBase
 INFO = {'width': 1920, 'height': 1080, 'duration': 600.0, 'video_index': 0, 'fps': 30, 'audio_index': None}
 
 
+class SourceReadLimitTests(unittest.TestCase):
+    """Pausas cortadas deixam a saída mais curta que o trecho: a leitura da origem precisa parar no fim do corte."""
+
+    def test_input_is_limited_to_the_clip(self):
+        args, _ = media.build_export_args(Path('v.mp4'), {**INFO, 'audio_index': 1}, 120.0, 30.0, '16:9', 'fit',
+                                          None, False, 'out.mp4', keep=[(0.0, 10.0), (14.0, 30.0)])
+        i = args.index('-i')
+        self.assertEqual(args[:i], ['-ss', '120.000', '-t', '30.000'])
+
+    @unittest.skipUnless(HAS_FFMPEG, 'FFmpeg ausente')
+    def test_shortened_clip_stops_reading_at_the_clip_end(self):
+        tmp = Path(tempfile.mkdtemp(prefix='keep-'))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        video = make_video(tmp / 'longo.mp4', size='320x180', duration=40, fps=25)
+        info = media.probe_media(video)
+        frames = []
+        real = media.run_ffmpeg
+
+        def spy(args, *a, **kw):
+            out = real(args, *a, **kw)
+            frames.append(args)
+            return out
+        with mock.patch.object(media, 'run_ffmpeg', side_effect=spy):
+            out = media.export_clip(video, info, tmp / 'out', 'corte', 5.0, 15.0, fmt='16:9', framing='fit',
+                                    keep=[(0.0, 4.0), (6.0, 10.0)])
+        render = next(a for a in frames if '-filter_complex' in a)
+        self.assertLess(render.index('-t'), render.index('-i'))
+        self.assertAlmostEqual(media.probe_media(tmp / 'out' / Path(out['file']).name)['duration'], 8.0, delta=0.3)
+
+
 class LetterboxCacheTests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix='lb-'))
