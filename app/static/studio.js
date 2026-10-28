@@ -1424,10 +1424,17 @@ function renderMix() {
   $('mixPanel').hidden = $('framing').value !== 'mix' || !c;
   if ($('mixPanel').hidden) return;
   const at = video.currentTime - c.start;
-  $('mixSegments').innerHTML = mixSegments(c).map((s, i) =>
+  const segs = mixSegments(c);
+  // Início e fim editáveis (o início do primeiro e o fim do último são os do corte); mudar um limite move
+  // o do trecho vizinho junto. Focar um campo leva o vídeo até aquele ponto.
+  const time = (i, which, value, fixed) => '<input class="t" inputmode="decimal" spellcheck="false" autocomplete="off"' +
+    ' data-segtime="' + i + '" data-which="' + which + '" value="' + fmt(value) + '"' + (fixed ? ' readonly tabindex="-1"' : '') +
+    ' aria-label="' + (which === 'start' ? 'Início' : 'Fim') + ' do trecho ' + (i + 1) + '" title="' +
+    (fixed ? (which === 'start' ? 'Começo do corte' : 'Fim do corte') : 'Digite o tempo (ex.: 0:52.5) e tecle Enter') + '">';
+  $('mixSegments').innerHTML = segs.map((s, i) =>
     '<li' + (at >= s.start && at < s.end ? ' class="here"' : '') + '>' +
-    '<button type="button" class="t" data-seek="' + s.start + '" title="Ir para o início do trecho">' +
-    fmt(s.start) + '–' + fmt(s.end) + '</button>' +
+    '<span class="segtimes">' + time(i, 'start', s.start, i === 0) + '<span aria-hidden="true">–</span>' +
+    time(i, 'end', s.end, i === segs.length - 1) + '</span>' +
     '<select data-seg="' + i + '" aria-label="Enquadramento do trecho ' + (i + 1) + '">' +
     Object.entries(FRAMING_LABELS).map(([v, l]) => '<option value="' + v + '"' + (v === s.framing ? ' selected' : '') +
       '>' + l + '</option>').join('') + '</select>' +
@@ -1447,12 +1454,38 @@ $('framing').addEventListener('change', renderMix);
 video.addEventListener('pause', renderMix);
 $('mixSegments').onclick = (e) => {
   const c = current();
-  const seek = e.target.closest('[data-seek]');
-  if (seek && c) { video.currentTime = c.start + Number(seek.dataset.seek); renderMix(); return; }
   const del = e.target.closest('[data-del]');
   if (del) saveMix(mixSegments(c).filter((_, i) => i !== Number(del.dataset.del)));
 };
+$('mixSegments').addEventListener('focusin', (e) => {
+  const input = e.target.closest('[data-segtime]');
+  const c = current();
+  if (input && c && !Number.isNaN(parseTime(input.value))) video.currentTime = c.start + parseTime(input.value);
+});
+$('mixSegments').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.closest('[data-segtime]')) { e.preventDefault(); e.target.blur(); }
+  if (e.key === 'Escape' && e.target.closest('[data-segtime]')) { e.preventDefault(); renderMix(); }
+});
+// Novo limite entre dois trechos: cada trecho fica com pelo menos MIX_MIN segundos.
+const MIX_MIN = 0.5;
+function moveBoundary(i, which, text) {
+  const c = current();
+  if (!c) return;
+  const segs = mixSegments(c);
+  const t = parseTime(text);
+  const k = which === 'end' ? i : i - 1;     // limite entre os trechos k e k + 1
+  if (Number.isNaN(t)) { toast('Tempo inválido. Use, por exemplo, 52.5 ou 0:52.5.', true); return renderMix(); }
+  if (k < 0 || k >= segs.length - 1) return renderMix();
+  const lo = segs[k].start + MIX_MIN, hi = segs[k + 1].end - MIX_MIN;
+  const v = Math.round(Math.min(hi, Math.max(lo, t)) * 100) / 100;
+  if (Math.abs(v - t) > 0.01) toast('Ajustado para ' + fmt(v) + ': cada trecho precisa de pelo menos ' + MIX_MIN + ' s entre os vizinhos.');
+  if (Math.abs(v - segs[k].end) < 0.005) return renderMix();
+  segs[k].end = segs[k + 1].start = v;
+  saveMix(segs);
+}
 $('mixSegments').onchange = (e) => {
+  const input = e.target.closest('[data-segtime]');
+  if (input) return moveBoundary(Number(input.dataset.segtime), input.dataset.which, input.value);
   const sel = e.target.closest('[data-seg]');
   if (!sel) return;
   const segs = mixSegments(current());

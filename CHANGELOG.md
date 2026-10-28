@@ -1,5 +1,9 @@
 ## Não lançado
 
+### Por trecho: tempos editáveis
+- Cada trecho tem início e fim em campos de texto (`52.5`, `0:52.5`); mudar um limite move o do vizinho junto,
+  com mínimo de 0,5 s por trecho. Focar o campo leva o vídeo até o ponto; Enter confirma, Esc desfaz.
+
 ### Legenda: sem repetições e com correção à mão
 - **Legenda precisa sem o contexto da frase anterior:** com ele, numa live barulhenta o modelo entrava em laço e
   repetia a mesma frase por cima da fala real ("Porra, viado!" 8× no lugar de "Ô louco! … Eu ia comer teu bolo!"

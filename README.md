@@ -435,8 +435,10 @@ com um enquadramento diferente: **seguir rosto**, **fundo desfocado** ou **quadr
   o vídeo está é dividido nesse ponto.
 - **Variar automaticamente:** alterna seguir rosto e fundo desfocado a cada troca de cena do corte (cenas
   com menos de 2,5 s se juntam à seguinte); sem trocas de cena, alterna a cada ~6 s.
-- Cada trecho da lista pode ter o enquadramento trocado ou ser removido (o vizinho ocupa o espaço);
-  clicar no tempo leva o vídeo ao início do trecho.
+- Cada trecho da lista pode ter o enquadramento trocado ou ser removido (o vizinho ocupa o espaço).
+- **Início e fim editáveis:** digite o tempo (ex.: `52.5` ou `0:52.5`) e tecle Enter; o limite muda nos dois
+  trechos vizinhos (cada trecho fica com pelo menos 0,5 s; valor fora disso é ajustado com aviso). O início do
+  primeiro e o fim do último são os do corte. Clicar num campo leva o vídeo até aquele ponto; Esc desfaz.
 - Sem trechos marcados, a exportação "por trecho" usa a variação automática.
 
 Na exportação, o FFmpeg monta uma versão do vídeo para cada enquadramento usado e liga cada uma no tempo
