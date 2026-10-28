@@ -7,7 +7,7 @@ const state = {
   project: null, selected: null, format: '9:16', markIn: 0, markOut: 0, scale: 7,
   previewEnd: null, drag: null, stripKey: null, stripToken: 0, rulerKey: null, openVersion: 0,
   exporting: false, exportJob: null, edited: {}, syncedClip: null, dirty: false, seeking: false,
-  queueTimer: null, queueClosed: {},
+  queueTimer: null, queueClosed: {}, picked: new Set(), batch: null,
 };
 const CSRF = {'X-AutoCortes': '1'};
 const ACTIVE_JOB = ['queued', 'running', 'cancelling'];
@@ -515,6 +515,140 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// ------------------------------------------------------------------ seleção múltipla e exportação em lote
+
+const cutSort = () => (store.get('cutSort') === 'time' ? 'time' : 'score');
+$('cutSort').value = cutSort();
+$('cutSort').onchange = () => { store.set('cutSort', $('cutSort').value); render(); };
+
+function syncPicked() {
+  const clips = state.project?.clips || [];
+  $('cutTools').hidden = !clips.length || !isReady();
+  const n = state.picked.size;
+  $('pickAll').checked = n > 0 && n === clips.length;
+  $('pickAll').indeterminate = n > 0 && n < clips.length;
+  $('exportPicked').disabled = !n;
+  $('exportPickedLabel').textContent = n ? 'Exportar selecionados (' + n + ')' : 'Exportar selecionados';
+}
+$('pickAll').onchange = () => {
+  state.picked = $('pickAll').checked ? new Set((state.project?.clips || []).map((c) => c.id)) : new Set();
+  render();
+};
+
+const PRESETS = {
+  shorts: {format: '9:16', max: 180, label: 'Shorts'},
+  reels: {format: '9:16', max: 180, label: 'Reels'},
+  tiktok: {format: '9:16', max: 600, label: 'TikTok'},
+  horizontal: {format: '16:9', max: null, label: 'Horizontal'},
+  original: {format: 'original', max: null, label: 'Original'},
+};
+const MBPS = 5;   // estimativa de taxa dos arquivos exportados (1080p H.264, medida nos cortes já feitos: 4–6 Mbit/s)
+const presetInputs = () => [...document.querySelectorAll('.presetgrid input')];
+function pickedPresets() { return presetInputs().filter((i) => i.checked).map((i) => i.value); }
+
+function openBatch() {
+  const p = state.project;
+  if (!p || !state.picked.size) return;
+  let saved = [];
+  try { saved = JSON.parse(store.get('batch.presets') || '[]'); } catch { saved = []; }
+  if (!saved.length) saved = ['shorts'];
+  for (const i of presetInputs()) i.checked = saved.includes(i.value);
+  const rights = !!p.rights?.requires_acknowledgement;
+  $('batchRightsRow').hidden = !rights;
+  $('batchRights').checked = false;
+  const framing = $('framing').selectedOptions[0]?.textContent || $('framing').value;
+  const filterName = state.filters.find((f) => f.id === state.filter)?.label;
+  $('batchOptions').textContent = 'Usa as opções do editor: ' + [framing,
+    $('subtitles').checked ? 'legenda ' + ($('subtitleStyle').value === 'dinamica' ? 'dinâmica' : 'clássica') : 'sem legenda',
+    state.filter !== 'nenhum' && filterName ? 'filtro ' + filterName : null].filter(Boolean).join(' · ') + '.';
+  syncBatch();
+  $('batchDialog').showModal();
+}
+function syncBatch() {
+  const clips = (state.project?.clips || []).filter((c) => state.picked.has(c.id));
+  const presets = pickedPresets();
+  const formats = [...new Set(presets.map((k) => PRESETS[k].format))];
+  const files = clips.length * formats.length;
+  const seconds = clips.reduce((s, c) => s + (c.end - c.start), 0) * formats.length;
+  $('batchCount').textContent = clips.length + (clips.length === 1 ? ' corte selecionado' : ' cortes selecionados') +
+    ' · ' + fmtDur(clips.reduce((s, c) => s + (c.end - c.start), 0)) + ' de vídeo';
+  $('batchSummary').textContent = files
+    ? files + (files === 1 ? ' arquivo' : ' arquivos') + ' (' + formats.join(', ') + ') · cerca de ' +
+      fmtSize(seconds * MBPS * 1e6 / 8) + ' no total (estimativa)'
+    : 'Escolha pelo menos um formato.';
+  const warnings = [];
+  for (const k of presets) {
+    const max = PRESETS[k].max;
+    const long = max ? clips.filter((c) => c.end - c.start > max).length : 0;
+    if (long) warnings.push(long + (long === 1 ? ' corte passa' : ' cortes passam') + ' de ' + fmtDur(max) + ': o ' +
+      PRESETS[k].label + ' pode recusar. Encurte antes de publicar lá.');
+  }
+  $('batchWarnings').innerHTML = warnings.map((w) => '<li class="warn">' + escape(w) + '</li>').join('');
+  $('batchGo').disabled = !files;
+  $('batchGo').textContent = files ? 'Exportar ' + files + (files === 1 ? ' arquivo' : ' arquivos') : 'Exportar';
+}
+for (const i of presetInputs()) i.addEventListener('change', syncBatch);
+$('exportPicked').onclick = openBatch;
+
+$('batchGo').onclick = async () => {
+  const p = state.project;
+  const presets = pickedPresets();
+  const formats = [...new Set(presets.map((k) => PRESETS[k].format))];
+  const rights = !!p.rights?.requires_acknowledgement;
+  if (rights && !$('batchRights').checked) return toast('Confirme a Revisão de direitos para exportar.', true);
+  store.set('batch.presets', JSON.stringify(presets));
+  $('batchGo').disabled = true;
+  try {
+    const opts = exportOptions(formats[0], rights);
+    delete opts.format;
+    opts.edit_plan = null;   // o plano de edição é de um corte só; o lote usa as opções do editor
+    const ids = (p.clips || []).filter((c) => state.picked.has(c.id)).map((c) => c.id);
+    const res = await api('/api/projects/' + p.id + '/export-all', 'POST', {...opts, formats, clip_ids: ids});
+    $('batchDialog').close();
+    state.batch = {jobs: res.jobs.map((j) => j.id), order: ids, total: res.jobs.length, announced: false};
+    state.project.jobs = [...res.jobs, ...(state.project.jobs || []).filter((j) => !res.jobs.some((x) => x.id === j.id))];
+    renderExports();
+    toast(res.jobs.length + ' exportações na fila' + (res.errors.length ? ' · ' + res.errors.length + ' não enviadas: ' + res.errors[0].error : '.'),
+      !!res.errors.length);
+    setStatus('Exportando em lote', 'busy');
+  } catch (e) { toast(e.message, true); } finally { $('batchGo').disabled = false; }
+};
+
+// Andamento do lote pelas tarefas do projeto (atualizadas pela fila do painel de exportações).
+function batchStatus(p) {
+  const b = state.batch;
+  if (!b) return null;
+  const jobs = (p.jobs || []).filter((j) => b.jobs.includes(j.id));
+  const done = jobs.filter((j) => j.status === 'done').length;
+  const failed = jobs.filter((j) => FAILED_JOB.includes(j.status)).length;
+  const running = jobs.find((j) => j.status === 'running');
+  return {total: b.total, done, failed, progress: running?.progress || 0, finished: done + failed >= b.total,
+    current: running ? (b.order.indexOf(running.clip_id) + 1) + ' de ' + b.order.length : null};
+}
+function batchPosition(j) {
+  const b = state.batch;
+  return b && b.jobs.includes(j.id) ? 'Corte ' + (b.order.indexOf(j.clip_id) + 1) + ' de ' + b.order.length + ' · ' : '';
+}
+function finishBatch(batch) {
+  if (state.batch.announced) return;
+  state.batch.announced = true;
+  setStatus('Lote concluído', batch.failed ? 'error' : 'ok');
+  toast('Lote concluído: ' + batch.done + ' de ' + batch.total + ' arquivos prontos' +
+    (batch.failed ? '; ' + batch.failed + ' com erro (veja em Exportações).' : '. Use "Abrir pasta" para ver os arquivos.'),
+    !!batch.failed);
+  setTimeout(() => { if (state.batch?.announced) { state.batch = null; renderExports(); } }, 15000);
+}
+
+// ------------------------------------------------------------------ pastas
+
+$('openFolder').onclick = async () => {
+  try { const r = await api('/api/projects/' + state.project.id + '/open-folder', 'POST'); toast('Pasta aberta: ' + r.folder); }
+  catch (e) { toast(e.message, true); }
+};
+$('openOutput').onclick = async () => {
+  try { const r = await api('/api/open-output', 'POST'); toast('Pasta aberta: ' + r.folder); } catch (e) { toast(e.message, true); }
+};
+
 // ------------------------------------------------------------------ processamentos
 
 async function loadJobs() {
@@ -639,16 +773,45 @@ function describeFile() {
       problems.push(['warn', 'Resolução baixa: os cortes verticais podem ficar sem nitidez.']);
     }
     if (dur > 2 * 3600) problems.push(['info', 'Vídeo longo: a análise pode levar bastante tempo; o andamento aparece na página inicial.']);
-    const twin = (state.dashboard?.projects || []).find((p) => p.name === f.name && Math.abs((p.duration || 0) - dur) < 2);
-    if (twin) problems.push(['warn', 'Este vídeo parece já estar no projeto "' + twin.name + '". Importar de novo ocupa o espaço do arquivo outra vez.']);
     show(extra);
     done();
+    checkDuplicate(f, () => show(extra));
   };
   probe.onerror = () => {
-    show([['Duração', 'o navegador não leu; o AutoCortes verifica ao importar']]);
+    const extra = [['Duração', 'o navegador não leu; o AutoCortes verifica ao importar']];
+    show(extra);
     done();
+    checkDuplicate(f, () => show(extra));
   };
   probe.src = url;
+}
+// Impressão rápida: tamanho + SHA-256 de três blocos de 4 MB (início, meio, fim), igual a service.quick_fingerprint.
+async function quickFingerprint(file) {
+  const M = 4 * 1024 * 1024;
+  const half = Math.floor(file.size / 2);
+  const parts = file.size <= 3 * M ? [file] : [file.slice(0, M), file.slice(half - M / 2, half + M / 2), file.slice(file.size - M)];
+  const digest = await crypto.subtle.digest('SHA-256', await new Blob(parts).arrayBuffer());
+  return 'quick:' + file.size + ':' + [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+async function checkDuplicate(file, redraw) {
+  state.duplicateOf = null;
+  try {
+    const quick = await quickFingerprint(file);
+    if ($('file').files[0] !== file) return;
+    const {duplicate} = await api('/api/projects/check-duplicate', 'POST', {size: file.size, quick});
+    if (!duplicate || $('file').files[0] !== file) return;
+    state.duplicateOf = duplicate;
+    state.fileProblems.push(['warn', 'Este vídeo já está no projeto "' + duplicate.name + '" (' + (duplicate.clips || 0) +
+      ' cortes). Importar de novo ocupa mais ' + fmtSize(file.size) + '.']);
+    redraw();
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'btn';
+    open.dataset.jobopen = duplicate.id;
+    open.textContent = 'Abrir o projeto existente';
+    open.onclick = () => $('newDialog').close();
+    $('fileInfo').append(open);
+  } catch { /* sem a verificação, a importação segue normal */ }
 }
 $('file').onchange = describeFile;
 $('pickFile').onclick = () => $('file').click();
@@ -671,10 +834,15 @@ function openNewProject(file = null) {
   $('newDialog').showModal();
   if (!state.dashboard) loadProjects();
 }
-$('stepNext').onclick = () => {
+$('stepNext').onclick = async () => {
   if (sourceMode() === 'file' && !$('file').files[0]) return toast('Selecione um vídeo para continuar.', true);
   if (sourceMode() === 'link' && !$('videoUrl').value.trim()) return toast('Cole o link do vídeo.', true);
   if ((state.fileProblems || []).some(([tone]) => tone === 'bad')) return toast('Resolva o problema do arquivo antes de continuar.', true);
+  if (state.duplicateOf && sourceMode() === 'file' && !await askConfirm({
+    title: 'Vídeo já importado', yes: 'Importar mesmo assim',
+    text: 'Este vídeo já está no projeto "' + state.duplicateOf.name + '". Importar de novo ocupa mais ' +
+      fmtSize(state.duplicateOf.size_bytes) + ' e refaz a análise. Para usar o que já existe, feche e abra o projeto.',
+  })) return;
   wizardStep(2);
 };
 $('stepBack').onclick = () => wizardStep(1);
@@ -805,6 +973,8 @@ async function openProject(id) {
     state.stripKey = state.rulerKey = null;
     state.previewEnd = null;
     state.selected = p.clips?.[0]?.id || null;
+    state.picked = new Set();
+    state.batch = null;
     state.markIn = 0;
     state.markOut = Math.min(30, mediaDuration());
     setThumb(null);
@@ -871,6 +1041,7 @@ function closeProject() {
   $('mediaCard').hidden = true;
   $('mediaEmpty').hidden = false;
   $('openRights').hidden = true;
+  $('cutTools').hidden = true;
   $('openSelection').hidden = true;
   $('reanalyze').hidden = true;
   $('projectName').textContent = $('crumb').textContent = 'Nenhum projeto aberto';
@@ -971,13 +1142,18 @@ function render() {
   const c = current();
   $('count').textContent = p.clips.length;
   renderExports();
-  $('cutCards').innerHTML = p.clips.map((x) =>
+  const ordered = cutSort() === 'time' ? [...p.clips].sort((a, b) => a.start - b.start) : p.clips;
+  for (const id of [...state.picked]) if (!p.clips.some((x) => x.id === id)) state.picked.delete(id);
+  $('cutCards').innerHTML = ordered.map((x) =>
+    '<div class="cutRow"><label class="pick" title="Selecionar para exportar"><input type="checkbox" data-pick="' + x.id + '"' +
+    (state.picked.has(x.id) ? ' checked' : '') + ' aria-label="Selecionar ' + escape(x.title) + '"></label>' +
     '<button class="cutCard' + (x.id === state.selected ? ' selected' : '') + '" data-id="' + x.id + '"' +
     (x.id === state.selected ? ' aria-current="true"' : '') + '><strong>' + escape(x.title) + '</strong><small>' +
     fmt(x.start) + ' — ' + fmt(x.end) + ' · ' + fmt(x.end - x.start) + '</small><span class="badges">' +
     clipBadges(x).map((b) => '<em' + (b.startsWith('Exportado') ? ' class="done"' : '') + '>' + escape(b) + '</em>').join('') +
-    '</span></button>').join('') ||
+    '</span></button></div>').join('') ||
     '<p class="empty">Nenhum corte ainda. Marque a entrada (I) e a saída (O) e use Cortar.</p>';
+  syncPicked();
   $('properties').hidden = !c;
   $('noSelection').hidden = !!c;
   if (c && !state.drag) syncFields(c);
@@ -1241,6 +1417,12 @@ $('remove').onclick = $('removeSide').onclick = remove;
 $('properties').onsubmit = (e) => { e.preventDefault(); save(); };
 $('saveTop').onclick = () => save();
 $('cutCards').onclick = (e) => {
+  const pick = e.target.closest('[data-pick]');
+  if (pick) {
+    const id = Number(pick.dataset.pick);
+    if (pick.checked) state.picked.add(id); else state.picked.delete(id);
+    return syncPicked();
+  }
   const card = e.target.closest('.cutCard');
   if (!card) return;
   select(Number(card.dataset.id));
@@ -2064,7 +2246,7 @@ function renderExports() {
 
   box.innerHTML =
     group('running', 'Em andamento', running, running.map((j) =>
-      row(clipLabel(j.clip_id), jobLine(j), {progress: j.progress || 0, actions: cancel(j)})).join('')) +
+      row(clipLabel(j.clip_id), batchPosition(j) + jobLine(j), {progress: j.progress || 0, actions: cancel(j)})).join('')) +
     group('queued', 'Na fila', queued, queued.map((j, i) =>
       row(clipLabel(j.clip_id), (i + 1) + 'º na fila · ' + (j.kind === 'narration' ? 'Narrado · ' : '') + (j.format || ''),
         {actions: cancel(j)})).join('')) +
@@ -2080,7 +2262,15 @@ function renderExports() {
       row(clipLabel(j.clip_id), (j.format || '') + ' · ' + (j.error || 'A exportação não terminou.') + ' Exporte de novo.',
         {tone: 'error'})).join(''));
 
-  if (state.exporting !== 'preview') {
+  $('openFolder').hidden = !done.length;
+  const batch = batchStatus(p);
+  if (batch) {
+    $('jobStatus').textContent = 'Lote: ' + batch.done + ' de ' + batch.total + ' prontos' +
+      (batch.failed ? ' · ' + batch.failed + ' com erro' : '') + (batch.current ? ' · renderizando corte ' + batch.current : '');
+    $('exportBar').hidden = false;
+    $('exportBar').value = Math.round(100 * (batch.done + batch.failed + batch.progress) / batch.total);
+    if (batch.finished) finishBatch(batch);
+  } else if (state.exporting !== 'preview') {
     const parts = [[running, 'em andamento'], [queued, 'na fila'], [done, done.length === 1 ? 'concluída' : 'concluídas']]
       .filter(([items]) => items.length).map(([items, label]) => items.length + ' ' + label);
     $('jobStatus').textContent = parts.length ? parts.join(' · ') : EXPORT_IDLE;

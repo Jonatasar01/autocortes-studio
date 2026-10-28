@@ -137,7 +137,7 @@
 
       <div class="homegrid">
         <section class="homesec" aria-labelledby="exportsTitle">
-          <div class="sechead"><h2 id="exportsTitle">Últimos cortes exportados</h2></div>
+          <div class="sechead"><h2 id="exportsTitle">Últimos cortes exportados</h2><button id="openOutput" type="button" class="linkbtn"><svg class="ic"><use href="#i-folder"/></svg>Abrir pasta de saída</button></div>
           <ul id="homeExports" class="exportlist"></ul>
           <p id="outputDir" class="hint"></p>
         </section>
@@ -180,6 +180,11 @@
         </div>
 
         <div class="pane" id="paneCuts" role="tabpanel" aria-labelledby="tabCuts" hidden>
+          <div id="cutTools" class="cuttools" hidden>
+            <label class="check"><input type="checkbox" id="pickAll"><span>Todos</span></label>
+            <select id="cutSort" aria-label="Ordem dos cortes"><option value="score">Melhores primeiro</option><option value="time">Ordem do vídeo</option></select>
+            <button id="exportPicked" type="button" class="btn primary block" disabled><svg class="ic"><use href="#i-upload"/></svg><span id="exportPickedLabel">Exportar selecionados</span></button>
+          </div>
           <div id="cutCards" class="cutCards"></div>
         </div>
       </section>
@@ -362,7 +367,10 @@
         <div id="exportPanel" class="exportpanel" tabindex="-1" aria-label="Exportação">
           <div class="exporthead">
             <strong>Exportações</strong>
-            <button id="cancelExport" class="linkbtn danger" type="button" hidden>Cancelar</button>
+            <span class="exportheadactions">
+              <button id="openFolder" class="linkbtn" type="button" hidden title="Abrir no Explorador a pasta com os arquivos exportados"><svg class="ic"><use href="#i-folder"/></svg>Abrir pasta</button>
+              <button id="cancelExport" class="linkbtn danger" type="button" hidden>Cancelar</button>
+            </span>
           </div>
           <p id="jobStatus" class="jobstatus" role="status">Selecione um corte e clique em Exportar.</p>
           <progress id="exportBar" value="0" max="100" hidden aria-label="Progresso da prévia"></progress>
@@ -481,6 +489,30 @@
     <button id="importButton" class="btn primary" type="submit" hidden>Criar cortes</button>
   </footer>
   </form>
+</dialog>
+
+<dialog id="batchDialog" class="dialog" aria-labelledby="batchTitle">
+  <header><h2 id="batchTitle">Exportar selecionados</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <div class="dialogbody batchbody">
+    <p id="batchCount" class="batchcount"></p>
+    <span class="eyebrow">Para onde</span>
+    <div class="presetgrid" role="group" aria-label="Formatos de saída">
+      <label class="preset"><input type="checkbox" value="shorts"><span><strong>Shorts</strong><small>9:16 · até 3 min</small></span></label>
+      <label class="preset"><input type="checkbox" value="reels"><span><strong>Reels</strong><small>9:16 · até 3 min</small></span></label>
+      <label class="preset"><input type="checkbox" value="tiktok"><span><strong>TikTok</strong><small>9:16 · até 10 min</small></span></label>
+      <label class="preset"><input type="checkbox" value="horizontal"><span><strong>Horizontal</strong><small>16:9 · YouTube</small></span></label>
+      <label class="preset"><input type="checkbox" value="original"><span><strong>Original</strong><small>formato do vídeo</small></span></label>
+    </div>
+    <p class="hint">Shorts, Reels e TikTok usam o mesmo arquivo vertical 9:16: ele é exportado uma vez só.</p>
+    <p id="batchSummary" class="batchsummary"></p>
+    <ul id="batchWarnings" class="fileproblems"></ul>
+    <p id="batchOptions" class="hint"></p>
+    <label class="check" id="batchRightsRow" hidden><input type="checkbox" id="batchRights"><span>Li os alertas da Revisão de direitos e confirmo que posso usar este material</span></label>
+  </div>
+  <footer>
+    <button class="btn ghost" type="button" data-close>Cancelar</button>
+    <button id="batchGo" class="btn primary" type="button">Exportar</button>
+  </footer>
 </dialog>
 
 <dialog id="jobsDialog" class="dialog wide" aria-labelledby="jobsTitle">
