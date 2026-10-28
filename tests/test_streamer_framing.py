@@ -47,6 +47,39 @@ class FacecamDetectionTests(unittest.TestCase):
         s = self.samples(False)
         self.assertIsNone(reframe.detect_facecam(s, reframe.speaker_targets(s)))
 
+    def framed_at(self, x0: int, x1: int, face_x: float, extra_face: float | None = None):
+        np = self.np
+        rng = np.random.default_rng(9)
+        out = []
+        for i in range(30):
+            gray = rng.integers(0, 255, (270, 480), dtype='uint8')
+            gray[20:110, x0:x1] = 40 + (i % 3) * 5
+            gray[20, x0:x1] = gray[110, x0:x1] = 255
+            gray[20:110, x0] = gray[20:110, x1 - 1] = 255
+            faces = [(round(face_x + 0.01 * np.sin(i), 4), 0.2, 0.06, 0.12)]
+            if extra_face is not None:
+                faces.append((extra_face, 0.5, 0.12, 0.24))
+            out.append({'t': i / 5, 'gray': gray, 'faces': faces})
+        return out
+
+    def test_window_on_the_right_side(self):
+        s = self.framed_at(330, 480, 0.80)
+        rect = reframe.detect_facecam(s, reframe.speaker_targets(s))
+        self.assertIsNotNone(rect)
+        self.assertAlmostEqual(rect[0], 330 / 480, delta=0.02)
+        self.assertAlmostEqual(rect[0] + rect[2], 1.0, delta=0.02)
+
+    def test_central_speaker_does_not_hide_the_side_webcam(self):
+        # Rosto grande de um jogador no meio da tela (escolhido como quem fala): a janela da esquerda continua achada.
+        s = self.framed_at(0, 150, 0.12, extra_face=0.44)
+        rect = reframe.detect_facecam(s, [(x['t'], 0.5, (0.44, 0.5, 0.12, 0.24)) for x in s])
+        self.assertIsNotNone(rect)
+        self.assertLess(rect[0] + rect[2], 0.42)
+
+    def test_window_in_the_middle_is_ignored(self):
+        s = self.framed_at(165, 315, 0.47)
+        self.assertIsNone(reframe.detect_facecam(s, reframe.speaker_targets(s)))
+
 
 class StreamerGraphTests(unittest.TestCase):
     def test_crops_the_webcam_with_blurred_background(self):

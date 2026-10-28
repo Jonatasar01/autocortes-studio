@@ -41,7 +41,7 @@ SMOOTHING = 0.18             # fração da distância percorrida a cada amostra
 SIMPLIFY_TOLERANCE = 0.004   # erro máximo (fração da largura) ao simplificar o caminho da câmera
 MAX_POINTS_PER_SHOT = 40
 MIN_SHOT_SECONDS = 0.6
-PLAN_VERSION = 6   # muda quando o algoritmo do plano muda (invalida os planos em cache)
+PLAN_VERSION = 7   # muda quando o algoritmo do plano muda (invalida os planos em cache)
 YUNET_MODEL = 'face_detection_yunet_2023mar.onnx'
 YUNET_SCORE = 0.7            # confiança mínima do YuNet
 MIN_TRACK_HITS = 3           # um rosto precisa aparecer em 3 amostras (0,6 s); falsos positivos piscam
@@ -723,7 +723,11 @@ def detect_facecam(samples: list[dict], targets: list[tuple]) -> tuple[float, fl
     """
     import cv2
     import numpy as np
-    boxes = [tg[2] for tg in targets if len(tg) > 2 and tg[2]]
+    # A webcam fica numa lateral (esquerda ou direita): só rostos ali servem de ponto de partida. Um rosto no meio
+    # da tela é do jogo ou da transmissão (jogadores, personagens), não a câmera do streamer.
+    boxes = _lateral_boxes([tg[2] for tg in targets if len(tg) > 2 and tg[2]])
+    if len(boxes) < 3:   # quem fala está no meio: procura os rostos das laterais em todas as amostras
+        boxes = _lateral_boxes([tuple(f[:4]) for s in samples for f in s.get('faces') or []])
     if len(boxes) < 3:
         return None
     fx, fy, fw, fh = (float(v) for v in np.median(np.asarray(boxes), axis=0))
@@ -757,7 +761,19 @@ def detect_facecam(samples: list[dict], targets: list[tuple]) -> tuple[float, fl
     aspect = (rect[2] * W) / max(1.0, rect[3] * H)
     if not (face_area * 3 <= area <= 0.6 and 0.6 <= aspect <= 2.6):
         return None   # grande demais (a "janela" é a tela) ou formato estranho
+    if rect[0] < FACECAM_SIDE_MAX < rect[0] + rect[2] and rect[0] < 1 - FACECAM_SIDE_MAX < rect[0] + rect[2]:
+        return None   # atravessa o meio da tela: não é a janela lateral da webcam
     return tuple(round(v, 4) for v in rect)
+
+
+FACECAM_SIDE_MAX = 0.42   # centro do rosto da webcam até 42% da largura (esquerda) ou a partir de 58% (direita)
+
+
+def _lateral_boxes(boxes: list) -> list:
+    """Caixas de rosto do lado (esquerdo ou direito) com mais ocorrências; nenhuma se só houver rostos no meio."""
+    left = [b for b in boxes if b[0] + b[2] / 2 <= FACECAM_SIDE_MAX]
+    right = [b for b in boxes if b[0] + b[2] / 2 >= 1 - FACECAM_SIDE_MAX]
+    return left if len(left) >= len(right) else right
 
 
 def _to_visible(targets: list[tuple], media: dict, box: dict | None) -> list[tuple]:
