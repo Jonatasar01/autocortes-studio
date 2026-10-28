@@ -100,7 +100,7 @@ function setLoading(text, progress = null, steps = '') {
 
 // Andamento da análise: etapa atual, porcentagem, tempo restante estimado e quanto levou cada etapa.
 const STAGE_NAMES = {validando: 'Validação', musica: 'Música', extraindo_audio: 'Áudio', transcrevendo: 'Transcrição',
-  cenas: 'Cenas', selecionando: 'Seleção', ia_local: 'IA local', curadoria_ia: 'Curadoria IA', fila: 'Fila'};
+  cenas: 'Cenas', audio_eventos: 'Reações no áudio', selecionando: 'Seleção', ia_local: 'IA local', curadoria_ia: 'Curadoria IA', fila: 'Fila'};
 // Faixa da barra geral ocupada pelas etapas com progresso real (as outras são rápidas ou sem medida).
 const STAGE_SPANS = {extraindo_audio: [0.08, 0.14], transcrevendo: [0.14, 0.74], cenas: [0.75, 0.88]};
 const fmtDur = (s) => {

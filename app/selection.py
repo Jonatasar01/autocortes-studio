@@ -11,6 +11,7 @@ Modos (sempre informados ao usuário, nunca disfarçados):
 """
 from __future__ import annotations
 
+import bisect
 import json
 import logging
 import math
@@ -276,6 +277,13 @@ def build_units(segments: list[dict]) -> list[dict]:
 
 # --------------------------------------------------------------------------- pontuação
 
+def _near_scene(scenes: list[float], t: float, tol: float = 1.0) -> bool:
+    """Há troca de cena a até ``tol`` s de ``t``? Busca binária (cenas em ordem): uma live tem centenas delas e
+    a verificação roda para cada uma das ~150 mil janelas."""
+    k = bisect.bisect_left(scenes, t - tol)
+    return k < len(scenes) and scenes[k] <= t + tol
+
+
 def score_window(units: list[dict], i: int, j: int, target: float, scenes: list[float],
                  rarity: dict[str, float] | None = None) -> tuple[float, dict, list[str]]:
     """Nota do trecho ``units[i..j]``: ``(nota 0–100, partes da nota, motivos)``. Motor escolhido em
@@ -365,7 +373,7 @@ def score_window_v1(units: list[dict], i: int, j: int, target: float,
         penalty += 5 * min(3, long_pauses)
         reasons.append(f'{long_pauses} pausa(s) longa(s) no meio')
     fit = 5 * (1 - min(1.0, abs(dur - target) / (target * 1.5)))
-    scene = 3.0 if any(abs(s - start) <= 1.0 for s in scenes) else 0.0
+    scene = 3.0 if _near_scene(scenes, start) else 0.0
     if scene:
         reasons.append('Início coincide com mudança de cena')
     # Estrutura (fala clara, começo e fim limpos) quase sempre sai no máximo; o que separa um bom corte de
@@ -615,8 +623,7 @@ def score_window_v2(units: list[dict], i: int, j: int, target: float, scenes: li
         context -= 6
         warnings.append('Corta antes da reação que vem logo depois')
     context = max(-20.0, min(15.0, context))
-    scene = (3.0 if any(abs(s - start) <= 1.0 for s in scenes) else 0.0) + \
-        (2.0 if any(abs(s - end) <= 1.0 for s in scenes) else 0.0)
+    scene = (3.0 if _near_scene(scenes, start) else 0.0) + (2.0 if _near_scene(scenes, end) else 0.0)
     if scene:
         reasons.append('Limite coincide com mudança de cena')
         evidence.append({'tipo': 'cena', 'origem': 'video', 'detalhe': 'troca de cena no início ou no fim'})
@@ -668,6 +675,21 @@ def merge_candidates(ai_clips: list[dict], heuristic_clips: list[dict], *, limit
     return _finalize(merged)
 
 
+def _with_audio(audio, start: float, end: float, score: float, breakdown: dict,
+                reasons: list[str]) -> tuple[float, dict, list[str]]:
+    """Soma o ajuste da camada de áudio à nota de texto, com as evidências e alertas no corte."""
+    from . import audio_events
+    has_content = (breakdown.get('interesse') or 0) > 0 or (breakdown.get('assunto') or 0) > 0
+    adj, evidence, warnings = audio_events.window_adjustment(audio, start, end, has_content=has_content)
+    if not (adj or evidence or warnings):
+        return score, breakdown, reasons
+    breakdown = dict(breakdown, audio=round(adj, 1),
+                     _evidence=(breakdown.get('_evidence') or []) + evidence,
+                     _warnings=(breakdown.get('_warnings') or []) + warnings)
+    extra = [e['detalhe'][:1].upper() + e['detalhe'][1:] for e in evidence]
+    return round(max(0.0, min(100.0, score + adj)), 1), breakdown, reasons + extra + warnings
+
+
 def auto_limit(duration: float) -> int:
     """Quantos cortes o modo automático sugere, no máximo, para um vídeo desta duração."""
     return max(AUTO_MIN_CLIPS, round(AUTO_CLIPS_PER_HOUR * duration / 3600))
@@ -678,7 +700,7 @@ def score_clip(segments: list[dict], start: float, end: float, scene_starts: lis
     units = [u for u in build_units(segments) if u['end'] > start and u['start'] < end]
     if not units:
         return None
-    return score_window(units, 0, len(units) - 1, max(1.0, end - start), scene_starts)[0]
+    return score_window(units, 0, len(units) - 1, max(1.0, end - start), sorted(scene_starts or []))[0]
 
 
 # --------------------------------------------------------------------------- candidatos
@@ -716,13 +738,16 @@ def temporal_candidates(duration: float, target: float, desired: int, scenes: li
 
 
 def select_clips(segments: list[dict], duration: float, target: int, desired_count: int,
-                 scenes: list[float] | None = None, fallback_reason: str | None = None) -> tuple[list[dict], dict]:
+                 scenes: list[float] | None = None, fallback_reason: str | None = None,
+                 audio=None) -> tuple[list[dict], dict]:
+    """``audio``: ``audio_events.AudioIndex`` do vídeo (opcional). Reforça trechos com conteúdo que terminam com
+    reação sonora e marca alertas técnicos (áudio estourado, silêncio longo); sozinho não escolhe cortes."""
     target = max(10, min(90, int(target)))
     auto = int(desired_count) == AUTO
     v2 = config.SELECTION_ENGINE != 'v1'
     # Automático: os melhores do próprio vídeo, até N por hora (v1: acima de 80; v2: acima de 60% do melhor).
     desired = auto_limit(duration) if auto else max(1, min(15, int(desired_count)))
-    scenes = scenes or []
+    scenes = sorted(scenes or [])
     units = build_units(segments or [])
     words = sum(len(tokens(u['text'])) for u in units)
     if not units or words < MIN_WORDS_FOR_ANALYSIS:
@@ -746,6 +771,9 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
                 break
             if length >= min_len or (j == len(units) - 1 and i == 0):
                 score, breakdown, reasons = score_window(units, i, j, target, scenes, rarity)
+                if audio is not None:
+                    score, breakdown, reasons = _with_audio(audio, units[i]['start'], units[j]['end'],
+                                                            score, breakdown, reasons)
                 scored.append((score, i, j, breakdown, reasons))
     if not scored:  # frases muito longas ou vídeo muito curto: usa o vídeo/fala inteiro em blocos
         reason = 'Frases longas demais para formar cortes do tamanho pedido'
@@ -773,6 +801,11 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
         upper = (nxt['start'] - 0.05) if nxt else duration
         if upper > end:
             end = min(upper, end + 0.4)
+        if audio is not None:   # risada logo depois da última palavra: entra no corte, sem invadir a fala seguinte
+            from . import audio_events
+            laugh_end = audio_events.reaction_after(audio, units[j]['end'])
+            if laugh_end:
+                end = max(end, min(upper, laugh_end + 0.3))
         end = min(duration, end)
         text = ' '.join(u['text'] for u in units[i:j + 1])
         parts, extra = split_breakdown(breakdown)

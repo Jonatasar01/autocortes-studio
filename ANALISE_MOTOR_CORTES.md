@@ -291,3 +291,73 @@ Reproduzir: `python scripts/avaliar_selecao.py 7c572ac2990d413ba8a509ea296f362e 
 ### Reversão
 `AUTOCORTES_AUTO_CLIPS_PER_HOUR=30` aproxima o comportamento anterior ("todos os válidos"); voltar à branch
 `feature/motor-analise` desfaz a fase inteira. Projetos existentes não mudam (os cortes ficam gravados no projeto).
+
+---
+
+## 8. Relatório da Fase 3 — camada de áudio
+
+Branch: `feature/motor-fase3` (a partir de `feature/motor-fase2`).
+
+### O que foi implementado (`app/audio_events.py`, sem dependências novas)
+- **Energia do vídeo inteiro:** FFmpeg mede o nível RMS a cada 0,2 s numa única passada pelo áudio; cache
+  `cache/audio_energia_v1.json` com a versão e o carimbo do arquivo (tamanho e data). Na análise, a energia sai do WAV
+  que já é extraído para a transcrição (não decodifica o vídeo de novo); em "Refazer seleção", sai do vídeo ou do
+  cache.
+- **Eventos com evidência** (início, fim, tipo, valor, confiança, origem): pico de volume (9 dB acima da mediana dos
+  ±30 s), possível risada/reação (som forte sem palavras transcritas logo depois de fala), risada transcrita ("kkk",
+  "haha"), silêncio, áudio estourado e fala acelerada.
+- **Reforço na seleção** (vale para v1 e v2): +5 quando um trecho **que já tem conteúdo** termina com reação sonora
+  (no fim do trecho ou nos 2 s seguintes); alertas de áudio estourado (−5) e silêncio longo (−3). O fim do corte se
+  estende até o fim da risada, sem invadir a fala seguinte.
+- Na análise: etapa "Reações no áudio", resumo em `project.json: audio_analysis` (contagem por tipo e tempo), e
+  `AUTOCORTES_AUDIO_LAYER=0` desliga. Falha na camada de áudio vira um aviso; a seleção segue só com o texto.
+- Desempenho: a verificação de troca de cena por janela virou busca binária (antes percorria as ~900 cenas de uma
+  live a cada uma das ~146 mil janelas: 13,7 milhões de comparações no perfil).
+
+### O áudio separa os cortes bons? (medido antes de integrar)
+
+| Medida (mediana / fração com valor) | Aprovados (18) | Topo não aprovado (25) | Aleatórios (300) |
+|---|---|---|---|
+| Reação sonora no fim | 0,47 s / **28%** | 0,06 s / **8%** | 0,76 s / 45% |
+| Picos de volume por minuto | 5,1 | 6,4 | 7,7 |
+| Energia acima do normal | 3,2 dB | 3,8 dB | 3,5 dB |
+
+Só a **reação no fim** separa os aprovados dos outros candidatos do topo. Picos e energia média não separam (numa live
+de jogo, o barulho alto é do jogo; as histórias boas são mais calmas), por isso não dão pontos. Trechos aleatórios
+têm muita "reação" porque o som do jogo sem fala parece reação: daí a regra de que o áudio só reforça quem já tem
+conteúdo.
+
+### Medições (live de 8,5 h, 18 cortes de referência)
+
+| | R@5 | R@10 | R@18 | R@30 | R@50 | Erro início/fim |
+|---|---|---|---|---|---|---|
+| Fase 2 (v1, até 4/h) | 0,17 | 0,17 | 0,28 | 0,50 | 0,50 | 11,5 / 17,1 s |
+| **Fase 3 (v1 + áudio)** | 0,17 | 0,17 | **0,33** | 0,50 | **0,56** | 11,7 / 16,5 s |
+| v2 + áudio | 0,11 | 0,11 | 0,17 | 0,22 | 0,33 | 22,8 / 24,4 s |
+
+Custo (medido com a máquina ocupada por uma exportação, por isso os tempos absolutos estão altos):
+- energia do vídeo inteiro a partir do arquivo original: **86 s** na primeira vez, **0,01 s** pelo cache;
+- eventos e índice: **1,7 s**;
+- seleção com áudio: **+7 s** sobre a sem áudio na mesma rodada (169 × 162 s, cerca de 4%). Numa segunda rodada a
+  carga da máquina mudou no meio (a exportação terminou: 103 s com áudio × 165 s sem), então ela não serve de
+  comparação. Falta medir com a máquina parada.
+
+### Conclusão
+- Ganho pequeno e no sentido certo: **1 corte aprovado a mais** entre os 18 primeiros e entre os 50, e o fim do corte
+  passa a incluir a risada que vem depois da última frase.
+- **O ganho é otimista:** a regra (reação no fim) foi escolhida olhando esta mesma referência. Precisa ser confirmada
+  em outro vídeo marcado antes de ser considerada comprovada.
+- O motor v2 continua pior que o v1, também com áudio.
+
+### Limitações
+- "Possível risada" é som forte sem palavras: pega também grito, aplauso e som de jogo. Por isso a confiança é baixa
+  (0,4) e o evento só reforça trechos com conteúdo.
+- Não há diarização (quem fala) nem sobreposição de falantes; pyannote segue fora pelos motivos da seção 3.
+
+### Próximas etapas
+1. Validar a regra num segundo vídeo marcado (gaming ou podcast).
+2. Fase 4 (visual): movimento intenso e troca câmera/jogo na mesma passada da detecção de cenas.
+
+### Reversão
+`AUTOCORTES_AUDIO_LAYER=0` desliga a camada; voltar à `feature/motor-fase2` desfaz a fase. O cache de energia pode ser
+apagado sem efeito colateral (é refeito).

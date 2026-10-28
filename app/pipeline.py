@@ -14,7 +14,7 @@ import shutil
 import threading
 import time
 
-from . import (config, curation, direction, filters, media, music, narration, publish, reframe, rights, selection, settings,
+from . import (audio_events, config, curation, direction, filters, media, music, narration, publish, reframe, rights, selection, settings,
                storage, subtitles, transcription)
 from .errors import AppError, Cancelled
 from .jobs import JobContext
@@ -49,6 +49,37 @@ def _saved_analysis(pid: str) -> tuple[dict, list[dict], dict, list[float]]:
     return p['media'], p['transcript'], t_status, p.get('scenes') or []
 
 
+def _audio_layer(ctx: JobContext, folder: Path, info: dict, transcript: list[dict], *, original: Path,
+                 wav: Path | None = None):
+    """Camada de áudio da seleção (``app/audio_events.py``): ``AudioIndex`` ou ``None``.
+
+    Opcional e nunca fatal: sem áudio, desligada ou com falha, a seleção segue só com o texto.
+    """
+    if not config.AUDIO_LAYER or not transcript or info.get('audio_index') is None:
+        return None
+    ctx.stage('audio_eventos', 'Analisando o áudio (volume e reações)')
+    started = time.time()
+    try:
+        source = wav if wav is not None else original
+        source_info = {**info, 'audio_index': 0} if wav is not None else info
+        track = audio_events.energy_track(source, source_info, folder / 'cache', stamp_of=original,
+                                          cancel_event=ctx.cancel_event)
+        result = audio_events.analyze(track, transcript)
+    except Cancelled:
+        raise
+    except Exception as exc:  # a seleção por texto continua valendo
+        log.warning('Camada de áudio indisponível: %s', exc)
+        ctx.warn('Análise de áudio não concluída; a seleção usou só a transcrição.')
+        return None
+    counts: dict[str, int] = {}
+    for e in result['events']:
+        counts[e['tipo']] = counts.get(e['tipo'], 0) + 1
+    with storage.edit_project(ctx.project_id) as p:
+        p['audio_analysis'] = {'state': 'ok', 'version': audio_events.VERSION, 'events': counts,
+                               'seconds': round(time.time() - started, 1)}
+    return result['index']
+
+
 def run_analysis(ctx: JobContext) -> dict:
     pid = ctx.project_id
     folder = storage.project_dir(pid)
@@ -62,6 +93,7 @@ def run_analysis(ctx: JobContext) -> dict:
                                       'target_seconds', 'desired_count')}
 
     saved = _saved_analysis(pid) if ctx.params.get('reselect') else None
+    audio_index = None
     if saved:  # refazer só a seleção: mídia, transcrição e cenas da análise anterior
         info, transcript, t_status, scenes = saved
         ctx.progress(0.88)
@@ -118,6 +150,8 @@ def run_analysis(ctx: JobContext) -> dict:
                 ctx.stage('transcrevendo', 'Transcrevendo a fala localmente')
                 transcript, t_status = transcription.transcribe(wav, info['duration'], on_progress=ctx.span(0.14, 0.74),
                                                                 cancel_event=ctx.cancel_event)
+                # Energia do áudio a partir do WAV já extraído (sem decodificar o vídeo de novo).
+                audio_index = _audio_layer(ctx, folder, info, transcript, wav=wav, original=source)
             except media.FFmpegError as exc:
                 t_status = {'state': 'failed', 'message': 'Não foi possível extrair o áudio; cortes temporais. '
                             + exc.args[0]}
@@ -140,10 +174,12 @@ def run_analysis(ctx: JobContext) -> dict:
         scenes = scene_state['scenes']
         ctx.progress(0.88)
 
+    if audio_index is None and saved:
+        audio_index = _audio_layer(ctx, folder, info, transcript, original=source)
     ctx.stage('selecionando', 'Selecionando os melhores trechos')
     fallback = None if t_status['state'] == 'ok' else t_status['message']
     clips, sel = selection.select_clips(transcript, info['duration'], opts['target_seconds'], opts['desired_count'],
-                                        scenes, fallback_reason=fallback)
+                                        scenes, fallback_reason=fallback, audio=audio_index)
     ctx.progress(0.9)
 
     live_cfg = settings.load()['curation']

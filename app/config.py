@@ -41,6 +41,8 @@ MAX_CLIP_SECONDS = 900
 # Motor de seleção. v1 (padrão): a pontuação validada. v2: nota editorial × técnica com contexto (pergunta antes,
 # reação depois), ainda experimental: na referência de 18 cortes não superou a v1 (ANALISE_MOTOR_CORTES.md).
 SELECTION_ENGINE = os.getenv('AUTOCORTES_SELECTION_ENGINE', 'v1').strip().lower()
+# Camada de áudio na seleção (energia e reações sonoras, app/audio_events.py). 0 desliga.
+AUDIO_LAYER = _flag('AUTOCORTES_AUDIO_LAYER', True)
 # Quantidade automática: até N cortes por hora de vídeo (mínimo 3), só os melhores do próprio vídeo.
 AUTO_CLIPS_PER_HOUR = max(0.5, min(30.0, float(os.getenv('AUTOCORTES_AUTO_CLIPS_PER_HOUR', '4') or 4)))
 
