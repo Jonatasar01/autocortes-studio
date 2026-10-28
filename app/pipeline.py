@@ -318,11 +318,15 @@ def run_export(ctx: JobContext) -> dict:
     if prm['framing'] in ('track', 'streamer', 'split') or kinds & {'track', 'streamer', 'split'}:
         # Antes da legenda: no "só o streamer" ela se posiciona pela altura da janela da webcam.
         ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
-        track = _cached_track(folder, p, info, start, end, prm['format'], ctx)
+        track = _cached_track(folder, p, info, start, end, prm['format'], ctx,
+                              main_set_only=prm['framing'] == 'streamer')
         if not track['ok']:
             warnings.append(track['message'])
         elif 'streamer' in kinds | {prm['framing']} and not track.get('facecam'):
-            warnings.append('Nenhuma janela de webcam encontrada no corte; "só o streamer" seguiu o rosto.')
+            warnings.append('Nenhuma janela de webcam encontrada no corte; "só o streamer" seguiu os rostos só na '
+                            'cena principal (bancada) e mostrou as outras cenas inteiras com fundo desfocado.'
+                            if track.get('main_set_only') else
+                            'Nenhuma janela de webcam encontrada no corte; "só o streamer" seguiu o rosto.')
         elif 'split' in kinds | {prm['framing']} and not track.get('facecam'):
             warnings.append('Nenhuma janela de webcam encontrada no corte; "webcam + jogo" seguiu o rosto.')
         elif 'split' in kinds | {prm['framing']} and prm['format'] != '9:16':
@@ -517,19 +521,23 @@ def _refine_transcript(ctx: JobContext, folder: Path, p: dict, info: dict, start
     return updated
 
 
-def _cached_track(folder: Path, p: dict, info: dict, start: float, end: float, fmt: str, ctx: JobContext) -> dict:
-    """Plano de enquadramento em cache por (trecho, formato, faixas pretas, versão do algoritmo).
+def _cached_track(folder: Path, p: dict, info: dict, start: float, end: float, fmt: str, ctx: JobContext, *,
+                  main_set_only: bool = False) -> dict:
+    """Plano de enquadramento em cache por (trecho, formato, faixas pretas, versão do algoritmo, modo).
+
+    ``main_set_only``: "só o streamer" numa transmissão sem janela de webcam segue rostos só na bancada.
 
     A análise de rostos é a etapa mais lenta: a prévia e a exportação do mesmo corte reaproveitam o resultado.
     """
     size = media.target_size(fmt, info)
     key = hashlib.sha256(json.dumps([reframe.PLAN_VERSION, p['filename'], round(start, 3), round(end, 3), size,
-                                     info.get('letterbox'), len(p.get('scenes') or [])]).encode()).hexdigest()[:24]
+                                     info.get('letterbox'), len(p.get('scenes') or []),
+                                     main_set_only]).encode()).hexdigest()[:24]
     cache = folder / 'direction' / f'track_{key}.json'
     with contextlib.suppress(OSError, ValueError):
         return json.loads(cache.read_text(encoding='utf-8'))
     track = reframe.plan(folder / p['filename'], info, start, end, size, scenes=p.get('scenes') or [],
-                         cancel_event=ctx.cancel_event)
+                         cancel_event=ctx.cancel_event, main_set_only=main_set_only)
     with contextlib.suppress(OSError):
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps(track), encoding='utf-8')
