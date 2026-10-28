@@ -1,5 +1,10 @@
 ## Não lançado
 
+### Seguimento — cobertura de concorrência e caminhos
+- Testes simultâneos de análise/refinamento verificam uma única construção do modelo GPU compatível; CPU e tipos de cálculo diferentes permanecem separados.
+- Testes rejeitam UNC, dispositivos e streams antes de acessar arquivos; destinos de links são simulados sem exigir privilégios de symlink no Windows.
+
+
 ### Seguimento — mensagens de acesso
 - Studio solicita senha em 401 `auth_required`, mantém credencial somente na memória e limita a uma nova tentativa; cancelar não repete a operação.
 - API e upload mostram orientação para respostas 413, inclusive HTML de proxies/túneis. Não habilita acesso de rede nem implementa os PRs de LAN/Cloudflare.
