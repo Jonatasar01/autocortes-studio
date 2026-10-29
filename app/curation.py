@@ -199,7 +199,7 @@ def ask(provider: str, system: str, user: str, schema: dict, name: str, max_toke
         raise AppError('Provedor de curadoria inválido.', 400, 'bad_settings')
     key = key_for(provider)
     if not key:
-        raise AppError('Gemini indisponível: cole a chave em Seleção de cortes e IA.', 400,
+        raise AppError('Gemini indisponível: cole a chave em Escolha dos cortes com IA.', 400,
                        'curation_not_configured')
     payload = {'systemInstruction': {'parts': [{'text': system}]},
                'contents': [{'role': 'user', 'parts': [{'text': user}]}],

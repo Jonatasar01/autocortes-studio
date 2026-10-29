@@ -29,7 +29,7 @@ def readiness():
                    and (cu['consent'] or not curation.requires_external_consent(cu['provider']))),
          'detail': (providers['ollama'].get('message', '') + ' Processamento 100% local.'
                     if cu['provider'] == 'ollama' else
-                    'Google Gemini: requer a chave (Seleção de cortes e IA) e o consentimento.')},
+                    'Google Gemini: requer a chave (em Escolha dos cortes com IA) e o consentimento.')},
         {'name': 'Importação por link', 'ready': downloads.available(), 'detail': 'YouTube e Shorts públicos, até 1080p; sem login.'},
         {'name': 'Piloto automático', 'ready': cfg['autopilot']['enabled'],
          'detail': f"Até {cfg['autopilot']['max_clips']} cortes · {', '.join(cfg['autopilot']['formats'])}"},
