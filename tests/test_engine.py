@@ -84,7 +84,7 @@ class SelectionTests(unittest.TestCase):
                                          'ciência', 'economia', 'turismo', 'tecnologia', 'culinária'])]
         clips, _ = selection.select_clips(fake_transcript(150, unique), 150, 20, 2)
         self.assertEqual(len(clips), 2)
-        responses = iter([{'models': [{'name': 'llama3.2:latest'}]},
+        responses = iter([{'models': [{'name': 'qwen3:4b'}]},
                           {'response': 'isto não é json'},
                           {'response': '{"title": "Bitcoin vai a 1 milhão amanhã", "score": 90, '
                                        '"complete_thought": true, "reason": "ok"}'}])

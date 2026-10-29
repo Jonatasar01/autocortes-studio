@@ -184,25 +184,27 @@ def run_analysis(ctx: JobContext) -> dict:
 
     live_cfg = settings.load()['curation']
     cur_cfg = dict(storage.read_project(pid).get('curation_profile') or live_cfg)
-    # Um perfil congelado não pode restaurar consentimento posteriormente revogado.
-    if not live_cfg['consent'] or live_cfg['provider'] != cur_cfg['provider']:
+    provider = cur_cfg['provider'] if cur_cfg.get('provider') in curation.PROVIDERS else 'heuristica'
+    remote = curation.requires_external_consent(provider)
+    # Um perfil congelado não pode restaurar consentimento posteriormente revogado (só vale para a nuvem).
+    if remote and (not live_cfg['consent'] or live_cfg['provider'] != cur_cfg['provider']):
         cur_cfg['consent'] = False
-    provider = cur_cfg['provider']
     curation_status = {'state': 'disabled', 'provider': 'heuristica',
-                       'message': 'Curadoria com IA na nuvem desativada (Configurações).'}
+                       'message': 'Curadoria com IA desativada (Configurações).'}
     if provider != 'heuristica' and sel['mode'] != 'transcricao':
         curation_status = {'state': 'skipped', 'provider': provider,
                            'message': 'Curadoria com IA não usada: não há transcrição para avaliar.'}
-    elif provider != 'heuristica' and not cur_cfg['consent']:
+    elif remote and not cur_cfg['consent']:
         curation_status = {'state': 'skipped', 'provider': provider,
                            'message': 'Curadoria com IA não usada: falta o consentimento nas Configurações.'}
     elif provider != 'heuristica':
         ctx.stage('curadoria_ia', f'Escolhendo e avaliando trechos com IA ({curation.PROVIDER_LABELS[provider]})')
-        with storage.edit_project(pid) as p:
-            p.setdefault('cloud_consents', []).append({
-                'granted_at': cur_cfg['consent_at'], 'used_at': time.time(), 'provider': curation.PROVIDER_LABELS[provider],
-                'model': curation.model_for(provider), 'scope': 'curadoria de cortes (somente texto da transcrição)',
-                'source': 'Configurações'})
+        if remote:   # o Ollama roda neste computador: nada é enviado, nada a registrar
+            with storage.edit_project(pid) as p:
+                p.setdefault('cloud_consents', []).append({
+                    'granted_at': cur_cfg['consent_at'], 'used_at': time.time(),
+                    'provider': curation.PROVIDER_LABELS[provider], 'model': curation.model_for(provider),
+                    'scope': 'curadoria de cortes (somente texto da transcrição)', 'source': 'Configurações'})
         try:
             ai_clips, curation_status = curation.curate(
                 provider, transcript, info['duration'], opts['target_seconds'], opts['desired_count'], scenes,
@@ -217,6 +219,10 @@ def run_analysis(ctx: JobContext) -> dict:
             ctx.warn(curation_status['message'])
     if curation_status['state'] == 'ok':
         ranker = {'state': 'skipped', 'message': 'Ranking feito pela curadoria com IA.'}
+    elif provider == 'ollama' and curation_status['state'] == 'failed':
+        # O refinador usaria o mesmo Ollama que acabou de falhar: não repete, fica a seleção heurística.
+        ranker = {'state': 'skipped', 'message': 'Curadoria com o Ollama local não concluiu; mantida a seleção '
+                  'heurística sem repetir a chamada local.'}
     else:
         ctx.stage('ia_local', 'Refinando com IA local (se disponível)')
         ranker = selection.refine_with_ollama(clips, cancel_event=ctx.cancel_event, on_progress=ctx.span(0.9, 0.99))

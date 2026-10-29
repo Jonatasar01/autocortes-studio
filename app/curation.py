@@ -1,4 +1,5 @@
-"""Curadoria com IA na nuvem (OPT-IN): um modelo propõe os trechos e outro passo os avalia como "juiz".
+"""Curadoria com IA (OPT-IN), local (Ollama/Qwen) ou na nuvem: um modelo propõe os trechos e outro passo os
+avalia como "juiz".
 
 Arquitetura semelhante à observada no Opus Clip:
 1. **Proposta**: o modelo lê a transcrição numerada por frases e devolve trechos (frase inicial → final)
@@ -9,8 +10,10 @@ Arquitetura semelhante à observada no Opus Clip:
 4. **Nota final** (0-100): 70% juiz + 30% nota heurística local, que mede clareza do áudio, começo/fim etc.
 
 Garantias (mesma linha do restante do app):
-- Só roda com provedor escolhido nas Configurações **e** consentimento registrado. Envia apenas texto da
-  transcrição — nunca áudio ou vídeo. A chave vem só de variável de ambiente.
+- Só roda com provedor escolhido nas Configurações. Na nuvem, também com consentimento registrado: envia apenas
+  texto da transcrição — nunca áudio ou vídeo — e a chave vem só de variável de ambiente. O Ollama roda em
+  127.0.0.1 (nada sai do computador), sem chave e sem consentimento; usa blocos menores (contexto de 4K) e pula
+  uma resposta inválida em vez de abandonar a curadoria.
 - A transcrição é tratada como conteúdo não confiável (proteção contra prompt injection).
 - Títulos e ganchos que não têm respaldo no próprio trecho são descartados (evita prometer o que o vídeo
   não diz); nesse caso usa-se o título extraído do texto.
@@ -33,13 +36,19 @@ from .errors import AppError, Cancelled, sanitize
 
 log = logging.getLogger('autocortes.curation')
 
-PROVIDERS = ('heuristica', 'openai', 'anthropic')
+PROVIDERS = ('heuristica', 'ollama', 'openai', 'anthropic')
+# Locais não enviam nada para fora do computador: não pedem consentimento nem entram em ``cloud_consents``.
+LOCAL_PROVIDERS = frozenset({'heuristica', 'ollama'})
+REMOTE_PROVIDERS = frozenset({'openai', 'anthropic'})
 PROVIDER_LABELS = {'heuristica': 'Heurística local (sem envio de dados)',
+                   'ollama': 'Ollama / Qwen local (sem envio de dados)',
                    'openai': 'OpenAI (ChatGPT)', 'anthropic': 'Anthropic (Claude)'}
 ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 CHUNK_SECONDS = 25 * 60        # transcrições longas vão em blocos
 CHUNK_OVERLAP = 120            # sobreposição entre blocos (s) para não perder trechos na emenda
 JUDGE_BATCH = 8
+JUDGE_TEXT_LIMIT = 4000        # caracteres de cada trecho levados ao juiz
+LOCAL_JUDGE_TEXT_LIMIT = 1500  # modelo local com contexto de 4K: lote de 4 trechos cabe com folga
 AI_WEIGHT = 0.7
 AUTO_MIN_FINAL = 70        # quantidade automática: nota final mínima (a IA pesa 70%)
 AUTO_JUDGE_MAX = 60        # automático: trechos levados ao juiz (cada lote é uma chamada paga à API)
@@ -96,11 +105,24 @@ def key_for(provider: str) -> str:
     return os.getenv(env, '').strip() if env else ''
 
 
+def requires_external_consent(provider: str) -> bool:
+    """Só provedores na nuvem recebem a transcrição e exigem consentimento."""
+    return provider in REMOTE_PROVIDERS
+
+
 def is_configured(provider: str) -> bool:
-    return provider == 'heuristica' or bool(key_for(provider))
+    if provider == 'heuristica':
+        return True
+    if provider == 'ollama':
+        from . import ollama_local
+        return bool(ollama_local.status()['model'])
+    return bool(key_for(provider))
 
 
 def model_for(provider: str) -> str:
+    if provider == 'ollama':
+        from . import ollama_local
+        return ollama_local.status()['model'] or config.OLLAMA_MODEL
     if provider == 'openai':
         return os.getenv('CURATION_OPENAI_MODEL', config.OPENAI_MODEL)
     if provider == 'anthropic':
@@ -109,8 +131,11 @@ def model_for(provider: str) -> str:
 
 
 def status() -> dict:
-    return {p: {'label': PROVIDER_LABELS[p], 'configured': is_configured(p), 'model': model_for(p) or None}
-            for p in PROVIDERS}
+    out = {p: {'label': PROVIDER_LABELS[p], 'configured': is_configured(p), 'model': model_for(p) or None,
+               'local': p in LOCAL_PROVIDERS} for p in PROVIDERS}
+    from . import ollama_local
+    out['ollama']['message'] = ollama_local.status()['message']
+    return out
 
 
 # --------------------------------------------------------------------------- chamadas
@@ -155,6 +180,17 @@ def _parse_json_text(text: str) -> dict:
 
 def ask(provider: str, system: str, user: str, schema: dict, name: str, max_tokens: int = 6000) -> dict:
     """Envia o pedido ao provedor e devolve o objeto JSON da resposta."""
+    if provider == 'ollama':
+        from . import ollama_local
+        model = ollama_local.status()['model']
+        if not model:
+            raise AppError(f'Ollama local sem o modelo {config.OLLAMA_MODEL} (ou {config.OLLAMA_FALLBACK_MODEL}): '
+                           f'rode "ollama pull {config.OLLAMA_MODEL}".', 400, 'curation_not_configured')
+        try:
+            return ollama_local.generate(system=system, prompt=user, schema=schema, model=model)
+        except AppError as exc:
+            code = 'curation_bad_response' if exc.code == 'ollama_bad_response' else 'curation_unreachable'
+            raise AppError(exc.message, exc.status, code) from None
     key = key_for(provider)
     if not key:
         env = 'OPENAI_API_KEY' if provider == 'openai' else 'ANTHROPIC_API_KEY'
@@ -198,20 +234,29 @@ def _score(value) -> float:
     return max(0.0, min(10.0, number)) if number == number else 0.0
 
 
-def _chunks(units: list[dict]):
+def _chunks(units: list[dict], seconds: float = CHUNK_SECONDS, overlap: float = CHUNK_OVERLAP):
     lo = 0
     while lo < len(units):
         hi = lo
-        while hi < len(units) and units[hi]['end'] - units[lo]['start'] < CHUNK_SECONDS:
+        while hi < len(units) and units[hi]['end'] - units[lo]['start'] < seconds:
             hi += 1
         hi = max(hi, lo + 1)
         yield lo, hi
         if hi >= len(units):
             return
         back = hi
-        while back > lo + 1 and units[hi - 1]['end'] - units[back - 1]['start'] < CHUNK_OVERLAP:
+        while back > lo + 1 and units[hi - 1]['end'] - units[back - 1]['start'] < overlap:
             back -= 1
         lo = back
+
+
+def _limits(provider: str) -> dict:
+    """Tamanho dos blocos e lotes: o modelo local (contexto de 4K, CPU) recebe pedidos menores que a nuvem."""
+    if provider == 'ollama':
+        return {'chunk': config.LOCAL_CURATION_CHUNK_SECONDS, 'overlap': config.LOCAL_CURATION_OVERLAP_SECONDS,
+                'batch': config.LOCAL_CURATION_JUDGE_BATCH, 'text': LOCAL_JUDGE_TEXT_LIMIT, 'tolerant': True}
+    return {'chunk': CHUNK_SECONDS, 'overlap': CHUNK_OVERLAP, 'batch': JUDGE_BATCH, 'text': JUDGE_TEXT_LIMIT,
+            'tolerant': False}
 
 
 def _fit(units: list[dict], i: int, j: int, min_len: float, max_len: float) -> tuple[int, int] | None:
@@ -246,14 +291,26 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
         min_len = min(max(6.0, target * 0.6), duration)
         max_len = min(target * 1.35, config.MAX_CLIP_SECONDS)
     progress = on_progress or (lambda f, m='': None)
+    limits = _limits(provider)
+    skipped = 0   # modelo local: bloco/lote com resposta inválida é pulado (a nuvem continua parando na falha)
 
     def check_cancel():
         if cancel_event is not None and cancel_event.is_set():
             raise Cancelled()
 
+    def call(system: str, user: str, schema: dict, name: str) -> dict | None:
+        nonlocal skipped
+        try:
+            return ask(provider, system, user, schema, name)
+        except AppError as exc:
+            if limits['tolerant'] and exc.code == 'curation_bad_response':
+                skipped += 1
+                return None
+            raise
+
     # 1. Proposta
     windows: dict[tuple[int, int], dict] = {}
-    chunks = list(_chunks(units))
+    chunks = list(_chunks(units, limits['chunk'], limits['overlap']))
     for n, (lo, hi) in enumerate(chunks, 1):
         check_cancel()
         span = units[hi - 1]['end'] - units[lo]['start']
@@ -263,7 +320,7 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
         focus = f'\nFoco pedido pelo usuário: {_clean(prompt, 300)}' if prompt else ''
         user = (f'Proponha até {want} trechos com duração entre {min_len:.0f} e {max_len:.0f} segundos.{focus}\n'
                 f'<transcricao>\n{lines}\n</transcricao>')
-        data = ask(provider, PROPOSE_SYSTEM, user, PROPOSE_SCHEMA, 'cortes_propostos')
+        data = call(PROPOSE_SYSTEM, user, PROPOSE_SCHEMA, 'cortes_propostos') or {}
         for item in data.get('clips') or []:
             if not isinstance(item, dict):
                 continue
@@ -298,11 +355,12 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
     candidates = kept[:max(desired * 3, 6)]
 
     # 3. Juiz
-    for start in range(0, len(candidates), JUDGE_BATCH):
+    for start in range(0, len(candidates), limits['batch']):
         check_cancel()
-        batch = candidates[start:start + JUDGE_BATCH]
-        body = '\n\n'.join(f'<trecho id={k}>\n{_clean(c["text"], 4000)}\n</trecho>' for k, c in enumerate(batch))
-        data = ask(provider, JUDGE_SYSTEM, body, JUDGE_SCHEMA, 'avaliacao_cortes')
+        batch = candidates[start:start + limits['batch']]
+        body = '\n\n'.join(f'<trecho id={k}>\n{_clean(c["text"], limits["text"])}\n</trecho>'
+                           for k, c in enumerate(batch))
+        data = call(JUDGE_SYSTEM, body, JUDGE_SCHEMA, 'avaliacao_cortes') or {}
         results = {}
         for r in data.get('results') or []:
             if isinstance(r, dict) and type(r.get('id')) is int:
@@ -390,5 +448,7 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
                f'{len(windows)} trechos propostos, {len(candidates)} avaliados.')
     if rejected:
         message += f' {rejected} título(s) da IA trocado(s) por não constarem no trecho.'
+    if skipped:
+        message += f' {skipped} resposta(s) inválida(s) do modelo local ignorada(s).'
     return clips, {'state': 'ok', 'provider': provider, 'model': model_for(provider), 'message': message,
-                   'proposed': len(windows), 'judged': len(candidates)}
+                   'proposed': len(windows), 'judged': len(candidates), 'skipped_calls': skipped}
