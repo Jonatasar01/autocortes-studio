@@ -196,13 +196,13 @@ def run_analysis(ctx: JobContext) -> dict:
     if remote and (not live_cfg['consent'] or live_cfg['provider'] != cur_cfg['provider']):
         cur_cfg['consent'] = False
     curation_status = {'state': 'disabled', 'provider': 'heuristica',
-                       'message': 'Curadoria com IA desativada (Configurações).'}
+                       'message': 'Cortes escolhidos sem IA (desligada em Configurações).'}
     if provider != 'heuristica' and sel['mode'] != 'transcricao':
         curation_status = {'state': 'skipped', 'provider': provider,
-                           'message': 'Curadoria com IA não usada: não há transcrição para avaliar.'}
+                           'message': 'IA não usada: não há fala transcrita para ela avaliar.'}
     elif remote and not cur_cfg['consent']:
         curation_status = {'state': 'skipped', 'provider': provider,
-                           'message': 'Curadoria com IA não usada: falta o consentimento nas Configurações.'}
+                           'message': 'IA não usada: falta autorizar o envio do texto em Escolha dos cortes com IA.'}
     elif provider != 'heuristica':
         ctx.stage('curadoria_ia', f'Escolhendo e avaliando trechos com IA ({curation.PROVIDER_LABELS[provider]})')
         if remote:   # o Ollama roda neste computador: nada é enviado, nada a registrar
@@ -227,14 +227,14 @@ def run_analysis(ctx: JobContext) -> dict:
             raise
         except AppError as exc:
             curation_status = {'state': 'failed', 'provider': provider,
-                               'message': f'Curadoria com IA falhou ({exc.message}); mantida a seleção heurística.'}
+                               'message': f'A escolha com IA falhou ({exc.message}); os cortes foram escolhidos sem IA.'}
             ctx.warn(curation_status['message'])
     if curation_status['state'] == 'ok':
-        ranker = {'state': 'skipped', 'message': 'Ranking feito pela curadoria com IA.'}
+        ranker = {'state': 'skipped', 'message': 'Ordem dos cortes definida pela IA.'}
     elif provider == 'ollama' and curation_status['state'] == 'failed':
         # O refinador usaria o mesmo Ollama que acabou de falhar: não repete, fica a seleção heurística.
-        ranker = {'state': 'skipped', 'message': 'Curadoria com o Ollama local não concluiu; mantida a seleção '
-                  'heurística sem repetir a chamada local.'}
+        ranker = {'state': 'skipped', 'message': 'A IA neste computador não terminou; os cortes foram escolhidos '
+                  'sem IA, sem tentar de novo.'}
     else:
         ctx.stage('ia_local', 'Refinando com IA local (se disponível)')
         ranker = selection.refine_with_ollama(clips, cancel_event=ctx.cancel_event, on_progress=ctx.span(0.9, 0.99))

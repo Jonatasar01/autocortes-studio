@@ -69,6 +69,47 @@ const setFill = (input) => {
   input.style.setProperty('--fill', (100 * (Number(input.value) - Number(input.min)) / span) + '%');
 };
 
+// ------------------------------------------------------------------ tema
+// Automático segue o sistema; claro e escuro ficam salvos neste navegador. O CSS já aplica o tema do sistema
+// antes deste script, então só a escolha explícita precisa de data-theme.
+const THEMES = {auto: 'automático', light: 'claro', dark: 'escuro'};
+const NEXT_THEME = {auto: 'light', light: 'dark', dark: 'auto'};
+function applyTheme(choice) {
+  if (!THEMES[choice]) choice = 'auto';
+  if (choice === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = choice;
+  const btn = $('themeToggle');
+  btn.dataset.choice = choice;
+  btn.setAttribute('aria-label', 'Tema ' + THEMES[choice] + '. Trocar tema');
+  btn.title = 'Tema ' + THEMES[choice] + '. Clique para trocar.';
+  requestAnimationFrame(() => drawWave());   // a onda do áudio é desenhada com a cor do tema
+}
+applyTheme(store.get('studio.theme'));
+$('themeToggle').onclick = () => {
+  const next = NEXT_THEME[$('themeToggle').dataset.choice] || 'auto';
+  store.set('studio.theme', next);
+  applyTheme(next);
+};
+window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => drawWave());
+
+// ------------------------------------------------------------------ modo simples e avançado
+// O simples (padrão) mostra o essencial: cortar, legendas, enquadramento e exportar. O avançado mostra filtros,
+// estilos de edição, perfis, zoom da linha do tempo e automação. Só esconde: nenhuma opção já escolhida muda.
+function setMode(mode, persist = true) {
+  mode = mode === 'advanced' ? 'advanced' : 'simple';
+  document.body.dataset.mode = mode;
+  const btn = $('modeToggle');
+  btn.setAttribute('aria-pressed', String(mode === 'advanced'));
+  btn.title = mode === 'advanced' ? 'Esconder as ferramentas avançadas' : 'Mostrar todas as ferramentas do editor';
+  if (persist) store.set('studio.mode', mode);
+}
+setMode(store.get('studio.mode'), false);
+$('modeToggle').onclick = () => {
+  const next = document.body.dataset.mode === 'advanced' ? 'simple' : 'advanced';
+  setMode(next);
+  toast(next === 'advanced' ? 'Modo avançado: todas as ferramentas à mostra.' : 'Modo simples: só o essencial à mostra.');
+};
+
 // ------------------------------------------------------------------ feedback
 
 function toast(msg, error = false) {
@@ -100,7 +141,7 @@ function setLoading(text, progress = null, steps = '') {
 
 // Andamento da análise: etapa atual, porcentagem, tempo restante estimado e quanto levou cada etapa.
 const STAGE_NAMES = {validando: 'Validação', extraindo_audio: 'Áudio', transcrevendo: 'Transcrição',
-  cenas: 'Cenas', audio_eventos: 'Reações no áudio', selecionando: 'Seleção', ia_local: 'IA local', curadoria_ia: 'Curadoria IA', fila: 'Fila'};
+  cenas: 'Cenas', audio_eventos: 'Reações no áudio', selecionando: 'Seleção', ia_local: 'IA neste computador', curadoria_ia: 'Escolha com IA', fila: 'Fila'};
 // Faixa da barra geral ocupada pelas etapas com progresso real (as outras são rápidas ou sem medida).
 const STAGE_SPANS = {extraindo_audio: [0.08, 0.14], transcrevendo: [0.14, 0.74], cenas: [0.75, 0.88]};
 const fmtDur = (s) => {
@@ -213,12 +254,12 @@ const ERROR_HINTS = {
   too_long: 'Corte o vídeo em partes ou aumente AUTOCORTES_MAX_SOURCE_HOURS no iniciar_windows.bat.',
   bad_extension: 'Converta para MP4 (H.264) e tente de novo.',
   no_audio: 'Sem áudio não há fala para analisar: use o modo Manual.',
-  busy: 'Espere a tarefa atual terminar ou cancele em Processamentos.',
+  busy: 'Espere a tarefa atual terminar ou cancele em Tarefas.',
   not_ready: 'Aguarde a análise terminar; o andamento aparece na página inicial.',
   no_source: 'O vídeo original sumiu da pasta do projeto: crie o projeto de novo com o arquivo.',
   no_transcript: 'Use "Analisar de novo" para transcrever o vídeo.',
   disk_full: 'Libere espaço no disco e tente de novo.',
-  rights_ack_required: 'Abra a Revisão de direitos, leia os alertas e confirme na exportação.',
+  rights_ack_required: 'Abra Direitos autorais, leia os alertas e confirme na exportação.',
 };
 function withHint(message, code) {
   const hint = ERROR_HINTS[code];
@@ -269,7 +310,7 @@ const readLabel = () => {
 function selectionLabel() {
   const a = Math.min(state.markIn, state.markOut), b = Math.max(state.markIn, state.markOut);
   $('rangeLabel').textContent = state.project
-    ? 'Seleção ' + fmt(a) + ' — ' + fmt(b) + ' · ' + fmt(b - a)
+    ? 'Seleção de ' + fmt(a) + ' a ' + fmt(b) + ' (' + fmt(b - a) + ')'
     : 'Marque a entrada (I) e a saída (O).';
   const band = $('selectionBand');
   band.hidden = !state.project || b - a <= 0;
@@ -376,6 +417,7 @@ function setView(view) {
     loadProjects();
   } else if (state.project) {
     $('crumb').textContent = state.project.name;
+    $('editorHeading').textContent = 'Editor: ' + state.project.name;
     document.title = state.project.name + ' — AutoCortes Studio';
     history.replaceState({}, '', '/?projeto=' + state.project.id);
   }
@@ -439,6 +481,50 @@ document.addEventListener('click', (e) => {
 $('openCutsTop').onclick = () => openLeft('cuts');
 $('openRights').onclick = () => $('rightsDialog').showModal();
 $('help').onclick = () => $('helpDialog').showModal();
+
+// ------------------------------------------------------------------ guia de primeiro uso e dicas
+// O guia abre sozinho só na primeira visita; depois fica em Ajuda. Cada dica some de vez quando é fechada.
+let guideStep = 0;
+function showGuideStep(i) {
+  const steps = [...$('guideSteps').children];
+  guideStep = clamp(i, 0, steps.length - 1);
+  steps.forEach((s, k) => { s.hidden = k !== guideStep; });
+  $('guideStepLabel').textContent = 'Passo ' + (guideStep + 1) + ' de ' + steps.length;
+  $('guideBack').hidden = guideStep === 0;
+  $('guideNext').textContent = guideStep === steps.length - 1 ? 'Começar' : 'Próximo';
+}
+function openGuide() {
+  showGuideStep(0);
+  $('guideDialog').showModal();
+  $('guideNext').focus();
+}
+$('guideBack').onclick = () => showGuideStep(guideStep - 1);
+$('guideNext').onclick = () => {
+  if (guideStep === $('guideSteps').children.length - 1) $('guideDialog').close();
+  else showGuideStep(guideStep + 1);
+};
+$('guideDialog').addEventListener('close', () => store.set('studio.guideSeen', '1'));
+$('openGuide').onclick = () => { $('helpDialog').close(); openGuide(); };
+if (!store.get('studio.guideSeen')) setTimeout(openGuide, 400);
+
+const TIPS = {
+  analyzing: 'A análise continua mesmo se você fechar esta aba, desde que o AutoCortes siga aberto. ' +
+    'O andamento também aparece em Tarefas.',
+  review: 'Estes são os cortes sugeridos. Clique em um para assistir, ajuste o início e o fim se precisar ' +
+    'e clique em Exportar.',
+  manual: 'Toque o vídeo, marque o início (I) e o fim (O) e clique em Cortar para criar um corte.',
+};
+function showTip(key) {
+  const fresh = key && !store.get('studio.tip.' + key);
+  $('tipBar').hidden = !fresh;
+  if (!fresh) return;
+  $('tipBar').dataset.key = key;
+  $('tipText').textContent = TIPS[key];
+}
+$('tipClose').onclick = () => {
+  store.set('studio.tip.' + $('tipBar').dataset.key, '1');
+  $('tipBar').hidden = true;
+};
 narrow.addEventListener('change', () => { if (!narrow.matches) document.body.dataset.left = 'closed'; syncScrim(); });
 phone.addEventListener('change', syncScrim);
 
@@ -731,7 +817,7 @@ $('batchGo').onclick = async () => {
   const presets = pickedPresets();
   const formats = [...new Set(presets.map((k) => PRESETS[k].format))];
   const rights = !!p.rights?.requires_acknowledgement;
-  if (rights && !$('batchRights').checked) return toast('Confirme a Revisão de direitos para exportar.', true);
+  if (rights && !$('batchRights').checked) return toast('Confirme os direitos autorais para exportar.', true);
   store.set('batch.presets', JSON.stringify(presets));
   $('batchGo').disabled = true;
   try {
@@ -1112,7 +1198,10 @@ $('uploadForm').onsubmit = async (e) => {
   store.set('pref.mode', editMode());
   state.pendingProfile = $('contentProfile').value || null;
   store.set('pref.contentProfile', $('contentProfile').value);
-  if (editMode() === 'advanced') store.set('pref.target', String(clamp(Number($('target').value) || 35, 10, 90)));
+  if (editMode() === 'advanced') {
+    store.set('pref.target', String(clamp(Number($('target').value) || 35, 10, 90)));
+    setMode('advanced');   // quem escolhe "Avançado" ao criar quer as ferramentas completas no editor
+  }
   try {
     if (sourceMode() === 'path') {
       setStatus('Importando do computador…', 'busy');
@@ -1232,18 +1321,21 @@ async function openProject(id) {
     const a = analysisLabel(p.analysis, p.analysis_events || []);
     setStatus(a.pct === null ? 'Analisando vídeo…' : 'Analisando vídeo · ' + a.pct + '%', 'busy');
     setLoading(a.text, a.progress, a.steps);
+    showTip('analyzing');
     setTimeout(() => {
       if (state.openVersion === version) openProject(id).catch((e) => toast(e.message, true));
     }, 1700);
   } else if (p.status === 'ready') {
     setStatus('Projeto aberto', 'ok');
+    showTip(p.clips?.length ? 'review' : 'manual');
     if (filtersVisible()) loadFilterSamples();
     setLoading(video.readyState >= 2 ? null : 'Carregando vídeo…');
   } else {
     setLoading(null);
+    showTip(null);
     setStatus('Projeto indisponível', 'error');
     toast((p.error || 'O projeto não está pronto para edição.') + (transcribed
-      ? ' A transcrição ficou salva: use Seleção de cortes para continuar sem transcrever de novo.' : ''), true);
+      ? ' A transcrição ficou salva: use Escolha dos cortes com IA para continuar sem transcrever de novo.' : ''), true);
   }
 }
 
@@ -1261,6 +1353,7 @@ function closeProject() {
   video.load();
   setThumb(null);
   setLoading(null);
+  showTip(null);
   hideExport();
   $('noVideo').hidden = false;
   $('mediaCard').hidden = true;
@@ -1272,7 +1365,7 @@ function closeProject() {
   $('clearCache').hidden = true;
   $('projectName').textContent = $('crumb').textContent = 'Nenhum projeto aberto';
   $('projectMeta').textContent = 'Importe um vídeo ou abra um projeto recente';
-  document.title = 'AutoCortes Studio — Editor';
+  document.title = 'AutoCortes Studio';
   $('count').textContent = '0';
   $('cutCards').replaceChildren();
   $('properties').hidden = true;
@@ -1297,7 +1390,7 @@ async function reanalyzeProject(id, {ready}) {
     title: 'Analisar de novo', yes: 'Analisar de novo',
     text: 'O vídeo será analisado do zero: transcrição, cenas e escolha dos cortes. Os ' +
       (state.project?.clips?.length || 0) + ' cortes atuais serão substituídos quando terminar (se a análise ' +
-      'falhar, eles continuam). Para só escolher os cortes de novo, sem transcrever, use “Seleção de cortes e IA”.',
+      'falhar, eles continuam). Para só escolher os cortes de novo, sem transcrever, use “Escolha dos cortes com IA”.',
   })) return;
   try {
     await api('/api/projects/' + id + '/reanalyze', 'POST');
@@ -1319,7 +1412,7 @@ async function loadCacheUsage() {
     const u = await api('/api/projects/' + id + '/cache');
     if (state.project?.id !== id) return;
     state.cacheUsage = u;
-    $('clearCacheText').textContent = 'Liberar cache (' + cacheSize(u.total_bytes) + ')';
+    $('clearCacheText').textContent = 'Liberar espaço (' + cacheSize(u.total_bytes) + ')';
     $('clearCache').hidden = u.total_bytes < 1e6;
   } catch { $('clearCache').hidden = true; }
 }
@@ -1327,13 +1420,13 @@ $('clearCache').onclick = async () => {
   const id = state.project?.id, u = state.cacheUsage;
   if (!id || !u) return;
   const parts = u.parts.filter((x) => x.bytes).map((x) => x.label.toLowerCase() + ' (' + cacheSize(x.bytes) + ')');
-  const ok = await askConfirm({title: 'Liberar cache', yes: 'Liberar ' + cacheSize(u.total_bytes),
+  const ok = await askConfirm({title: 'Liberar espaço', yes: 'Liberar ' + cacheSize(u.total_bytes),
     text: 'Apaga ' + parts.join(', ') + '. Tudo é refeito quando necessário (a próxima prévia ou exportação ' +
       'pode demorar um pouco mais). O vídeo, a transcrição, os cortes e as exportações não são apagados.'});
   if (!ok) return;
   try {
     const r = await api('/api/projects/' + id + '/cache', 'DELETE');
-    toast('Cache liberado: ' + cacheSize(r.freed_bytes) + '.');
+    toast('Espaço liberado: ' + cacheSize(r.freed_bytes) + '.');
     for (const c of state.project?.clips || []) delete c.preview;
     state.cacheUsage = r;
     $('clearCache').hidden = true;
@@ -1654,7 +1747,7 @@ async function openSelection() {
     const chosen = ['ollama', 'gemini'].includes(cur.provider) ? cur.provider : 'ollama';
     $('curationProvider').innerHTML = Object.entries(providers).filter(([id]) => id !== 'heuristica').map(([id, info]) =>
       '<option value="' + id + '"' + (id === chosen ? ' selected' : '') + '>' + escape(info.label) +
-      (!info.configured ? (id === 'ollama' ? ' — não instalado' : ' — sem chave') : '') + '</option>').join('');
+      (!info.configured ? (id === 'ollama' ? ' (não instalada)' : ' (sem chave)') : '') + '</option>').join('');
     $('curationProvider').dataset.providers = JSON.stringify(providers);
     $('curationConsent').checked = !!cur.consent;
     $('curationAllClips').checked = !!cur.all_clips;
@@ -1662,7 +1755,7 @@ async function openSelection() {
     syncCuration();
     const clips = state.project?.clips || [];
     const exported = clips.filter((c) => Object.keys(c.exports || {}).length).length;
-    $('reselectNote').textContent = 'Refazer a seleção usa a transcrição já salva (não transcreve de novo)' + (clips.length
+    $('reselectNote').textContent = 'Escolher de novo usa a transcrição salva, sem transcrever outra vez' + (clips.length
       ? ' e substitui os ' + clips.length + ' cortes atuais' + (exported ? ', incluindo ' + exported + ' já exportado(s) — baixe-os antes' : '')
       : '') + '.';
     dlg.showModal();
@@ -1676,11 +1769,11 @@ function syncCuration() {
   $('curationConsentRow').hidden = !!info.local;
   $('curationKeyRow').hidden = id !== 'gemini';
   $('curationKeyRemove').hidden = info.key_source !== 'saved';
-  const fallback = ' Enquanto isso, a seleção usa a heurística local.';
+  const fallback = ' Enquanto isso, os cortes são escolhidos sem IA.';
   const source = info.key_source === 'saved' ? 'Chave salva (termina em …' + info.key_hint + ')'
     : 'Chave da variável GEMINI_API_KEY';
   $('curationKeyNote').textContent = id === 'ollama'
-    ? '100% local: a transcrição não sai deste computador. ' + (info.message || '') + (info.configured ? '' : fallback)
+    ? 'Roda neste computador: nada é enviado para a internet. ' + (info.message || '') + (info.configured ? '' : fallback)
     : info.configured ? source + '. Modelo: ' + (info.model || '—') + '.'
       : 'Sem chave: cole a chave do Gemini abaixo.' + fallback;
   $('curationKeyNote').classList.toggle('warn', !info.configured);
@@ -1694,7 +1787,7 @@ function applyKeyStatus(info) {
   providers.gemini = {...providers.gemini, ...info};
   select.dataset.providers = JSON.stringify(providers);
   const option = [...select.options].find((o) => o.value === 'gemini');
-  if (option) option.textContent = info.label + (info.configured ? '' : ' — sem chave');
+  if (option) option.textContent = info.label + (info.configured ? '' : ' (sem chave)');
   $('curationKey').value = '';
   syncCuration();
 }
@@ -1724,7 +1817,7 @@ $('reselect').onclick = async () => {
     await saveCuration();
     await api('/api/projects/' + p.id + '/reselect', 'POST');
     $('selectionDialog').close();
-    toast('Refazendo a seleção com a transcrição salva…');
+    toast('Escolhendo os cortes de novo com a transcrição salva…');
     await openProject(p.id);
   } catch (e) { toast(e.message, true); }
 };
@@ -1907,6 +2000,9 @@ function renderTimeline() {
       ' (' + fmt(c.end - c.start) + ')' + (c.score != null ? ' · nota ' + Math.round(c.score) : '') +
       '\nDois cliques: ampliar até o corte';
     if (c.id === state.selected) b.setAttribute('aria-current', 'true');
+    // Nome lido pelo leitor de tela (o texto visível junta número, título e duração sem separação).
+    b.setAttribute('aria-label', 'Corte ' + (c.rank || c.id) + ': ' + c.title + ', de ' + fmt(c.start) + ' a ' +
+      fmt(c.end) + (c.score != null ? ', nota ' + Math.round(c.score) : ''));
     const left = el('i', 'handle left'), right = el('i', 'handle right');
     left.dataset.side = 'start';
     right.dataset.side = 'end';
@@ -2015,7 +2111,7 @@ function drawWave() {
     canvas.height = Math.round(height * dpr);
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
-    ctx.fillStyle = getComputedStyle(lane).getPropertyValue('--wave') || '#4f7bd6';
+    ctx.fillStyle = getComputedStyle(lane).getPropertyValue('--wave').trim() || '#5b86de';
     const mid = height / 2;
     for (let x = 0; x < width; x++) {
       // Maior pico entre as posições cobertas por este pixel.

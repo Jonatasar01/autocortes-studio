@@ -24,7 +24,7 @@ def readiness():
         {'name': 'Transcrição local', 'ready': transcription.available(),
          'detail': f'Whisper {config.WHISPER_MODEL} (auto: large-v3-turbo na GPU, small na CPU); '
                    'primeiro uso pode baixar o modelo.'},
-        {'name': 'Curadoria com IA',
+        {'name': 'Escolha dos cortes com IA',
          'ready': (cu['provider'] != 'heuristica' and providers[cu['provider']]['configured']
                    and (cu['consent'] or not curation.requires_external_consent(cu['provider']))),
          'detail': (providers['ollama'].get('message', '') + ' Processamento 100% local.'

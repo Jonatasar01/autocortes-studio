@@ -385,7 +385,7 @@ class PipelineV23Tests(unittest.TestCase):
             settings.update({'curation': {'provider': 'heuristica', 'consent': False}})
         self.assertEqual(p['curation']['state'], 'ok', p['curation'])
         self.assertTrue(all(c.get('ai_curation') == 'gemini' for c in p['clips']))
-        self.assertEqual(p['cloud_consents'][-1]['provider'], 'Google Gemini (nuvem)')
+        self.assertEqual(p['cloud_consents'][-1]['provider'], curation.PROVIDER_LABELS['gemini'])
         clip = p['clips'][0]
         with mock.patch.object(reframe, 'detect_faces', return_value=[(0.6, 0.3, 0.12, 0.22)]), \
                 mock.patch.object(reframe, 'yunet_available', return_value=False):
@@ -408,7 +408,7 @@ class PipelineV23Tests(unittest.TestCase):
         finally:
             settings.update({'curation': {'provider': 'heuristica', 'consent': False}})
         self.assertEqual(p['curation']['state'], 'failed')
-        self.assertIn('mantida a seleção heurística', p['curation']['message'])
+        self.assertIn('escolhidos sem IA', p['curation']['message'])
         self.assertTrue(p['clips'])
         self.assertTrue(all('ai_curation' not in c for c in p['clips']))
 

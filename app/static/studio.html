@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <title>AutoCortes Studio — Editor</title>
+  <meta name="color-scheme" content="dark light">
+  <title>AutoCortes Studio</title>
   <link rel="icon" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/studio.css">
 </head>
@@ -13,7 +13,7 @@
 
 <!-- Ícones no estilo Lucide (ISC), embutidos para respeitar a política de segurança (sem CDN). -->
 <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
-  <symbol id="i-logo" viewBox="0 0 32 32"><path d="M6 5l20 22" stroke="#4B8CFF"/><path d="M26 5L6 27" stroke="#F2F5FA"/></symbol>
+  <symbol id="i-logo" viewBox="0 0 32 32"><path d="M6 5l20 22" stroke="#4B8CFF"/><path d="M26 5L6 27" stroke="currentColor"/></symbol>
   <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/></symbol>
   <symbol id="i-layout" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></symbol>
   <symbol id="i-film" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M3 7.5h4M3 12h18M3 16.5h4M17 3v18M17 7.5h4M17 16.5h4"/></symbol>
@@ -54,6 +54,10 @@
   <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M3 12h.01M3 18h.01M3 6h.01M8 12h13M8 18h13M8 6h13"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
 </svg>
 
@@ -80,8 +84,8 @@
         <li><button class="navitem" data-nav="home" title="Início"><svg class="ic"><use href="#i-home"/></svg><span>Início</span></button></li>
         <li><button class="navitem" data-nav="new" title="Novo projeto"><svg class="ic"><use href="#i-plus"/></svg><span>Novo projeto</span></button></li>
         <li><button class="navitem" data-nav="projects" title="Meus projetos"><svg class="ic"><use href="#i-folder"/></svg><span>Meus projetos</span></button></li>
-        <li><button class="navitem" data-nav="editor" title="Editor Studio"><svg class="ic"><use href="#i-layout"/></svg><span>Editor Studio</span></button></li>
-        <li><button class="navitem" data-nav="jobs" title="Processamentos"><svg class="ic"><use href="#i-list"/></svg><span>Processamentos</span><em id="jobsBadge" class="navbadge" hidden></em></button></li>
+        <li><button class="navitem" data-nav="editor" title="Editor"><svg class="ic"><use href="#i-layout"/></svg><span>Editor</span></button></li>
+        <li><button class="navitem" data-nav="jobs" title="Tarefas"><svg class="ic"><use href="#i-list"/></svg><span>Tarefas</span><em id="jobsBadge" class="navbadge" hidden></em></button></li>
       </ul>
       <h2 class="navgroup">Sistema</h2>
       <ul>
@@ -97,8 +101,10 @@
       <div class="crumb"><span id="crumb">Nenhum projeto aberto</span></div>
       <div class="topright">
         <button id="openCutsTop" class="btn ghost editoronly narrowonly" title="Lista de cortes"><svg class="ic"><use href="#i-scissors"/></svg><span>Cortes</span></button>
-        <span id="status" class="status" role="status" data-tone="idle"><span class="statusdot" aria-hidden="true"></span><span id="statusText">Editor pronto</span></span>
-        <button id="help" class="iconbtn" title="Atalhos de teclado (?)" aria-label="Atalhos de teclado"><svg class="ic"><use href="#i-keyboard"/></svg></button>
+        <span id="status" class="status" role="status" data-tone="idle"><span class="statusdot" aria-hidden="true"></span><span id="statusText">Pronto</span></span>
+        <button id="modeToggle" class="btn ghost" type="button" aria-pressed="false" aria-label="Modo avançado" title="Mostrar todas as ferramentas do editor"><svg class="ic" aria-hidden="true"><use href="#i-sliders"/></svg><span>Modo avançado</span></button>
+        <button id="themeToggle" class="iconbtn" type="button" data-choice="auto" aria-label="Tema automático. Trocar tema"><svg class="ic i-theme-auto" aria-hidden="true"><use href="#i-monitor"/></svg><svg class="ic i-theme-light" aria-hidden="true"><use href="#i-sun"/></svg><svg class="ic i-theme-dark" aria-hidden="true"><use href="#i-moon"/></svg></button>
+        <button id="help" class="iconbtn" type="button" title="Ajuda e atalhos (?)" aria-label="Ajuda e atalhos de teclado"><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg></button>
         <button id="saveTop" class="editoronly btn" disabled title="Salvar alterações do corte (Ctrl+S)"><svg class="ic"><use href="#i-save"/></svg><span>Salvar</span></button>
         <button id="previewTop" class="editoronly btn" disabled title="Ver como o corte vai ficar (renderização rápida em meia resolução)"><svg class="ic"><use href="#i-eye"/></svg><span id="previewLabel">Prévia</span></button>
         <button id="exportTop" class="editoronly btn primary" disabled title="Exportar o corte selecionado"><svg class="ic"><use href="#i-upload"/></svg><span id="exportLabel">Exportar</span></button>
@@ -142,13 +148,14 @@
           <p id="outputDir" class="hint"></p>
         </section>
         <section class="homesec" aria-labelledby="depsTitle">
-          <div class="sechead"><h2 id="depsTitle">Este computador</h2></div>
+          <div class="sechead"><h2 id="depsTitle">Recursos deste computador</h2></div>
           <ul id="homeDeps" class="deplist"></ul>
         </section>
       </div>
     </section>
 
     <main class="workspace" id="workspace" tabindex="-1">
+      <h1 id="editorHeading" class="visually-hidden">Editor</h1>
       <!-- Mídia e cortes -->
       <section class="panel leftpanel" id="leftPanel" aria-label="Mídia e cortes">
         <div class="tabs" role="tablist" aria-label="Painel esquerdo">
@@ -166,8 +173,8 @@
             </div>
             <button id="deleteProject" type="button" class="iconbtn sm" title="Excluir este projeto" aria-label="Excluir este projeto"><svg class="ic"><use href="#i-trash"/></svg></button>
           </div>
-          <button id="openSelection" type="button" class="btn ghost block" hidden title="Escolher os cortes de novo com a transcrição já salva (com IA, se ativada)">Seleção de cortes e IA…</button>
-          <button id="openRights" type="button" class="btn ghost block" hidden title="Riscos de direitos autorais declarados e detectados"><svg class="ic"><use href="#i-shield"/></svg><span>Revisão de direitos</span></button>
+          <button id="openSelection" type="button" class="btn ghost block" hidden title="Escolher os cortes de novo a partir da transcrição salva, com ou sem IA">Escolha dos cortes com IA</button>
+          <button id="openRights" type="button" class="btn ghost block" hidden title="O que você declarou sobre os direitos do vídeo e os alertas encontrados"><svg class="ic"><use href="#i-shield"/></svg><span>Direitos autorais</span></button>
           <div id="mediaEmpty" class="emptystate">
             <svg class="ic xl"><use href="#i-film"/></svg>
             <strong>Nenhum projeto aberto</strong>
@@ -176,7 +183,7 @@
             <button type="button" class="btn ghost" data-go="projects">Meus projetos</button>
           </div>
           <button id="reanalyze" type="button" class="btn ghost block" hidden title="Analisar o vídeo do zero: transcrição, cenas e cortes"><svg class="ic"><use href="#i-refresh"/></svg><span>Analisar de novo</span></button>
-          <button id="clearCache" type="button" class="btn ghost block" hidden title="Apaga miniaturas, onda do áudio, planos de enquadramento e prévias; tudo é refeito quando necessário. Vídeo, transcrição, cortes e exportações ficam."><svg class="ic"><use href="#i-trash"/></svg><span id="clearCacheText">Liberar cache</span></button>
+          <button id="clearCache" type="button" class="btn ghost block" hidden title="Apaga miniaturas, onda do áudio, planos de enquadramento e prévias; tudo é refeito quando necessário. Vídeo, transcrição, cortes e exportações ficam."><svg class="ic"><use href="#i-trash"/></svg><span id="clearCacheText">Liberar espaço</span></button>
 
         </div>
 
@@ -193,6 +200,11 @@
 
       <!-- Player -->
       <section class="player" aria-label="Pré-visualização">
+        <div id="tipBar" class="tipbar" role="note" hidden>
+          <svg class="ic" aria-hidden="true"><use href="#i-help"/></svg>
+          <p id="tipText"></p>
+          <button id="tipClose" class="iconbtn sm" type="button" aria-label="Fechar dica"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button>
+        </div>
         <div class="videobox" id="videoBox">
           <video id="video" playsinline preload="metadata"></video>
           <div id="focusLayer" class="focuslayer" hidden>
@@ -206,7 +218,7 @@
           <div id="noVideo" class="novideo">
             <svg class="ic xl"><use href="#i-play"/></svg>
             <strong>Nenhum vídeo aberto</strong>
-            <p>Importe um vídeo no painel de mídia ou abra um projeto recente.</p>
+            <p>Crie um projeto com um vídeo ou abra um projeto recente.</p>
           </div>
           <div id="loading" class="loading" hidden role="status"><span class="spinner" aria-hidden="true"></span><span id="loadingText">Carregando…</span><progress id="loadingBar" max="100" value="0" hidden aria-label="Progresso da análise"></progress><small id="loadingSteps" class="loadingsteps" hidden></small></div>
         </div>
@@ -239,7 +251,7 @@
         <div class="tabs" role="tablist" aria-label="Propriedades">
           <button class="tab active" role="tab" id="tabProps" aria-selected="true" aria-controls="panelProps" data-insp="props"><svg class="ic"><use href="#i-sliders"/></svg><span>Propriedades</span></button>
           <button class="tab" role="tab" id="tabSubtitles" aria-selected="false" aria-controls="panelSubtitles" data-insp="subtitles" tabindex="-1"><svg class="ic"><use href="#i-captions"/></svg><span>Legendas</span></button>
-          <button class="tab" role="tab" id="tabEffects" aria-selected="false" aria-controls="panelEffects" data-insp="effects" tabindex="-1"><svg class="ic"><use href="#i-sparkles"/></svg><span>Efeitos</span></button>
+          <button class="tab" role="tab" id="tabEffects" aria-selected="false" aria-controls="panelEffects" data-insp="effects" tabindex="-1"><svg class="ic"><use href="#i-sparkles"/></svg><span>Visual</span></button>
           <button class="tab" role="tab" id="tabAudio" aria-selected="false" aria-controls="panelAudio" data-insp="audio" tabindex="-1"><svg class="ic"><use href="#i-audio"/></svg><span>Áudio</span></button>
         </div>
 
@@ -247,7 +259,7 @@
           <div id="noSelection" class="emptystate">
             <svg class="ic xl"><use href="#i-scissors"/></svg>
             <strong>Nenhum corte selecionado</strong>
-            <p>Marque a entrada (<kbd>I</kbd>) e a saída (<kbd>O</kbd>) e use <b>Cortar</b>, ou escolha um corte na linha do tempo.</p>
+            <p>Marque o início (<kbd>I</kbd>) e o fim (<kbd>O</kbd>) e clique em <b>Cortar</b>, ou escolha um corte na linha do tempo.</p>
           </div>
 
           <form id="properties" hidden novalidate>
@@ -268,8 +280,8 @@
               <div id="clipInfo" class="clipinfo"></div>
               <div class="feedbackrow" role="group" aria-label="Este corte é bom?">
                 <span>Este corte é bom?</span>
-                <button type="button" class="btn ghost" id="fbGood" aria-pressed="false" title="Marcar como bom (ajuda a medir a seleção automática)">👍 Bom</button>
-                <button type="button" class="btn ghost" id="fbBad" aria-pressed="false" title="Marcar como rejeitado">👎 Rejeitar</button>
+                <button type="button" class="btn ghost" id="fbGood" aria-pressed="false" title="Marcar como bom (ajuda a medir a escolha automática)"><span aria-hidden="true">👍</span> Bom</button>
+                <button type="button" class="btn ghost" id="fbBad" aria-pressed="false" title="Marcar como rejeitado"><span aria-hidden="true">👎</span> Rejeitar</button>
               </div>
               <details class="more" id="whyBox" hidden>
                 <summary>Por que este corte foi sugerido</summary>
@@ -298,18 +310,18 @@
               <label class="switch"><input id="subtitles" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legendas no vídeo</strong><small>Usa a transcrição do projeto quando houver. Gravadas no MP4 exportado.</small></span></label>
               <label class="field" for="subtitleStyle">Estilo da legenda</label>
               <select id="subtitleStyle">
-                <option value="dinamica">Animada (palavra falada em destaque)</option>
-                <option value="classica">Clássica (texto simples)</option>
+                <option value="dinamica">Animada (destaca a palavra falada)</option>
+                <option value="classica">Simples (texto fixo)</option>
               </select>
               <p id="subtitleStyleNote" class="hint" hidden>O plano de edição em uso define o estilo da legenda.</p>
-              <label class="switch"><input id="refineSubtitles" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda precisa</strong><small>Retranscreve só o corte com um modelo maior antes de exportar (GPU). Corrige nomes e gírias; leva alguns segundos a mais na primeira vez.</small></span></label>
+              <label class="switch"><input id="refineSubtitles" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda mais precisa</strong><small>Antes de exportar, transcreve o corte de novo com um modelo maior. Acerta mais nomes e gírias e leva alguns segundos a mais. Precisa de placa de vídeo NVIDIA.</small></span></label>
               <button id="editSubtitles" type="button" class="btn ghost block"><svg class="ic"><use href="#i-pencil"/></svg><span>Corrigir texto da legenda</span></button>
             </div>
 
             <div role="tabpanel" id="panelEffects" aria-labelledby="tabEffects" hidden>
               <section class="filterbox" aria-labelledby="filterTitle">
                 <span class="eyebrow" id="filterTitle">Filtro de cor</span>
-                <p class="hint">Cada miniatura é o quadro atual com o filtro aplicado. O player mostra o filtro escolhido enquanto toca (aproximado); a Prévia e a exportação usam o filtro exato.</p>
+                <p class="hint">As miniaturas mostram o quadro atual com cada filtro. O player mostra uma aproximação; a prévia e o vídeo exportado usam o filtro exato.</p>
                 <div id="filterGrid" class="filtergrid" role="radiogroup" aria-label="Filtro de cor"></div>
                 <p id="filterDesc" class="hint"></p>
                 <button id="filterRefresh" class="btn ghost block" type="button"><svg class="ic"><use href="#i-refresh"/></svg><span>Ver exemplos no quadro atual</span></button>
@@ -317,9 +329,9 @@
               <section class="stylebox" aria-labelledby="styleTitle">
                 <span class="eyebrow" id="styleTitle">Estilo de edição</span>
                 <div class="cols">
-                  <label class="field" for="editStyle">Preset
+                  <label class="field" for="editStyle">Estilo
                     <select id="editStyle">
-                      <option value="auto">Inteligente (analisa o trecho)</option>
+                      <option value="auto">Automático (escolhe pelo trecho)</option>
                       <option value="impacto">Impacto dinâmico</option>
                       <option value="equilibrado">Equilibrado</option>
                       <option value="cinematografico">Cinematográfico</option>
@@ -336,10 +348,10 @@
                   <div class="checkgrid">
                     <label class="check"><input type="checkbox" data-opt="zoom" checked><span>Zoom automático</span></label>
                     <label class="check"><input type="checkbox" data-opt="dynamic_subtitles" checked><span>Legendas dinâmicas</span></label>
-                    <label class="check"><input type="checkbox" data-opt="audio" checked><span>Tratamento de áudio</span></label>
+                    <label class="check"><input type="checkbox" data-opt="audio" checked><span>Melhorar o áudio</span></label>
                     <label class="check"><input type="checkbox" data-opt="denoise"><span>Reduzir ruído</span></label>
                     <label class="check"><input type="checkbox" data-opt="remove_pauses" checked><span>Remover pausas</span></label>
-                    <label class="check"><input type="checkbox" data-opt="reframe" checked><span>Reenquadramento</span></label>
+                    <label class="check"><input type="checkbox" data-opt="reframe" checked><span>Enquadramento automático</span></label>
                   </div>
                 </details>
                 <div class="planbtns">
@@ -357,7 +369,7 @@
                 </div>
               </section>
               <span class="eyebrow spaced">Enquadramento</span>
-              <label class="field" for="framing">Como encaixar no formato de saída</label>
+              <label class="field" for="framing">Como encaixar o vídeo no formato escolhido</label>
               <select id="framing">
                 <option value="blur">Fundo desfocado</option>
                 <option value="fit">Quadro inteiro</option>
@@ -392,12 +404,12 @@
                 </div>
               </div>
               <span class="eyebrow spaced">Texto</span>
-              <label class="switch"><input id="hook" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Gancho</strong><small>Usa o nome do corte como texto de abertura.</small></span></label>
+              <label class="switch"><input id="hook" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Frase de abertura</strong><small>Mostra o nome do corte no topo do vídeo nos primeiros segundos.</small></span></label>
             </div>
 
             <div role="tabpanel" id="panelAudio" aria-labelledby="tabAudio" hidden>
               <span class="eyebrow">Áudio</span>
-              <label class="switch"><input id="normalize" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Normalizar volume</strong><small>Equilibra o nível de som do corte exportado.</small></span></label>
+              <label class="switch"><input id="normalize" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Igualar o volume</strong><small>Ajusta o som do corte ao nível usado nas redes sociais, sem partes altas ou baixas demais.</small></span></label>
             </div>
 
             <button id="save" class="btn block" type="submit" hidden>Salvar alterações</button>
@@ -439,7 +451,7 @@
           <button id="markOut" class="btn ghost" disabled title="Marcar fim (O)"><svg class="ic"><use href="#i-mark-out"/></svg><span>Marcar fim</span><kbd>O</kbd></button>
           <button id="previewClip" class="btn ghost" disabled title="Reproduzir só o corte selecionado"><svg class="ic"><use href="#i-play"/></svg><span>Ver corte</span></button>
         </div>
-        <span id="rangeLabel" class="rangelabel" role="status">Marque a entrada (I) e a saída (O).</span>
+        <span id="rangeLabel" class="rangelabel" role="status">Marque o início (I) e o fim (O).</span>
       </div>
 
       <div class="tlscroll" id="timelineScroll">
@@ -458,8 +470,8 @@
 <div class="scrim" id="scrim" hidden></div>
 
 <dialog id="rightsDialog" class="dialog" aria-labelledby="rightsTitle">
-  <header><h2 id="rightsTitle">Revisão de direitos</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
-  <div id="rightsDetails" class="dialogbody">Abra um projeto para ver a revisão de direitos.</div>
+  <header><h2 id="rightsTitle">Direitos autorais</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <div id="rightsDetails" class="dialogbody">Abra um projeto para ver os direitos autorais.</div>
 </dialog>
 
 <dialog id="newDialog" class="dialog wizard" aria-labelledby="newTitle">
@@ -468,15 +480,15 @@
   <div class="dialogbody wizardbody">
   <section id="step1">
             <div class="segmented three" id="sourceSwitch" role="radiogroup" aria-label="Origem do vídeo">
-              <label><input type="radio" name="sourceMode" value="file" checked><span>Enviar arquivo</span></label>
-              <label title="Para lives grandes: usa o arquivo direto do disco, sem enviar pelo navegador"><input type="radio" name="sourceMode" value="path"><span>Do computador</span></label>
+              <label><input type="radio" name="sourceMode" value="file" checked><span>Arquivo</span></label>
+              <label title="Para vídeos grandes: usa o arquivo direto do disco, sem copiar pelo navegador"><input type="radio" name="sourceMode" value="path"><span>Caminho no disco</span></label>
               <label id="linkOption"><input type="radio" name="sourceMode" value="link"><span>Link</span></label>
             </div>
             <div id="fileWrap">
               <label class="drop" for="file" id="dropZone">
                 <svg class="ic xl"><use href="#i-plus"/></svg>
-                <strong>Importar mídia</strong>
-                <small>Escolha ou solte um vídeo · MP4, MOV, MKV, WEBM, AVI</small>
+                <strong>Escolher vídeo</strong>
+                <small>Clique ou solte um vídeo aqui. MP4, MOV, MKV, WEBM ou AVI.</small>
               </label>
               <input id="file" type="file" accept="video/*,.mkv,.mov,.avi,.m4v" class="visually-hidden">
               <button id="pickFile" type="button" class="btn block">Selecionar vídeo</button>
@@ -489,7 +501,7 @@
               <div id="pathInfo" class="fileinfo" hidden aria-live="polite"></div>
             </div>
             <div id="urlWrap" hidden>
-              <label class="field" for="videoUrl">Link público autorizado</label>
+              <label class="field" for="videoUrl">Link do vídeo (público e com permissão de uso)</label>
               <input id="videoUrl" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…">
             </div>
 
@@ -503,12 +515,12 @@
               <label class="modecard"><input type="radio" name="editMode" value="advanced"><span><svg class="ic"><use href="#i-sliders"/></svg><strong>Avançado</strong><small>Análise automática com todos os ajustes à mostra.</small></span></label>
             </fieldset>
 
-            <label class="field" for="contentProfile">Tipo de conteúdo <small class="muted">— já deixa o perfil de exportação escolhido</small></label>
+            <label class="field" for="contentProfile">Tipo de conteúdo <small class="muted">(define legenda e enquadramento iniciais)</small></label>
             <select id="contentProfile">
               <option value="">Escolher depois</option>
             </select>
 
-            <label class="field" for="sourceRights">Direitos do vídeo <small class="muted">— revisados de novo antes de exportar</small></label>
+            <label class="field" for="sourceRights">Direitos do vídeo <small class="muted">(você confirma de novo antes de exportar)</small></label>
             <select id="sourceRights">
               <option value="unknown">Não verificado</option>
               <option value="owned">Sou o autor</option>
@@ -518,7 +530,7 @@
             <div id="advancedOptions" class="advanced" hidden>
               <span class="eyebrow">Ajustes avançados</span>
               <label class="field">Duração alvo de cada corte (s)<input id="target" type="number" value="35" min="10" max="90"></label>
-              <p class="hint">Entram todos os trechos válidos para clipe, do melhor para o pior, sem número fixo. Curadoria com IA, enquadramento, legendas e áudio ficam no editor e em Configurações.</p>
+              <p class="hint">Entram todos os trechos bons para corte, do melhor para o pior, sem número fixo. IA, enquadramento, legendas e áudio ficam no editor e em Configurações.</p>
               <label class="check"><input id="thirdParty" type="checkbox"><span>Contém trechos de terceiros</span></label>
               <label class="field" for="audioRights">Áudio de terceiros</label>
               <select id="audioRights"><option value="unknown">Não verificado</option><option value="no">Não</option><option value="yes">Sim</option></select>
@@ -559,7 +571,7 @@
     <p id="batchSummary" class="batchsummary"></p>
     <ul id="batchWarnings" class="fileproblems"></ul>
     <p id="batchOptions" class="hint"></p>
-    <label class="check" id="batchRightsRow" hidden><input type="checkbox" id="batchRights"><span>Li os alertas da Revisão de direitos e confirmo que posso usar este material</span></label>
+    <label class="check" id="batchRightsRow" hidden><input type="checkbox" id="batchRights"><span>Li os alertas de Direitos autorais e confirmo que posso usar este material</span></label>
   </div>
   <footer>
     <button class="btn ghost" type="button" data-close>Cancelar</button>
@@ -568,7 +580,7 @@
 </dialog>
 
 <dialog id="jobsDialog" class="dialog wide" aria-labelledby="jobsTitle">
-  <header><h2 id="jobsTitle">Processamentos</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <header><h2 id="jobsTitle">Tarefas</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
   <div class="dialogbody"><ul id="jobsList" class="joblist"></ul></div>
 </dialog>
 
@@ -582,14 +594,14 @@
     <input id="prefTarget" type="number" min="10" max="90" value="35">
     <span class="eyebrow spaced">Exportação</span>
     <label class="field" for="prefSubtitle">Estilo da legenda</label>
-    <select id="prefSubtitle"><option value="dinamica">Dinâmica (palavra a palavra)</option><option value="classica">Clássica</option></select>
-    <label class="switch"><input id="prefRefine" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda precisa</strong><small>Retranscreve o trecho de cada corte ao exportar (precisa de GPU).</small></span></label>
-    <label class="switch"><input id="prefGpuExport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Exportação rápida pela placa de vídeo</strong><small>Usa a NVIDIA (NVENC) quando disponível. Pode acelerar a exportação mantendo resolução e taxa de quadros; tempo, qualidade de compressão e tamanho variam com o vídeo e os efeitos. Se falhar, usa o processador.</small></span></label>
+    <select id="prefSubtitle"><option value="dinamica">Animada (destaca a palavra falada)</option><option value="classica">Simples (texto fixo)</option></select>
+    <label class="switch"><input id="prefRefine" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda mais precisa</strong><small>Transcreve cada corte de novo ao exportar. Precisa de placa de vídeo NVIDIA.</small></span></label>
+    <label class="switch"><input id="prefGpuExport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Exportar pela placa de vídeo</strong><small>Usa a placa NVIDIA, quando houver, para exportar mais rápido com a mesma resolução. Se falhar, usa o processador.</small></span></label>
     <span class="eyebrow spaced">Escolha dos cortes</span>
-    <button id="settingsSelection" type="button" class="btn ghost block">Curadoria com IA e foco…</button>
+    <button id="settingsSelection" type="button" class="btn ghost block">Escolha dos cortes com IA</button>
     <span class="eyebrow spaced">Pastas</span>
     <dl id="settingsPaths" class="paths"></dl>
-    <span class="eyebrow spaced">Este computador</span>
+    <span class="eyebrow spaced">Recursos deste computador</span>
     <ul id="settingsDeps" class="deplist"></ul>
   </div>
   <footer>
@@ -599,10 +611,10 @@
 </dialog>
 
 <dialog id="selectionDialog" class="dialog" aria-labelledby="selectionTitle">
-  <header><h2 id="selectionTitle">Seleção de cortes</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <header><h2 id="selectionTitle">Escolha dos cortes com IA</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
   <div class="dialogbody selectionbody">
-    <p>A IA lê a transcrição, propõe os trechos e só mantém os que avalia bem. O Ollama (Qwen) roda neste computador; o Gemini é do Google, na nuvem. Se a IA não estiver disponível, a seleção usa a heurística local.</p>
-    <label class="field" for="curationProvider">Curadoria</label>
+    <p>A IA lê o que foi falado no vídeo, sugere os trechos e só mantém os que avalia bem. Se ela não estiver disponível, o app escolhe os cortes sem IA.</p>
+    <label class="field" for="curationProvider">IA usada</label>
     <select id="curationProvider"></select>
     <p id="curationKeyNote" class="hint" hidden></p>
     <div id="curationKeyRow" class="keyrow" hidden>
@@ -614,15 +626,15 @@
       <p class="hint">Gere a chave em aistudio.google.com/apikey. Ela fica guardada só neste computador e não é mostrada de novo; é salva junto com o botão Salvar.</p>
     </div>
     <label class="switch" id="curationConsentRow" hidden><input id="curationConsent" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Autorizo enviar o texto das transcrições ao Google</strong><small>Só o texto vai ao Gemini, nunca o vídeo ou o áudio. No plano gratuito o Google pode usar o texto para melhorar os produtos dele; no pago, há cobrança por uso.</small></span></label>
-    <label class="switch"><input id="curationAllClips" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Sem limite de cortes</strong><small>Gera todos os trechos aprovados, sem o teto de 4 por hora. Numa live longa podem vir mais de 100 cortes; com a IA local, a análise também fica mais longa.</small></span></label>
-    <label class="field" for="curationPrompt">Foco (opcional)</label>
+    <label class="switch"><input id="curationAllClips" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Sem limite de cortes</strong><small>Traz todos os trechos aprovados, sem o máximo de 4 por hora. Numa live longa podem vir mais de 100 cortes, e a IA neste computador leva mais tempo.</small></span></label>
+    <label class="field" for="curationPrompt">O que procurar (opcional)</label>
     <input id="curationPrompt" type="text" maxlength="300" placeholder="Ex.: momentos engraçados e histórias pessoais">
     <p id="reselectNote" class="hint"></p>
   </div>
   <footer>
     <button class="btn ghost" type="button" data-close>Fechar</button>
     <button id="curationSave" class="btn" type="button">Salvar</button>
-    <button id="reselect" class="btn primary" type="button">Salvar e refazer seleção</button>
+    <button id="reselect" class="btn primary" type="button">Salvar e escolher de novo</button>
   </footer>
 </dialog>
 
@@ -631,8 +643,30 @@
   <div id="automationDetails" class="dialogbody">Carregando…</div>
 </dialog>
 
+<dialog id="guideDialog" class="dialog" aria-labelledby="guideTitle" aria-describedby="guideStepLabel">
+  <header><h2 id="guideTitle">Como usar o AutoCortes</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <div class="dialogbody guidebody">
+    <p id="guideStepLabel" class="hint" aria-live="polite">Passo 1 de 4</p>
+    <ol id="guideSteps" class="guidesteps">
+      <li><strong>Envie um vídeo</strong><p>Clique em <b>Criar cortes</b> e escolha o arquivo, ou cole o link de um vídeo público. Lives de várias horas também funcionam, e o vídeo fica só no seu computador.</p></li>
+      <li hidden><strong>Espere a análise</strong><p>O app transcreve o que foi falado e procura os melhores trechos. Numa live longa isso leva um tempo: o andamento aparece na tela e em <b>Tarefas</b>.</p></li>
+      <li hidden><strong>Revise os cortes</strong><p>Os cortes sugeridos aparecem na lista e na linha do tempo, dos melhores para os piores. Clique em um para assistir e ajuste o início e o fim se precisar.</p></li>
+      <li hidden><strong>Exporte</strong><p>Escolha o formato (9:16 para Shorts, Reels e TikTok), deixe as legendas ligadas e clique em <b>Exportar</b>. Os vídeos prontos vão para a pasta de saída.</p></li>
+    </ol>
+    <p class="hint">Quer mais controle? O botão <b>Modo avançado</b>, no alto da tela, mostra todas as ferramentas do editor. Este guia fica no botão de ajuda.</p>
+  </div>
+  <footer>
+    <button id="guideBack" class="btn ghost" type="button" hidden>Voltar</button>
+    <button id="guideNext" class="btn primary" type="button">Próximo</button>
+  </footer>
+</dialog>
+
 <dialog id="helpDialog" class="dialog" aria-labelledby="helpTitle">
-  <header><h2 id="helpTitle">Atalhos de teclado</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <header><h2 id="helpTitle">Ajuda</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <div class="dialogbody helpintro">
+    <button id="openGuide" type="button" class="btn block"><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg><span>Ver o guia de uso</span></button>
+    <h3 class="eyebrow spaced">Atalhos de teclado</h3>
+  </div>
   <dl class="shortcutlist dialogbody">
     <div><dt><kbd>Espaço</kbd></dt><dd>Reproduzir ou pausar</dd></div>
     <div><dt><kbd>I</kbd> <kbd>O</kbd></dt><dd>Marcar início e fim</dd></div>

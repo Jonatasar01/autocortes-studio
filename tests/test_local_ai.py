@@ -232,7 +232,7 @@ class CurationProviderTests(unittest.TestCase):
             curation.curate('ollama', transcript, 700, 30, 3, [],
                             on_progress=lambda f, m='': seen.append((f, m)))
         reading = [m for _, m in seen if 'lendo o vídeo, bloco' in m]
-        self.assertTrue(reading[0].startswith('Curadoria com IA: lendo o vídeo, bloco 1 de '))
+        self.assertTrue(reading[0].startswith('Escolhendo cortes com IA: lendo o vídeo, bloco 1 de '))
         self.assertIn('min restantes', reading[0])
         self.assertTrue(any('avaliando trechos' in m for _, m in seen))
         self.assertEqual([f for f, _ in seen], sorted(f for f, _ in seen))   # só avança

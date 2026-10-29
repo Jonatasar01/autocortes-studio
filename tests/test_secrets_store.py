@@ -32,6 +32,12 @@ class SecretsStoreTests(unittest.TestCase):
         config.DATA_DIR = self.old
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def test_suite_never_reads_the_real_data_folder(self):
+        # data/ real pode ter a chave do usuário: lida num teste, ela ia para a API do Google e para a saída.
+        real = (config.ROOT / 'data').resolve()
+        self.assertNotEqual(Path(os.environ['AUTOCORTES_DATA']).resolve(), real)
+        self.assertNotEqual(self.old.resolve(), real)
+
     def test_saves_reads_and_removes(self):
         self.assertEqual(secrets_store.get('gemini'), '')
         secrets_store.put('gemini', '  ' + KEY + '  ')

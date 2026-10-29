@@ -45,9 +45,9 @@ RETIRED_PROVIDERS = frozenset({'openai', 'anthropic'})   # configurações antig
 # Locais não enviam nada para fora do computador: não pedem consentimento nem entram em ``cloud_consents``.
 LOCAL_PROVIDERS = frozenset({'heuristica', 'ollama'})
 REMOTE_PROVIDERS = frozenset({'gemini'})
-PROVIDER_LABELS = {'heuristica': 'Heurística local (sem envio de dados)',
-                   'ollama': 'Ollama / Qwen local (sem envio de dados)',
-                   'gemini': 'Google Gemini (nuvem)'}
+PROVIDER_LABELS = {'heuristica': 'Sem IA (regras automáticas, neste computador)',
+                   'ollama': 'IA neste computador (Ollama)',
+                   'gemini': 'IA do Google, pela internet (Gemini)'}
 GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 CHUNK_SECONDS = 25 * 60        # nuvem: transcrições longas vão em blocos
 CHUNK_OVERLAP = 120            # sobreposição entre blocos (s) para não perder trechos na emenda
@@ -347,7 +347,7 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
         if timings and remaining_calls > 0:
             minutes = round(sum(timings) / len(timings) * remaining_calls / 60)
             eta = f' · cerca de {minutes} min restantes' if minutes >= 1 else ' · menos de 1 min'
-        progress(fraction, f'Curadoria com IA: {what}{eta}')
+        progress(fraction, f'Escolhendo cortes com IA: {what}{eta}')
 
     # 1. Proposta
     windows: dict[tuple[int, int], dict] = {}
@@ -472,7 +472,7 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
                                        'valor_ia': c['scores']['valor'], 'tendencia_ia': c['scores']['tendencia'],
                                        'heuristica': c['heuristic']}
         else:
-            reasons.append('Sem avaliação da IA para este trecho; nota heurística local.')
+            reasons.append('A IA não avaliou este trecho; a nota vem das regras automáticas.')
             clip['score_breakdown'], _extra = selection.split_breakdown(c['breakdown'])
         clip['reasons'] = reasons + [r for r in c['reasons'][:3]]
         chosen.append(clip)

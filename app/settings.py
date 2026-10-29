@@ -184,8 +184,8 @@ def validate(s: dict) -> dict:
     cu['consent'] = _bool(cu['consent'])
     cu['prompt'] = str(cu.get('prompt') or '')[:300]
     if requires_external_consent(cu['provider']) and not cu['consent']:
-        raise AppError('Para usar a curadoria com IA na nuvem, autorize o envio do texto das transcrições ao '
-                       'provedor escolhido.', 400, 'consent_required')
+        raise AppError('Para usar a IA do Google, ligue "Autorizo enviar o texto das transcrições ao Google".',
+                       400, 'consent_required')
     if not requires_external_consent(cu['provider']):
         cu['consent'] = False   # local (heurística, Ollama): nada é enviado, não há consentimento a guardar
     if not cu['consent']:
