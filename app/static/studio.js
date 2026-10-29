@@ -109,19 +109,26 @@ const fmtDur = (s) => {
   if (s < 3600) return Math.floor(s / 60) + ' min' + (s < 600 && s % 60 ? ' ' + (s % 60) + ' s' : '');
   return Math.floor(s / 3600) + ' h ' + Math.floor((s % 3600) / 60) + ' min';
 };
+const etaStart = {key: null, ts: 0, done: 0};   // primeiro avanço visto na etapa atual
 function analysisLabel(job, events = []) {
   if (!job) return {text: 'Analisando vídeo…', progress: null, pct: null, steps: ''};
   const now = Date.now() / 1000;
   const pct = Math.round((job.progress || 0) * 100);
   const stage = job.status === 'queued' ? 'Na fila' : (job.message || 'Analisando vídeo');
   // Tempo restante da etapa atual pela velocidade dela até agora (transcrição, cenas, extração de áudio).
+  // A velocidade conta a partir do primeiro avanço visto: o carregamento do modelo antes dele não entra na conta.
   let eta = null;
   const span = STAGE_SPANS[job.stage];
   const begun = [...events].reverse().find((e) => e.stage === job.stage)?.ts;
   if (span && begun) {
     const done = ((job.progress || 0) - span[0]) / (span[1] - span[0]);
-    const elapsed = now - begun;
-    if (done > 0.03 && elapsed > 20) eta = elapsed * (1 - done) / done;
+    const key = job.id + ':' + job.stage;
+    if (done > 0 && etaStart.key !== key) Object.assign(etaStart, {key, ts: now, done});
+    if (etaStart.key === key && done - etaStart.done > 0.01 && now - etaStart.ts > 20) {
+      eta = (now - etaStart.ts) * (1 - done) / (done - etaStart.done);
+    } else if (done > 0.03 && now - begun > 20) {
+      eta = (now - begun) * (1 - done) / done;   // página aberta no meio da etapa: média desde o início dela
+    }
   }
   const total = job.started ? now - job.started : 0;
   const text = stage + ' · ' + pct + '%' + (eta != null ? ' · ≈ ' + fmtDur(eta) + ' restantes'
