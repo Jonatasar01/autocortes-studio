@@ -1170,8 +1170,11 @@ function setThumb(dataUrl) {
 async function openProject(id) {
   if (!/^[a-f0-9]{32}$/.test(id || '')) return;
   const version = ++state.openVersion;
-  setStatus('Carregando projeto…', 'busy');
-  setLoading('Carregando projeto…');
+  // Na atualização periódica da análise, mantém o andamento na tela até a resposta chegar (sem piscar).
+  if (state.project?.id !== id) {
+    setStatus('Carregando projeto…', 'busy');
+    setLoading('Carregando projeto…');
+  }
   const p = await api('/api/projects/' + id);
   if (version !== state.openVersion) return;
   const changed = state.project?.id !== id;
