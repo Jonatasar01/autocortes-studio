@@ -115,7 +115,6 @@ def start(project_id: str) -> None:
 
 
 def _dispatch(project_id: str) -> None:
-    from . import service
     p = storage.read_project(project_id)
     ap = p['autopilot']
     messages: list[tuple[str, str]] = []

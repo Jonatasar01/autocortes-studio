@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from app import config, curation, media, publish, reframe, service, settings, storage, subtitles, transcription, watcher
+from app import config, curation, media, reframe, service, settings, storage, subtitles, transcription, watcher
 from app.errors import AppError
 from tests.helpers import HAS_FFMPEG, fake_transcript, make_video
 
@@ -157,7 +157,7 @@ class DynamicSubtitleTests(unittest.TestCase):
     def test_classic_ass_with_hook_and_hook_only(self):
         ass = subtitles.to_ass([{'start': 0, 'end': 2, 'text': 'olá'}], 1080, 1920, hook_text='Gancho', clip_len=2)
         self.assertRegex(ass, r'Dialogue: 1,0:00:00\.00,0:00:02\.00,Hook')
-        only = subtitles.hook_only_ass(1080, 1920, 'Só o gancho')
+        only = subtitles.to_ass([], 1080, 1920, hook_text='Só o gancho')
         self.assertIn('Só o gancho', only)
         self.assertNotIn(',Default,,', only.split('[Events]')[1])
 

@@ -10,7 +10,6 @@ from unittest import mock
 import pytest
 
 from app import advanced, config, service, storage
-from app.errors import AppError
 from app.integrations.filmcraft.bridge import (
     PAUSE_DEFAULTS, TICKS, BridgeError, FilmCraftBridge, normalize_pause_options, transcript_payload)
 

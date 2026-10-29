@@ -184,10 +184,8 @@ class AudioIndex:
         import numpy as np
         self.hop = hop
         self.n = len(db)
-        over = np.clip(db - baseline, 0, None)
         # Listas Python, não arrays: o motor consulta centenas de milhares de janelas, um valor por vez, e o acesso
         # escalar do numpy é várias vezes mais lento.
-        self._over = np.concatenate([[0.0], np.cumsum(over)]).tolist()
         self._marks = {}
         for kind in self.KINDS:
             mark = np.zeros(self.n, dtype=np.float32)
@@ -205,11 +203,6 @@ class AudioIndex:
         a, b = self._span(start, end)
         marks = self._marks[kind]
         return (marks[b] - marks[a]) * self.hop
-
-    def energy_above(self, start: float, end: float) -> float:
-        """dB médios acima da referência local no trecho (0 = nível normal da conversa)."""
-        a, b = self._span(start, end)
-        return (self._over[b] - self._over[a]) / (b - a)
 
     def events_in(self, start: float, end: float) -> list[dict]:
         return [e for e in self.events if e['start'] < end and e['end'] > start]

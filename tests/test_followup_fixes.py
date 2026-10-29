@@ -1,14 +1,12 @@
 """Regression coverage for the verified phase-4 defects; no external calls."""
 import hashlib
 import os
-from pathlib import Path
-import re
 import subprocess
 import sys
 from unittest import mock
 
 import pytest
-from app import config, service, media
+from app import config, service
 from app.errors import AppError
 
 

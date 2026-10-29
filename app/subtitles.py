@@ -384,12 +384,6 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
     return '\n'.join(header + events) + '\n'
 
 
-def hook_only_ass(width: int, height: int, hook_text: str, clip_len: float | None = None,
-                  font_name: str = 'Arial') -> str:
-    """Só a frase de gancho (quando não há legendas)."""
-    return to_ass([], width, height, font_name, hook_text=hook_text, clip_len=clip_len)
-
-
 def to_srt(cues: list[dict]) -> str:
     blocks = [f"{i}\n{srt_timestamp(c['start'])} --> {srt_timestamp(c['end'])}\n{c['text']}\n"
               for i, c in enumerate(cues, 1)]

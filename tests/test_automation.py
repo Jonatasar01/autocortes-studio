@@ -1,13 +1,11 @@
 """Automação (v2.2): configurações, piloto automático, pasta de entrada/saída, exportar todos,
 novas tentativas automáticas e encurtamento de pausas. FFmpeg real."""
-import os
 import shutil
 import subprocess
 import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from app import autopilot, config, media, publish, service, settings, storage, transcription, watcher
 from app.errors import AppError

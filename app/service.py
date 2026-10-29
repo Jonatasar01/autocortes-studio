@@ -217,7 +217,7 @@ class Upload:
             stored = 'source' + self.extension
             os.replace(self.part, self.folder / stored)
             options = dict(self.options)
-            wants_autopilot = options.pop('autopilot')
+            options.pop('autopilot')
             project = {'id': self.project_id, 'name': self.name, 'filename': stored, 'status': 'queued',
                        'created_at': time.time(), 'media': info, 'warnings': warnings, 'origin': self.origin,
                        'source_fingerprint': self.fingerprint,

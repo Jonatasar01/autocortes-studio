@@ -34,8 +34,6 @@ STYLES = {
     'podcast': 'Podcast premium',
     'live_jogo': 'Live de jogo',
 }
-# Versões automáticas: diferenças reais de ritmo, zoom, pausas e cor.
-VARIANTS = ('impacto', 'equilibrado', 'cinematografico')
 ACTION_LABELS = {'zoom': 'Zoom', 'push': 'Aproximação lenta', 'cut_pause': 'Encurtar pausa',
                  'highlight': 'Destaque na legenda'}
 

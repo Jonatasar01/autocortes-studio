@@ -1,15 +1,12 @@
 """Regressões da continuação v2.1: segurança, consentimento e concorrência."""
 import json
 import os
-import tempfile
 import threading
-from pathlib import Path
 from unittest import mock
 
 import pytest
-from app import config, media, curation, selection, service, storage, subtitles
+from app import config, media, curation, selection, subtitles
 from app.errors import AppError, sanitize
-from app.jobs import Handler, JobManager
 from tests.helpers import HAS_FFMPEG, make_video
 from tests import test_service
 

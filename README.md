@@ -461,7 +461,6 @@ e os avisos; "Exportar em alta qualidade" gera o arquivo final com as mesmas op�
 | `AUTOCORTES_WATCH_DIR` | `./entrada` | Pasta monitorada |
 | `AUTOCORTES_OUTPUT_DIR` | `./saida` | Pasta de saída dos cortes validados |
 | `AUTOCORTES_WATCH_INTERVAL` | 5 | Segundos entre verificações da pasta de entrada |
-| `AUTOCORTES_JOB_RETRIES` / `AUTOCORTES_RETRY_SECONDS` | 2 / 30 | Novas tentativas para falhas temporárias de processamento (espera dobra a cada vez) |
 
 ## Testes
 

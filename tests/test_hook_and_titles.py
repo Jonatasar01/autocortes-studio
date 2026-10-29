@@ -16,7 +16,7 @@ HOOK_LONG_WORD = 'Veja ' + 'x' * 70 + ' agora'
 # ----------------------------------------------------------------------------- gancho: texto das linhas ASS
 
 def hook_lines(width=720, height=1280, text=HOOK_90):
-    ass = subtitles.hook_only_ass(width, height, text, clip_len=5)
+    ass = subtitles.to_ass([], width, height, hook_text=text, clip_len=5)
     return [line for line in ass.splitlines() if line.startswith('Dialogue:') and ',Hook,' in line]
 
 
@@ -57,7 +57,7 @@ pytestmark_libass = pytest.mark.skipif(
 
 def render_box(tmp_path: Path, width: int, height: int, text: str):
     """Renderiza o gancho sobre cinza e devolve (x_min, x_max, y_min, y_max) da caixa branca."""
-    (tmp_path / 'hook.ass').write_text(subtitles.hook_only_ass(width, height, text, clip_len=5), encoding='utf-8')
+    (tmp_path / 'hook.ass').write_text(subtitles.to_ass([], width, height, hook_text=text, clip_len=5), encoding='utf-8')
     cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i',
            f'color=c=0x808080:s={width}x{height}:d=3:r=10', '-vf', 'ass=hook.ass', '-ss', '1',
            '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'gray', '-']
