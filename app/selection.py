@@ -655,22 +655,30 @@ def merge_candidates(ai_clips: list[dict], heuristic_clips: list[dict], *, limit
     """Junta a curadoria por IA e a heurística numa lista só, sem deixar um bom candidato sumir.
 
     Trechos que se sobrepõem em mais de ``overlap`` viram um corte (o da IA, com as duas origens). As notas
-    vêm de escalas diferentes (IA: 70% juiz + 30% heurística; heurística: v2): a ordem final é pela nota, e a
-    origem fica visível em ``sources`` para quem revisa.
+    vêm de escalas diferentes (IA: 70% juiz + 30% heurística, quase sempre abaixo de 85; heurística: 80–100), então
+    não dá para ordenar tudo pela nota: ordenada assim, a heurística ocupava 17 das 20 vagas de uma live de 5 h e a
+    curadoria quase não aparecia. As listas são **intercaladas**, cada uma na sua ordem (melhor da IA, melhor da
+    heurística, segundo da IA...), e o limite vale para a lista intercalada. A origem fica em ``sources``.
     """
-    merged = [dict(c, sources=sorted(set(c.get('sources') or []) | {'ia'})) for c in ai_clips]
-    for h in heuristic_clips:
-        twin = next((m for m in merged if _overlap(m, h) > overlap), None)
+    ai = sorted((dict(c, sources=sorted(set(c.get('sources') or []) | {'ia'})) for c in ai_clips),
+                key=lambda c: (-(c.get('score') or 0), c['start']))
+    heur = []
+    for h in sorted(heuristic_clips, key=lambda c: (-(c.get('score') or 0), c['start'])):
+        twin = next((m for m in ai if _overlap(m, h) > overlap), None)
         if twin is not None:
             twin['sources'] = sorted(set(twin['sources']) | {'heuristica'})
             twin['evidence'] = (twin.get('evidence') or []) + [
                 e for e in h.get('evidence') or [] if e not in (twin.get('evidence') or [])]
             continue
-        merged.append(dict(h, sources=sorted(set(h.get('sources') or []) | {'heuristica'})))
-    merged.sort(key=lambda c: (-(c.get('score') or 0), c['start']))
+        heur.append(dict(h, sources=sorted(set(h.get('sources') or []) | {'heuristica'})))
+    merged = []
+    for k in range(max(len(ai), len(heur))):
+        merged += ([ai[k]] if k < len(ai) else []) + ([heur[k]] if k < len(heur) else [])
     if limit:
         merged = merged[:limit]
-    return _finalize(merged)
+    for idx, clip in enumerate(merged, 1):   # numera na ordem intercalada (_finalize reordenaria pela nota)
+        clip.update(id=idx, rank=idx, export_file=None, exports={}, revision=1)
+    return merged
 
 
 def _with_audio(audio, start: float, end: float, score: float, breakdown: dict,
@@ -737,14 +745,17 @@ def temporal_candidates(duration: float, target: float, desired: int, scenes: li
 
 def select_clips(segments: list[dict], duration: float, target: int, desired_count: int,
                  scenes: list[float] | None = None, fallback_reason: str | None = None,
-                 audio=None) -> tuple[list[dict], dict]:
+                 audio=None, unlimited: bool = False) -> tuple[list[dict], dict]:
     """``audio``: ``audio_events.AudioIndex`` do vídeo (opcional). Reforça trechos com conteúdo que terminam com
-    reação sonora e marca alertas técnicos (áudio estourado, silêncio longo); sozinho não escolhe cortes."""
+    reação sonora e marca alertas técnicos (áudio estourado, silêncio longo); sozinho não escolhe cortes.
+
+    ``unlimited`` (automático): sem o teto de N por hora; entram todos os trechos acima da nota mínima."""
     target = max(10, min(90, int(target)))
     auto = int(desired_count) == AUTO
     v2 = config.SELECTION_ENGINE != 'v1'
+    unlimited = unlimited and auto
     # Automático: os melhores do próprio vídeo, até N por hora (v1: acima de 80; v2: acima de 60% do melhor).
-    desired = auto_limit(duration) if auto else max(1, min(15, int(desired_count)))
+    desired = (10 ** 6 if unlimited else auto_limit(duration)) if auto else max(1, min(15, int(desired_count)))
     scenes = sorted(scenes or [])
     units = build_units(segments or [])
     words = sum(len(tokens(u['text'])) for u in units)
@@ -775,7 +786,7 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
                 scored.append((score, i, j, breakdown, reasons))
     if not scored:  # frases muito longas ou vídeo muito curto: usa o vídeo/fala inteiro em blocos
         reason = 'Frases longas demais para formar cortes do tamanho pedido'
-        clips = temporal_candidates(duration, target, desired, scenes, reason)
+        clips = temporal_candidates(duration, target, min(desired, auto_limit(duration)), scenes, reason)
         return _finalize(clips), {'mode': 'temporal', 'reason': reason, 'candidates_evaluated': 0}
     scored.sort(key=lambda x: (-x[0], units[x[1]]['start']))
     # Automático: do melhor para o pior até a nota mínima (v1: 80 fixo; v2: 60% da nota do melhor do vídeo).
@@ -831,9 +842,10 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
         clip['title'] = _title_from_text(text) or 'Trecho sem título'
         clip['description'] = text[:600] + ('…' if len(text) > 600 else '')
     info = {'mode': 'transcricao', 'reason': None, 'candidates_evaluated': len(scored),
-            'engine': 'v2' if v2 else 'v1', 'limit': desired}
+            'engine': 'v2' if v2 else 'v1', 'limit': None if unlimited else desired}
     if auto:
-        info.update(count_mode='automatico', min_score=floor, per_hour=AUTO_CLIPS_PER_HOUR)
+        info.update(count_mode='todos' if unlimited else 'automatico', min_score=floor,
+                    per_hour=None if unlimited else AUTO_CLIPS_PER_HOUR)
     return _finalize(chosen), info
 
 

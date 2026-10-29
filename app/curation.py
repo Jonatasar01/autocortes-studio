@@ -102,6 +102,7 @@ JUDGE_SYSTEM = (
 # e comentários (que o app quase não usa), cada chamada gera uma fração dos tokens; a escolha dos trechos é a mesma.
 LOCAL_MODES = ('rapido', 'completo')
 AUTO_JUDGE_MAX_FAST = 24   # modo rápido: trechos levados ao juiz no automático
+UNLIMITED_JUDGE_PER_HOUR = 10   # "sem limite": trechos levados ao juiz por hora de vídeo (no mínimo o teto do modo)
 PROPOSE_SCHEMA_FAST = {
     'type': 'object', 'additionalProperties': False, 'required': ['clips'],
     'properties': {'clips': {'type': 'array', 'items': {
@@ -303,7 +304,7 @@ def _fit(units: list[dict], i: int, j: int, min_len: float, max_len: float) -> t
 
 
 def curate(provider: str, segments: list[dict], duration: float, target: int, desired: int,
-           scenes: list[float] | None = None, *, prompt: str = '', mode: str = 'completo',
+           scenes: list[float] | None = None, *, prompt: str = '', mode: str = 'completo', unlimited: bool = False,
            cancel_event: threading.Event | None = None,
            on_progress: Callable[[float, str], None] | None = None) -> tuple[list[dict], dict]:
     """Seleciona e avalia cortes com IA. Levanta AppError em falhas (o chamador mantém a heurística).
@@ -313,7 +314,10 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
     limits = _limits(provider, mode)
     target = max(10, min(90, int(target)))
     auto = int(desired) == selection.AUTO
-    desired = limits['judge_max'] // 3 if auto else max(1, min(15, int(desired)))
+    judge_max = limits['judge_max']
+    if auto and unlimited:   # sem limite: os trechos levados ao juiz crescem com a duração (~10 por hora)
+        judge_max = max(judge_max, round(UNLIMITED_JUDGE_PER_HOUR * duration / 3600))
+    desired = judge_max // 3 if auto else max(1, min(15, int(desired)))
     scenes = sorted(scenes or [])
     units = selection.build_units(segments or [])
     if not units:

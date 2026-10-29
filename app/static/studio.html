@@ -613,6 +613,7 @@
       </select>
     </div>
     <label class="switch" id="curationConsentRow" hidden><input id="curationConsent" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Autorizo enviar o texto das transcrições</strong><small>Só o texto vai ao provedor, nunca o vídeo ou o áudio. Cada análise usa a API e tem custo.</small></span></label>
+    <label class="switch"><input id="curationAllClips" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Sem limite de cortes</strong><small>Gera todos os trechos aprovados, sem o teto de 4 por hora. Numa live longa podem vir mais de 100 cortes; com a IA local, a análise também fica mais longa.</small></span></label>
     <label class="field" for="curationPrompt">Foco (opcional)</label>
     <input id="curationPrompt" type="text" maxlength="300" placeholder="Ex.: momentos engraçados e histórias pessoais">
     <p id="reselectNote" class="hint"></p>

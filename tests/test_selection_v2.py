@@ -189,6 +189,23 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(sorted(a['sources']), ['heuristica', 'ia'])
         self.assertEqual([c['rank'] for c in merged], list(range(1, len(merged) + 1)))
 
+    def test_unlimited_merge_keeps_everything(self):
+        heur = [self.clip(10000 + 200 * k, 10060 + 200 * k, 95, f'H{k}') for k in range(30)]
+        ai = [self.clip(200 * k, 60 + 200 * k, 80, f'IA{k}') for k in range(25)]
+        self.assertEqual(len(selection.merge_candidates(ai, heur, limit=None)), 55)
+
+    def test_high_heuristic_scores_do_not_crowd_out_the_ai_under_the_limit(self):
+        # Caso real (live de 5 h, limite 20): heurística 95–100, IA 70–85. Ordenado pela nota, só 3 da IA
+        # entravam; intercalado, metade das vagas é da IA, cada lista na sua ordem.
+        heur = [self.clip(10000 + 200 * k, 10060 + 200 * k, 100 - k * 0.2, f'H{k}') for k in range(20)]
+        ai = [self.clip(200 * k, 60 + 200 * k, 85 - k, f'IA{k}') for k in range(15)]
+        merged = selection.merge_candidates(ai, heur, limit=20)
+        self.assertEqual(len(merged), 20)
+        self.assertEqual(sum('ia' in c['sources'] for c in merged), 10)
+        self.assertEqual([c['title'] for c in merged[:4]], ['IA0', 'H0', 'IA1', 'H1'])
+        self.assertEqual([c['rank'] for c in merged], list(range(1, 21)))
+        self.assertEqual([c['id'] for c in merged], list(range(1, 21)))
+
 
 if __name__ == '__main__':
     unittest.main()

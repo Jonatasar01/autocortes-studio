@@ -1644,6 +1644,7 @@ async function openSelection() {
     $('curationProvider').dataset.providers = JSON.stringify(providers);
     $('curationConsent').checked = !!cur.consent;
     $('curationLocalMode').value = cur.local_mode || 'rapido';
+    $('curationAllClips').checked = !!cur.all_clips;
     $('curationPrompt').value = cur.prompt || '';
     syncCuration();
     const clips = state.project?.clips || [];
@@ -1678,6 +1679,7 @@ async function saveCuration() {
   await api('/api/settings', 'PUT', {curation: {
     provider, consent: !['heuristica', 'ollama'].includes(provider) && $('curationConsent').checked,
     prompt: $('curationPrompt').value.trim(), local_mode: $('curationLocalMode').value,
+    all_clips: $('curationAllClips').checked,
   }});
 }
 $('curationSave').onclick = async () => {

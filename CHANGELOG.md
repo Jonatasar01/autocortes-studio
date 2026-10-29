@@ -1,5 +1,17 @@
 ## Não lançado
 
+### Curadoria local: modo rápido, junção intercalada e sem limite
+- **Modo rápido** (padrão do Ollama): proposta sem resumo/hashtags e juiz só com as notas, até 24 trechos no juiz.
+  Medido na mesma janela de 1 h (5 aprovados): **5 de 5 com 6 cortes em 496 s**, contra 4 de 5 com 12 cortes em
+  1224 s no modo completo. "Completo" continua como opção.
+- **Junção IA + heurística intercalada:** as notas têm escalas diferentes (IA quase sempre abaixo de 85,
+  heurística 80–100); ordenada pela nota, a heurística ocupava 17 das 20 vagas de uma live de 5 h e a curadoria de
+  quase 1 h aparecia em 3 cortes. Agora as listas alternam (melhor da IA, melhor da heurística...) e a lista
+  inteira da IA fica guardada no projeto (`curation_clips`).
+- **Sem limite de cortes** (Seleção de cortes e IA): todos os trechos aprovados, sem o teto de 4 por hora; a nota
+  mínima continua, e a IA leva ~10 trechos por hora de vídeo ao juiz.
+- A etapa da curadoria mostra "bloco N de M" e o tempo restante estimado.
+
 ### Curadoria 100% local com Ollama / Qwen
 - **Ollama vira provedor completo da curadoria** (antes só refinava a nota dos cortes da heurística): em
   "Seleção de cortes e IA", **Ollama / Qwen local** propõe e julga os cortes com os mesmos esquemas, a mesma

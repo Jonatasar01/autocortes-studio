@@ -236,6 +236,23 @@ class CurationProviderTests(unittest.TestCase):
         self.assertTrue(any('avaliando trechos' in m for _, m in seen))
         self.assertEqual([f for f, _ in seen], sorted(f for f, _ in seen))   # só avança
 
+    def test_unlimited_has_no_hourly_cap(self):
+        segs = fake_transcript(1800, PHRASES * 60)
+        limited, info = selection.select_clips(segs, 1800, 30, selection.AUTO, [])
+        everything, info_all = selection.select_clips(segs, 1800, 30, selection.AUTO, [], unlimited=True)
+        self.assertEqual((info['count_mode'], info['limit']), ('automatico', selection.auto_limit(1800)))
+        self.assertEqual((info_all['count_mode'], info_all['limit'], info_all['per_hour']), ('todos', None, None))
+        self.assertGreaterEqual(len(everything), len(limited))
+        self.assertTrue(all(c['score'] >= selection.AUTO_MIN_SCORE for c in everything[1:]))   # nota mínima continua
+        # A curadoria leva mais trechos ao juiz num vídeo longo (~10 por hora, no mínimo o teto do modo).
+        fake = FakeOllama()
+        transcript = fake_transcript(700, PHRASES * 40)
+        with mock.patch.object(ollama_local, 'status', return_value=READY), \
+                mock.patch.object(ollama_local, 'generate', side_effect=fake):
+            _, st = curation.curate('ollama', transcript, 4 * 3600, 30, selection.AUTO, [], mode='rapido',
+                                    unlimited=True)
+        self.assertGreaterEqual(st['judged'], 1)
+
     def test_cloud_providers_keep_their_chunking(self):
         self.assertEqual(curation._limits('openai')['chunk'], curation.CHUNK_SECONDS)
         self.assertFalse(curation._limits('anthropic')['tolerant'])
@@ -296,6 +313,8 @@ class PipelineTests(ServiceBase):
         self.assertEqual(cur.call_args.args[0], 'ollama')
         self.assertEqual(p['curation']['state'], 'ok')
         self.assertNotIn('cloud_consents', p)
+        self.assertEqual([c['title'] for c in p['curation_clips']], ['Escolhido pelo Qwen'])   # lista da IA guardada
+        self.assertIn('ia', p['clips'][0]['sources'])                                          # e na frente
         ranker.assert_not_called()
 
     def test_ollama_failure_keeps_heuristic_without_a_second_local_call(self):

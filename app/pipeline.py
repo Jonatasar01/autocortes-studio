@@ -178,12 +178,12 @@ def run_analysis(ctx: JobContext) -> dict:
         audio_index = _audio_layer(ctx, folder, info, transcript, original=source)
     ctx.stage('selecionando', 'Selecionando os melhores trechos')
     fallback = None if t_status['state'] == 'ok' else t_status['message']
-    clips, sel = selection.select_clips(transcript, info['duration'], opts['target_seconds'], opts['desired_count'],
-                                        scenes, fallback_reason=fallback, audio=audio_index)
-    ctx.progress(0.9)
-
     live_cfg = settings.load()['curation']
     cur_cfg = dict(storage.read_project(pid).get('curation_profile') or live_cfg)
+    unlimited = bool(cur_cfg.get('all_clips'))   # "sem limite": todos os aprovados, sem teto por hora
+    clips, sel = selection.select_clips(transcript, info['duration'], opts['target_seconds'], opts['desired_count'],
+                                        scenes, fallback_reason=fallback, audio=audio_index, unlimited=unlimited)
+    ctx.progress(0.9)
     provider = cur_cfg['provider'] if cur_cfg.get('provider') in curation.PROVIDERS else 'heuristica'
     remote = curation.requires_external_consent(provider)
     # Um perfil congelado não pode restaurar consentimento posteriormente revogado (só vale para a nuvem).
@@ -208,10 +208,15 @@ def run_analysis(ctx: JobContext) -> dict:
         try:
             ai_clips, curation_status = curation.curate(
                 provider, transcript, info['duration'], opts['target_seconds'], opts['desired_count'], scenes,
-                prompt=cur_cfg.get('prompt') or '', mode=cur_cfg.get('local_mode') or 'rapido',
+                prompt=cur_cfg.get('prompt') or '', mode=cur_cfg.get('local_mode') or 'rapido', unlimited=unlimited,
                 cancel_event=ctx.cancel_event, on_progress=ctx.span(0.9, 0.99))
             # Fusão: um bom candidato da heurística não some só porque a IA trouxe outra lista.
             clips = selection.merge_candidates(ai_clips, clips, limit=sel.get('limit'))
+            # A lista inteira da IA fica guardada: a curadoria local leva muito tempo e não deve se perder no limite.
+            with storage.edit_project(pid) as p:
+                p['curation_clips'] = [{k: c.get(k) for k in ('start', 'end', 'score', 'title', 'ai_score',
+                                                              'heuristic_score', 'hook_text', 'reasons')}
+                                       for c in ai_clips]
         except Cancelled:
             raise
         except AppError as exc:

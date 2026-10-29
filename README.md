@@ -226,7 +226,12 @@ pip install -r requirements-ai.txt
     `AUTOCORTES_LOCAL_CURATION_CHUNK_SECONDS` (300), `AUTOCORTES_LOCAL_CURATION_OVERLAP_SECONDS` (30),
     `AUTOCORTES_LOCAL_CURATION_JUDGE_BATCH` (4). Para garantir que o Ollama não use recursos de nuvem dele:
     `OLLAMA_NO_CLOUD=1` no ambiente do Ollama.
-  - **Medido** (GTX 1650 4 GB + 16 GB de RAM; o `qwen3:4b` ocupa 3,5 GB e roda 66% na placa e 34% no processador),
+  - **Modo rápido** (padrão): pede só número das frases, título e gancho na proposta e só as notas no juiz (até 24
+    trechos). Na mesma janela de 1 h: **5 de 5 aprovados com 6 cortes em 496 s (~8 min por hora de vídeo)**. O
+    modo completo (com resumo, hashtags e comentários) fica em "Modo da IA local".
+  - Os cortes da IA e da heurística são **intercalados** na lista (cada um na sua ordem), porque as notas têm
+    escalas diferentes. **Sem limite de cortes** tira o teto de 4 por hora (a nota mínima continua).
+  - **Medido no modo completo** (GTX 1650 4 GB + 16 GB de RAM; o `qwen3:4b` ocupa 3,5 GB e roda 66% na placa e 34% no processador),
     numa janela de 1 h da live de referência com 5 cortes aprovados: heurística achou 3 de 5 (4 cortes, 11 s); o
     Qwen achou 4 de 5 (12 cortes, ~45 s por bloco de 5 min e ~54 s por lote do juiz: **~20 min por hora de
     vídeo**); juntos, como o app faz, **5 de 5** (14 cortes). Numa live de 8 h isso dá cerca de 2,5–3 h a mais na
