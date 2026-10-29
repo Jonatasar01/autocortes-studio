@@ -12,6 +12,7 @@ Modos (sempre informados ao usuário, nunca disfarçados):
 from __future__ import annotations
 
 import bisect
+import functools
 import json
 import logging
 import math
@@ -87,7 +88,9 @@ def tokens(text: str) -> list[str]:
     return re.findall(r"[0-9a-zà-öø-ÿ]+", (text or '').lower())
 
 
+@functools.lru_cache(maxsize=262144)
 def _fold(word: str) -> str:
+    # Em cache: as janelas da seleção se sobrepõem e a mesma palavra era normalizada milhões de vezes numa live.
     return ''.join(c for c in unicodedata.normalize('NFD', word) if unicodedata.category(c) != 'Mn')
 
 
@@ -102,13 +105,17 @@ def loop_mask(toks: list[str], min_repeats: int = 4, max_n: int = 6) -> list[boo
     repetida ``min_repeats`` vezes seguidas é laço; a primeira ocorrência continua valendo.
     """
     mask = [False] * len(toks)
+    size = len(toks)
     i = 0
-    while i < len(toks):
+    while i < size:
         jumped = False
         for n in range(1, max_n + 1):
-            unit = toks[i:i + n]
-            if len(unit) < n:
+            if i + n > size:
                 break
+            # Atalho (mesmo resultado): sem a palavra se repetir n posições adiante, não há segunda repetição.
+            if i + n == size or toks[i + n] != toks[i]:
+                continue
+            unit = toks[i:i + n]
             reps = 1
             while toks[i + reps * n:i + (reps + 1) * n] == unit:
                 reps += 1
@@ -154,7 +161,8 @@ def _interest_parts(text: str, toks: list[str], folded: list[str] | None = None)
     news = len(words & NEWS_TERMS)
     emotion = len(words & EMOTION_TERMS)
     money = len(words & MONEY_TERMS) + (1 if re.search(r'\d', text) and words & {'mil', 'reais', 'dolar'} else 0)
-    reaction = sum(folded.count(t) for t in REACTION_TERMS) + sum(joined.count(f' {p} ') for p in REACTION_PHRASES)
+    # Uma passada só (mesma contagem que somar folded.count de cada termo do conjunto).
+    reaction = sum(1 for t in folded if t in REACTION_TERMS) + sum(joined.count(f' {p} ') for p in REACTION_PHRASES)
     questions = text.count('?')
     score = 0.0
     if story:

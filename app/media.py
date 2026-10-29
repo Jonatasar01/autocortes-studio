@@ -887,28 +887,6 @@ def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str |
     return graph, (W, H)
 
 
-def _narration_audio_graph(media: dict, narration: list[dict], original_volume: float, normalize_audio: bool) -> str:
-    """Mixa os blocos de narração (entradas 1..n) com o áudio original abaixado durante a fala."""
-    parts = []
-    labels = ''
-    for i, item in enumerate(narration):
-        delay = int(round(item['start'] * 1000))
-        tempo = f",atempo={item['tempo']:.3f}" if item.get('tempo', 1) > 1.001 else ''
-        parts.append(f'[{i + 1}:a]aresample=48000,aformat=channel_layouts=stereo{tempo},adelay={delay}|{delay}[n{i}]')
-        labels += f'[n{i}]'
-    parts.append(f'{labels}amix=inputs={len(narration)}:normalize=0:dropout_transition=0,apad[narr]')
-    tail = ',loudnorm=I=-14:TP=-1.5:LRA=11' if normalize_audio else ''
-    if media.get('audio_index') is not None and original_volume > 0:
-        parts.append(f"[0:{media['audio_index']}]aresample=async=1:first_pts=0,aresample=48000,"
-                     f"aformat=channel_layouts=stereo,volume={original_volume:.2f}[orig]")
-        parts.append('[narr]asplit=2[nsc][nmix]')
-        parts.append('[orig][nsc]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=400[duck]')
-        parts.append(f'[duck][nmix]amix=inputs=2:normalize=0:duration=longest,alimiter=limit=0.95{tail}[aout]')
-    else:
-        parts.append(f'[narr]alimiter=limit=0.95{tail}[aout]')
-    return ';'.join(parts)
-
-
 _NVENC: dict = {}
 
 
@@ -957,7 +935,6 @@ def video_codec_args(encoder: str, preview: bool, fps: float | None = None) -> l
 
 def build_export_args(source: Path, media: dict, start: float, duration: float, fmt: str, framing: str,
                       subtitles_file: str | None, normalize_audio: bool, output_name: str,
-                      narration: list[dict] | None = None, original_volume: float = 1.0,
                       keep: list[tuple[float, float]] | None = None,
                       track: dict | None = None, post: str = '',
                       audio_extra: str = '', preview: bool = False,
@@ -971,19 +948,9 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
     # fica mais curta que "duration" e o FFmpeg seguia decodificando (e descartando) o resto do vídeo: num corte
     # de 108 s de uma live, 1060 s em vez de 76 s.
     args = ['-ss', f'{start:.3f}', '-t', f'{duration:.3f}', '-i', str(source)]
-    for item in narration or []:
-        args += ['-i', str(item['path'])]
-    # "-t" depois de todas as entradas = opção de saída (duração do corte).
-    args += ['-t', f'{duration:.3f}']
-    if narration:
-        graph += ';' + _narration_audio_graph(media, narration, original_volume, normalize_audio)
-        args += ['-filter_complex', graph, '-map', '[vout]', '-map', '[aout]',
-                 '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2']
-    else:
-        args += ['-filter_complex', graph, '-map', '[vout]']
-    if narration:
-        pass  # áudio já mapeado acima ([aout])
-    elif media.get('audio_index') is not None:
+    # "-t" depois da entrada = opção de saída (duração do corte).
+    args += ['-t', f'{duration:.3f}', '-filter_complex', graph, '-map', '[vout]']
+    if media.get('audio_index') is not None:
         audio_filter = 'aresample=async=1:first_pts=0'
         if keep:
             audio_filter = f"aselect='{_select_expr(keep)}',asetpts=N/SR/TB," + audio_filter
@@ -1078,8 +1045,7 @@ def _remove_work_dir(work: Path) -> None:
 def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start: float, end: float, *,
                 fmt: str = '9:16', framing: str = 'fit', ass_text: str | None = None, srt_text: str | None = None,
                 normalize_audio: bool = False, on_progress: ProgressFn | None = None,
-                cancel_event: threading.Event | None = None, narration: list[dict] | None = None,
-                original_volume: float = 1.0, keep: list[tuple[float, float]] | None = None,
+                cancel_event: threading.Event | None = None, keep: list[tuple[float, float]] | None = None,
                 track: dict | None = None, post: str = '', audio_extra: str = '', preview: bool = False,
                 segments: list[dict] | None = None) -> dict:
     """Renderiza em pasta temporária, valida e só então publica com renomeação atômica.
@@ -1097,8 +1063,6 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
     if start < 0 or duration < 1 or duration > config.MAX_CLIP_SECONDS:
         raise AppError(f'O corte precisa durar entre 1 e {config.MAX_CLIP_SECONDS} segundos '
                        'dentro da duração do vídeo.', 400, 'bad_range')
-    if keep and narration:
-        keep = None  # narração usa a linha do tempo original
     if keep:
         keep = snap_intervals(keep, output_fps(media) or media.get('fps') or 30)
     out_duration = sum(b - a for a, b in keep) if keep else duration
@@ -1122,8 +1086,8 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
 
             def render_with(encoder: str):
                 args, size = build_export_args(source, media, start, duration, fmt, framing, subs,
-                                               normalize_audio, render, narration, original_volume, keep, track,
-                                               post, audio_extra, preview, segments, encoder)
+                                               normalize_audio, render, keep, track, post, audio_extra, preview,
+                                               segments, encoder)
                 run_ffmpeg(args, duration=out_duration, cwd=work, cancel_event=cancel_event,
                            on_progress=lambda p, m: progress(p * 0.85, 'Renderizando'))
                 return size
@@ -1156,7 +1120,7 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                                {'technical': sanitize(exc2.stderr_tail[-1500:], 1500)}) from exc2
         progress(0.86, 'Validando arquivo exportado')
         report = validate_output(work / render, expected_duration=out_duration, expected_size=size,
-                                 expect_audio=media.get('audio_index') is not None or bool(narration),
+                                 expect_audio=media.get('audio_index') is not None,
                                  cancel_event=cancel_event, decode=not preview)
         if not report['valid']:
             failed = [c for c in report['checks'] if not c['ok']]
@@ -1181,7 +1145,7 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                 'face_tracking': bool(framing == 'track' and track and track.get('ok')),
                 'width': size[0], 'height': size[1], 'start': round(start, 3), 'end': round(end, 3),
                 'subtitles_burned': subtitles_burned, 'normalize_audio': normalize_audio,
-                'ai_narration': bool(narration), 'encoder': used['encoder'],
+                'encoder': used['encoder'],
                 'shortened': ({'removed_seconds': round(duration - out_duration, 2), 'segments': len(keep)}
                               if keep else None),
                 'warnings': warnings + report['warnings'], 'validation': report}

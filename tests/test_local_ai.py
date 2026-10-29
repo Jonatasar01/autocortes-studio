@@ -55,6 +55,11 @@ class FakeOllama:
 
 
 class ClientTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(config, 'OLLAMA_DISABLED', False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_url_is_fixed_on_localhost_without_proxy(self):
         self.assertEqual(config.OLLAMA_URL, 'http://127.0.0.1:11434')
         # ProxyHandler({}) impede o proxy do sistema: nenhum handler de proxy com endereço fica ativo.
@@ -126,11 +131,11 @@ class CurationProviderTests(unittest.TestCase):
             st = curation.status()
         self.assertTrue(st['ollama']['local'] and st['ollama']['configured'])
         self.assertEqual(st['ollama']['model'], 'qwen3:4b')
-        self.assertFalse(st['openai']['local'])
+        self.assertFalse(st['gemini']['local'])
         self.assertFalse(curation.requires_external_consent('ollama'))
         self.assertFalse(curation.requires_external_consent('heuristica'))
-        self.assertTrue(curation.requires_external_consent('openai'))
-        self.assertTrue(curation.requires_external_consent('anthropic'))
+        self.assertTrue(curation.requires_external_consent('gemini'))
+        self.assertTrue(curation.requires_external_consent('gemini'))
 
     def test_curates_with_unit_ids_and_rejects_invalid_ones(self):
         fake = FakeOllama()
@@ -206,21 +211,17 @@ class CurationProviderTests(unittest.TestCase):
         fake = FakeOllama()
         with mock.patch.object(ollama_local, 'status', return_value=READY), \
                 mock.patch.object(ollama_local, 'generate', side_effect=fake):
-            clips, status = curation.curate('ollama', self.transcript, 25, 12, 3, [], mode='rapido')
-        self.assertEqual(status['mode'], 'rapido')
-        self.assertIn('Modo rápido', status['message'])
+            clips, status = curation.curate('ollama', self.transcript, 25, 12, 3, [])
         propose = [c for c in fake.calls if 'clips' in c['schema']['properties']]
         judge = [c for c in fake.calls if 'results' in c['schema']['properties']]
-        self.assertTrue(all(c['schema'] is curation.PROPOSE_SCHEMA_FAST for c in propose))
-        self.assertTrue(all(c['schema'] is curation.JUDGE_SCHEMA_FAST for c in judge))
+        self.assertTrue(all(c['schema'] is curation.PROPOSE_SCHEMA for c in propose))
+        self.assertTrue(all(c['schema'] is curation.JUDGE_SCHEMA for c in judge))
         self.assertNotIn('hashtags', propose[0]['system'])
         self.assertNotIn('comentário', judge[0]['system'])
         self.assertIn('NÃO CONFIÁVEL', propose[0]['system'])     # a proteção continua no texto enxuto
         self.assertEqual(clips[0]['title'], 'O erro no preço do café')
         self.assertTrue(any(r.startswith('Gancho 8.0/10') for r in clips[0]['reasons']))
         # Automático: no máximo 24 trechos vão ao juiz no modo rápido (60 no completo).
-        self.assertEqual(curation._limits('ollama', 'rapido')['judge_max'], curation.AUTO_JUDGE_MAX_FAST)
-        self.assertEqual(curation._limits('ollama', 'completo')['judge_max'], curation.AUTO_JUDGE_MAX)
 
     def test_progress_says_where_it_is_and_how_long_is_left(self):
         seen = []
@@ -228,7 +229,7 @@ class CurationProviderTests(unittest.TestCase):
         with mock.patch.object(ollama_local, 'status', return_value=READY), \
                 mock.patch.object(ollama_local, 'generate', side_effect=FakeOllama()), \
                 mock.patch.object(curation.time, 'monotonic', side_effect=(i * 30.0 for i in range(10_000))):
-            curation.curate('ollama', transcript, 700, 30, 3, [], mode='rapido',
+            curation.curate('ollama', transcript, 700, 30, 3, [],
                             on_progress=lambda f, m='': seen.append((f, m)))
         reading = [m for _, m in seen if 'lendo o vídeo, bloco' in m]
         self.assertTrue(reading[0].startswith('Curadoria com IA: lendo o vídeo, bloco 1 de '))
@@ -249,13 +250,13 @@ class CurationProviderTests(unittest.TestCase):
         transcript = fake_transcript(700, PHRASES * 40)
         with mock.patch.object(ollama_local, 'status', return_value=READY), \
                 mock.patch.object(ollama_local, 'generate', side_effect=fake):
-            _, st = curation.curate('ollama', transcript, 4 * 3600, 30, selection.AUTO, [], mode='rapido',
+            _, st = curation.curate('ollama', transcript, 4 * 3600, 30, selection.AUTO, [],
                                     unlimited=True)
         self.assertGreaterEqual(st['judged'], 1)
 
     def test_cloud_providers_keep_their_chunking(self):
-        self.assertEqual(curation._limits('openai')['chunk'], curation.CHUNK_SECONDS)
-        self.assertFalse(curation._limits('anthropic')['tolerant'])
+        self.assertEqual(curation._limits('gemini')['chunk'], curation.CHUNK_SECONDS)
+        self.assertGreater(curation._limits('gemini')['chunk'], curation._limits('ollama')['chunk'])
         self.assertEqual(curation._limits('ollama')['chunk'], config.LOCAL_CURATION_CHUNK_SECONDS)
 
 
@@ -274,16 +275,14 @@ class ConsentTests(unittest.TestCase):
         s = settings.update({'curation': {'provider': 'ollama', 'consent': True}})
         self.assertEqual(s['curation']['provider'], 'ollama')
         self.assertFalse(s['curation']['consent'])           # nada a consentir: nada sai do computador
+        with self.assertRaises(AppError) as err:
+            settings.update({'curation': {'provider': 'gemini', 'consent': False}})
+        self.assertEqual(err.exception.code, 'consent_required')
+        self.assertTrue(settings.update({'curation': {'provider': 'gemini', 'consent': True}})['curation']['consent'])
         for provider in ('openai', 'anthropic'):
-            with self.subTest(provider=provider), self.assertRaises(AppError) as err:
-                settings.update({'curation': {'provider': provider, 'consent': False}})
-            self.assertEqual(err.exception.code, 'consent_required')
-        self.assertTrue(settings.update({'curation': {'provider': 'openai', 'consent': True}})['curation']['consent'])
-        self.assertEqual(settings.load()['curation']['local_mode'], 'rapido')        # padrão
-        self.assertEqual(settings.update({'curation': {'local_mode': 'completo'}})['curation']['local_mode'],
-                         'completo')
-        with self.assertRaises(AppError):
-            settings.update({'curation': {'local_mode': 'turbo'}})
+            migrated = settings.update({'curation': {'provider': provider, 'consent': True}})['curation']
+            self.assertEqual(migrated['provider'], 'ollama')
+            self.assertFalse(migrated['consent'])
 
     def test_old_settings_file_still_loads(self):
         (config.DATA_DIR / 'settings.json').write_text(json.dumps({'curation': {'provider': 'heuristica'}}),
@@ -331,8 +330,8 @@ class PipelineTests(ServiceBase):
         ranker.assert_not_called()
 
     def test_cloud_failure_still_falls_back_to_the_local_ranker(self):
-        settings.update({'curation': {'provider': 'openai', 'consent': True}})
-        with mock.patch.dict(os.environ, {'OPENAI_API_KEY': 'sk-teste'}), \
+        settings.update({'curation': {'provider': 'gemini', 'consent': True}})
+        with mock.patch.dict(os.environ, {'GEMINI_API_KEY': 'test-only'}), \
                 mock.patch.object(curation, 'curate', side_effect=AppError('falha', 502, 'curation_http')), \
                 mock.patch.object(selection, 'refine_with_ollama',
                                   return_value={'state': 'disabled', 'message': 'x'}) as ranker:
@@ -345,6 +344,11 @@ class PipelineTests(ServiceBase):
 
 @unittest.skipUnless(os.getenv('AUTOCORTES_TEST_REAL_OLLAMA') == '1', 'teste com o Ollama real (opcional)')
 class RealOllamaSmoke(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(config, 'OLLAMA_DISABLED', False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_tags_model_and_structured_generation(self):
         info = ollama_local.status(refresh=True)
         self.assertTrue(info['running'], info['message'])
@@ -361,3 +365,18 @@ class RealOllamaSmoke(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class UnlimitedFallbackTests(unittest.TestCase):
+    def test_no_transcript_keeps_bounded_temporal_fallback(self):
+        ordinary, _ = selection.select_clips([], 8*3600, 35, selection.AUTO, [])
+        unlimited, _ = selection.select_clips([], 8*3600, 35, selection.AUTO, [], unlimited=True)
+        self.assertEqual(unlimited, ordinary)
+        self.assertLessEqual(len(unlimited), selection.auto_limit(8*3600))
+
+    def test_disabled_ollama_cannot_open_connection(self):
+        with mock.patch.object(config, 'OLLAMA_DISABLED', True), mock.patch.object(ollama_local._opener, 'open') as request:
+            self.assertFalse(ollama_local.status(refresh=True)['running'])
+            with self.assertRaises(AppError):
+                ollama_local.request('/api/generate', {'prompt':'synthetic'})
+            request.assert_not_called()

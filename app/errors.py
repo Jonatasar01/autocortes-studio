@@ -25,7 +25,7 @@ class Cancelled(Exception):
 def sanitize(text: object, limit: int = 600) -> str:
     """Remove caminhos locais e possíveis segredos de mensagens técnicas."""
     value = str(text or '')
-    for name in ('OPENAI_API_KEY', 'ACRCLOUD_ACCESS_KEY', 'ACRCLOUD_ACCESS_SECRET'):
+    for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY'):
         secret = os.getenv(name, '')
         if secret:
             value = value.replace(secret, '***')
@@ -33,6 +33,7 @@ def sanitize(text: object, limit: int = 600) -> str:
         value = value.replace(path, '…')
     value = re.sub(r'(?i)(access_key|secret|signature|token|password)\s*[=:]\s*\S+', r'\1=***', value)
     value = re.sub(r'\bsk-[A-Za-z0-9_-]+', '***', value)
+    value = re.sub(r'\bAIza[A-Za-z0-9_-]{20,}', '***', value)   # formato das chaves do Google
     value = re.sub(r'[A-Za-z]:[\\/][^\r\n\"<>|]*', '…', value)
     value = re.sub(r'(?<![:\w])/(?:home|Users|tmp|var|opt|mnt)/[^\s\"\']+', '…', value)
     value = re.sub(r'[\x00-\x08\x0b-\x1f\x7f]', ' ', value)

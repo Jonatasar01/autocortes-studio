@@ -704,9 +704,9 @@ body[data-view=home] :is(.workspace, .timeline, .editoronly) { display: none !im
   .home .projects { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
   .modecards { grid-template-columns: 1fr; }
   /* Lives de horas: "1:23:45.6 / 6:18:24.8" não cabe ao lado dos botões; o tempo vai para a linha de cima. */
-  .controlrow { grid-template-columns: auto 1fr; gap: 4px 8px; }
+  .controlrow { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; }
   .timecode { grid-column: 1 / -1; font-size: 12px; }
-  .transport { justify-content: flex-start; }
+  .transport { justify-content: flex-start; flex-wrap: wrap; min-width: 0; }
   #formatChip { display: none; }
   .jobrow, .exportrow { flex-wrap: wrap; }
   .app { display: block; height: auto; }

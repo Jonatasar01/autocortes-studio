@@ -1,7 +1,7 @@
 """Classificação preventiva de direitos — por categoria, com justificativa e estado de verificação.
 
 Princípios:
-- Baseada nas declarações do usuário e, se autorizado, no reconhecimento musical externo.
+- Baseada nas declarações do usuário (não há verificação externa).
 - "Não reconhecido" nunca vira "livre". Não há consulta ao Content ID do YouTube.
 - Direitos autorais, conteúdo reutilizado e monetização são questões distintas.
 """
@@ -27,7 +27,7 @@ def _item(key: str, label: str, status: str, reason: str, action: str, verificat
 
 def rights_review(source_rights: str, external_audio: str, license_notes: str, has_audio: bool,
                   graphics: str = 'unknown', third_party_footage: str = 'unknown',
-                  monetization: str = 'unknown', music_review: dict | None = None) -> dict:
+                  monetization: str = 'unknown') -> dict:
     notes = (license_notes or '').strip()
     declared = 'Declaração do usuário'
     items: list[dict] = []
@@ -53,41 +53,22 @@ def rights_review(source_rights: str, external_audio: str, license_notes: str, h
                            'Confirme quem é o titular antes de publicar.', 'Nenhuma'))
 
     # 2. Música e áudio
-    music_review = music_review or {}
-    matches = music_review.get('matches') or []
     if not has_audio:
         items.append(_item('musica_audio', 'Música e trilhas sonoras', 'nao_aplicavel',
                            'O vídeo não possui trilha de áudio.', '—', 'ffprobe'))
+    elif external_audio == 'yes':
+        items.append(_item('musica_audio', 'Música e trilhas sonoras', 'revisar' if notes else 'risco_alto',
+                           'Há música/áudio de terceiros declarado.' +
+                           (' Notas de licença informadas.' if notes else ' Sem comprovante de licença.'),
+                           'Confirme a licença para sincronização, edição e monetização na plataforma.', declared))
+    elif external_audio == 'no':
+        items.append(_item('musica_audio', 'Música e trilhas sonoras', 'declarado',
+                           'Declarado como áudio próprio ou autorizado.',
+                           'Mantenha as licenças das trilhas usadas.', declared))
     else:
-        verification = declared
-        if music_review.get('status') in ('matched', 'no_match', 'error'):
-            verification += ' + reconhecimento externo (ACRCloud) em amostras'
-        if matches:
-            names = '; '.join(f"{m['title']} — {m['artist']}" + (' (incerta)' if m.get('uncertain') else '')
-                              for m in matches[:5])
-            items.append(_item('musica_audio', 'Música e trilhas sonoras', 'risco_alto',
-                               'Possível(is) obra(s) musical(is) reconhecida(s): ' + names +
-                               '. Correspondência não prova infração nem titularidade.',
-                               'Comprove a licença da música ou substitua por trilha autorizada e reexporte.',
-                               verification))
-        elif external_audio == 'yes':
-            items.append(_item('musica_audio', 'Música e trilhas sonoras', 'revisar' if notes else 'risco_alto',
-                               'Há música/áudio de terceiros declarado.' +
-                               (' Notas de licença informadas.' if notes else ' Sem comprovante de licença.'),
-                               'Confirme a licença para sincronização, edição e monetização na plataforma.',
-                               verification))
-        elif external_audio == 'no':
-            text = 'Declarado como áudio próprio ou autorizado.'
-            if music_review.get('status') == 'no_match':
-                text += ' Nenhuma correspondência nas amostras consultadas (isso não comprova ausência de música protegida).'
-            items.append(_item('musica_audio', 'Música e trilhas sonoras', 'declarado', text,
-                               'Mantenha as licenças das trilhas usadas.', verification))
-        else:
-            text = 'Direitos sobre música e áudio não foram confirmados.'
-            if music_review.get('status') == 'no_match':
-                text += ' O reconhecimento não encontrou correspondências, mas isso NÃO indica que o áudio é livre.'
-            items.append(_item('musica_audio', 'Música e trilhas sonoras', 'nao_verificado', text,
-                               'Identifique todas as músicas usadas e suas licenças.', verification))
+        items.append(_item('musica_audio', 'Música e trilhas sonoras', 'nao_verificado',
+                           'Direitos sobre música e áudio não foram confirmados.',
+                           'Identifique todas as músicas usadas e suas licenças.', declared))
 
     # 3. Imagens e elementos gráficos
     graphics_map = {
@@ -165,9 +146,8 @@ def rights_review(source_rights: str, external_audio: str, license_notes: str, h
         'alerts': alerts,
         'requires_acknowledgement': level == 'alto',
         'reused_policy': reused['reason'],
-        'confidence': 'Baseado nas declarações do usuário' + (
-            ' e em reconhecimento musical por amostras' if music_review.get('status') in ('matched', 'no_match') else '') +
-            '; sem busca em base global de obras protegidas e sem consulta ao Content ID.',
+        'confidence': 'Baseado nas declarações do usuário; sem busca em base global de obras protegidas e sem '
+                      'consulta ao Content ID.',
         'verification': ['Confirmar titularidade, licenças, uso comercial, território e prazo',
                          'Revisar música, imagens, logos e materiais de terceiros',
                          'No YouTube, conferir o painel "Verificações" do YouTube Studio antes de tornar o vídeo público'],

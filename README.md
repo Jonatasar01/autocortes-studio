@@ -60,9 +60,9 @@ Erros comuns trazem a solução junto (ex.: arquivo grande demais → aumentar `
 - **Excluir projeto:** pelo ícone de lixeira em *Projetos recentes* ou no cartão de mídia.
   Apaga o vídeo importado, os cortes e as exportações guardadas no projeto (cópias na pasta
   de saída ficam). Se algum arquivo estiver em uso, nada é apagado e o app avisa.
-- **Sem interface por enquanto:** narração por IA, configurações de curadoria/IA, FilmCraft,
-  piloto automático e reconhecimento de música continuam disponíveis pela API
-  (`/api/...`), mas não têm tela no Studio.
+- **Sem interface por enquanto:** FilmCraft e piloto automático continuam disponíveis pela API
+  (`/api/...`), mas não têm tela no Studio. Narração por IA e reconhecimento de música
+  foram retirados desta branch.
 - **Limite atual:** a faixa de vídeo mostra miniaturas reais; não há waveform do áudio
   nem montagem multifaixa.
 - **Privacidade:** o servidor continua projetado para `127.0.0.1`. Não exponha
@@ -148,15 +148,12 @@ O app pode trabalhar sozinho, do vídeo bruto até os arquivos prontos para revi
    - Cortes temporais (sem análise de conteúdo) só entram se você permitir.
    - **Com risco alto de direitos, o piloto pausa.** Ele nunca confirma riscos sozinho: revise a tabela e clique em
      **Continuar piloto automático**.
-3. **Narração automática (opcional).** Gera roteiro e voz com ChatGPT para cada corte escolhido. Exige `OPENAI_API_KEY`
-   e um consentimento permanente marcado nas Configurações, que fica registrado com data. Se a OpenAI falhar, o corte é
-   exportado sem narração (opcional), e falhas temporárias são tentadas de novo automaticamente.
-4. **Pasta de entrada (`entrada/`).** Coloque vídeos ali e eles são importados sozinhos quando a cópia termina. O original
+3. **Pasta de entrada (`entrada/`).** Coloque vídeos ali e eles são importados sozinhos quando a cópia termina. O original
    vai para `entrada/processados`. Arquivos inválidos vão para `entrada/falhas`, junto com um `.erro.txt` que explica o
    motivo. Vídeos repetidos não são reprocessados.
-5. **Pasta de saída (`saida/`).** Cada corte validado é copiado para `saida/<vídeo>/`, junto com o SRT e um
+4. **Pasta de saída (`saida/`).** Cada corte validado é copiado para `saida/<vídeo>/`, junto com o SRT e um
    **pacote de publicação** (`… - publicação.txt`). O pacote traz título e descrição sugeridos a partir do próprio
-   conteúdo, hashtags e a lista do que resolver antes de publicar: pendências de direitos e aviso de voz por IA.
+   conteúdo, e pendências de direitos a revisar antes de publicar.
 
 Também há **Exportar todos** (todos os cortes em vários formatos de uma vez) e **Rodar piloto automático** em projetos
 já analisados. As pastas mudam só por variável de ambiente (`AUTOCORTES_WATCH_DIR`, `AUTOCORTES_OUTPUT_DIR`); a
@@ -173,16 +170,13 @@ soltando vídeos em `entrada/`. Os resultados aparecem em `saida/` e em **Projet
 - **Legenda dinâmica:** poucas palavras por vez, com a palavra falada destacada (estilo dos vídeos curtos). A legenda
   clássica continua disponível, e o SRT segue em frases.
 - **Gancho:** frase curta no topo durante os 3 primeiros segundos.
-- **Curadoria com IA (opcional, paga, com consentimento):** em **⚙ Configurações → Curadoria com IA**, escolha OpenAI
-  ou Anthropic e autorize o envio do **texto** das transcrições. A IA escolhe os trechos e dá notas de gancho,
-  coerência, valor e tendência, com comentários visíveis em "Por que este trecho?". Títulos e ganchos que não constam
-  no trecho são descartados. Se a IA falhar, a seleção heurística é mantida.
+- **Curadoria:** em **Seleção de cortes e IA**, escolha Ollama/Qwen (local, sem chave) ou Google Gemini (nuvem, exige chave e consentimento para enviar o texto da transcrição). Ambos propõem trechos e avaliam coerência e relevância. Falhas mantêm a seleção heurística. Títulos sem respaldo no trecho são descartados.
 
 ```powershell
-$env:ANTHROPIC_API_KEY="sua-chave"     # para usar a Anthropic (Claude)
-$env:ANTHROPIC_MODEL="claude-sonnet-5-5"  # opcional
-# OpenAI usa a mesma OPENAI_API_KEY da narração; modelo opcional em CURATION_OPENAI_MODEL
+$env:GEMINI_API_KEY="sua-chave" # somente se escolher Gemini; nunca salve a chave no repositório
 ```
+
+Não há validação com uma chave Gemini real nesta entrega. O contrato REST foi conferido na [documentação oficial](https://ai.google.dev/api/generate-content) e testado com respostas simuladas. Não são enviados áudio ou vídeo. O Ollama precisa estar aberto no mesmo computador em `127.0.0.1:11434`, com `qwen3:4b` ou a reserva `qwen3:1.7b` instalada.
 
 ## IA local (opcional)
 
@@ -241,139 +235,11 @@ pip install -r requirements-ai.txt
     quando a curadoria escolhida não é o Ollama. O app só conversa com `127.0.0.1:11434`, sem proxy.
   - Teste opcional com o Ollama de verdade: `AUTOCORTES_TEST_REAL_OLLAMA=1 python -m pytest tests/test_local_ai.py`.
 
-## Narração com ChatGPT (opcional, paga, com consentimento)
+## Escopo desta versão enxuta
 
-Gera um roteiro de narração para cada corte — estilos **recap** (resumo narrado, como canais de "recap" de Shorts),
-**comentário** (opinião/análise em primeira pessoa) ou **documentário** — e grava a narração com voz da OpenAI,
-abaixando automaticamente o áudio original enquanto o narrador fala.
+O fluxo principal é importar → transcrever → selecionar → revisar → exportar. A curadoria oferece Ollama/Qwen local e Gemini com consentimento; a heurística é a reserva automática. Narração sintética, reconhecimento musical externo e lote CSV independente foram retirados desta branch. Os arquivos e exportações já salvos não são apagados. Use a versão anterior se precisar desses recursos.
 
-```powershell
-$env:OPENAI_API_KEY="sua-chave"        # obrigatório (cobrança na sua conta OpenAI)
-$env:OPENAI_MODEL="gpt-6-luna"         # opcional: modelo do roteiro
-$env:OPENAI_TTS_MODEL="gpt-4o-mini-tts"# opcional: modelo de voz
-$env:OPENAI_VOICE="cedar"              # opcional: cedar, marin, alloy, ash, coral, echo, nova, onyx, sage...
-```
-
-No corte: **Narração com ChatGPT** → escolha o estilo, informe o contexto (ex.: nomes de personagens), marque se quer
-enviar quadros do vídeo (a IA "vê" as cenas), autorize o envio e clique em **Gerar roteiro**. Revise e edite os blocos,
-marque **Narração com voz IA** na exportação, escolha voz, volume do áudio original e origem das legendas.
-
-- Só é enviado à OpenAI: a transcrição do trecho, o contexto digitado, os quadros (se marcado, até 8 em 512 px) e,
-  na exportação, o texto do roteiro. Nunca o vídeo inteiro.
-- O áudio gerado fica em cache no projeto: reexportar o mesmo roteiro não gera nova cobrança.
-- **A voz é sintética. As políticas da OpenAI exigem informar ao público que ela é gerada por IA.**
-- Narração não torna material de terceiros (ex.: episódios de séries/desenhos) licenciado: a revisão de direitos
-  continua apontando o risco, e reivindicações de Content ID continuam possíveis. O estilo "comentário" acrescenta mais
-  valor original do que apenas descrever a cena.
-
-## Reconhecimento de música (opcional, com consentimento)
-
-Requer conta própria no ACRCloud (pode ter custo):
-
-```powershell
-pip install -r requirements-music.txt
-$env:ACRCLOUD_HOST="SEU_HOST"; $env:ACRCLOUD_ACCESS_KEY="SUA_CHAVE"; $env:ACRCLOUD_ACCESS_SECRET="SEU_SEGREDO"
-```
-
-Marque a opção no formulário. São enviadas até 3 amostras de 12 s (`ACRCLOUD_MAX_SAMPLES`). Correspondência é indício,
-não prova; **ausência de correspondência não significa música livre**. Não é Content ID.
-
-## Processamento em lote por CSV (`main.py`)
-
-Para quando você já sabe onde cortar: o sistema não escolhe trechos, só executa a renderização
-pesada de cada linha marcada.
-
-```bash
-python main.py cortes.csv
-python main.py cortes.csv --saida output --palavras 4 --fonte "Montserrat ExtraBold"
-```
-
-O CSV aceita `,` ou `;` como separador (veja `cortes.exemplo.csv`):
-
-| coluna | exemplo | observação |
-|---|---|---|
-| `video_origem` | `entrada/podcast.mp4` | caminho relativo à pasta do CSV ou absoluto |
-| `tempo_inicio`, `tempo_fim` | `00:15:30`, `15:30`, `930` ou `00:15:30,5` | |
-| `layout` | `single_speaker`, `split_screen`, `pip` | |
-| `nome` (opcional) | `Melhor momento` | base do nome do arquivo |
-| `script` (opcional) | `"Repare nesta cena…"` ou `roteiros/01.txt` | roteiro de narração; com ele, a linha vira vídeo narrado |
-| `voz` (opcional) | `pt-BR-FranciscaNeural` | voz da narração (padrão `--voz`, que é `pt-BR-AntonioNeural`) |
-
-Para cada linha, numa pasta temporária removida ao fim da iteração:
-
-1. **Corte bruto** (`app/batch/slicer.py`): `ffmpeg -ss … -to … -i origem -c copy`, sem recodificar.
-   O quadro do início pedido é localizado no temporário pela impressão digital (MD5 de uma
-   miniatura), então a sobra até o quadro-chave anterior é descartada com precisão de quadro em
-   qualquer versão do FFmpeg.
-2. **Legenda** (`app/batch/captions.py`): faster-whisper transcreve só o áudio do trecho; blocos de
-   3 a 5 palavras (`--palavras`), em `.ass` amarelo, grosso, com contorno preto, no centro da tela.
-3. **Layout 9:16, 1080×1920** (`app/batch/layouts.py`), com a legenda embutida no mesmo passo:
-   - `single_speaker`: recorte central; segue o rosto se o OpenCV com `CascadeClassifier` estiver
-     disponível (`--rosto auto|sim|nao`).
-   - `split_screen`: metade esquerda (pessoa A) em cima, metade direita (pessoa B) embaixo (`vstack`).
-   - `pip`: fundo desfocado com o quadro inteiro sobreposto.
-4. **Validação** do MP4 (resolução, codec, duração, áudio, decodificação) e gravação em `output/`
-   como `001_nome_layout.mp4`, com o `.ass` ao lado.
-
-Linhas inválidas (tempo, layout, vídeo inexistente) são relatadas e puladas sem parar o lote.
-O código de saída é 0 só quando todas as linhas deram certo.
-
-Dependências: FFmpeg com libass e as bibliotecas de `requirements-ai.txt` (faster-whisper; OpenCV
-para seguir rosto). Sem faster-whisper, os vídeos saem sem legenda e com aviso. O modelo segue
-`WHISPER_MODEL` (padrão `small`) e `WHISPER_LANGUAGE` (padrão `pt`).
-
-### Vídeos narrados (coluna `script`)
-
-```bash
-pip install -r requirements-tts.txt
-python main.py cortes.csv --musica musicas/lofi.mp3 --voz pt-BR-FranciscaNeural --volume-original 0.08
-```
-
-Numa linha com `script` (texto entre aspas, pode ter quebras de linha, ou o caminho de um `.txt`):
-
-1. **Narração** (`app/audio/tts_generator.py`): o roteiro vira MP3 com voz neural pelo `edge-tts`.
-   Precisa de internet; o `edge-tts` usa o serviço de leitura em voz alta do Microsoft Edge e não é
-   uma API oficial com garantia de funcionamento.
-2. **Duração**: o vídeo final dura o mesmo que a narração. O trecho do corte além dela é descartado;
-   se a narração passar do corte em até 1,5 s, o último quadro congela; acima disso a linha falha e
-   pede para aumentar `tempo_fim` ou encurtar o roteiro.
-3. **Legenda**: o Whisper transcreve só a narração. As falas do vídeo original não entram.
-4. **Áudio, numa única codificação** com o layout escolhido: narração com `acompressor` e `loudnorm`
-   (-14 LUFS, LRA 11, -1 dBTP), áudio original a `0.08` (≈ -22 dB) e música opcional a `0.05`,
-   repetida ou cortada; `amix` termina junto com a narração.
-
-Saída `001_nome_layout_narrado.mp4`. A mesma via existe fora do lote:
-`AudioVisualMastering().render_final_clip(video, musica, legenda, saida, tts_audio_path='voz.mp3')`, com a
-legenda gerada por `captions_from_narration('voz.mp3', pasta)`.
-
-**Sobre monetização.** Narração e roteiro próprios são o que as plataformas pedem para não tratar
-o vídeo como reaproveitado, mas não garantem nada. O YouTube avalia se o resultado tem valor
-original e trata como "conteúdo não autêntico" canais de vídeos em série, quase iguais e produzidos
-em massa. A análise não depende de detalhes técnicos como o volume do áudio original. O Content ID
-continua reconhecendo imagem e som de terceiros, e a narração não dá licença sobre esse material.
-Roteiros que comentam, explicam ou contam algo que a cena sozinha não mostra são os que costumam ser
-aceitos. Se a plataforma pedir, informe que a voz é sintética.
-
-### Masterização final (`app/batch/mastering.py`)
-
-Une um corte já pronto no tempo, uma música de fundo (opcional) e uma legenda `.ass` em uma
-única codificação de vídeo, em 1080×1920:
-
-```python
-from app.batch.mastering import AudioVisualMastering, console_progress
-
-AudioVisualMastering().render_final_clip(
-    'output/001_corte_single_speaker.mp4', 'musicas/lofi.mp3',
-    'output/001_corte_single_speaker.ass', 'final/001.mp4', on_progress=console_progress)
-```
-
-- Voz: `acompressor` → `loudnorm` (alvo -14 LUFS, LRA 11, pico -1 dBTP). O áudio é medido
-  antes (leitura rápida só do áudio) para o `loudnorm` aplicar ganho linear e acertar o alvo.
-- Música: `volume=0.05`, repetida em loop se for mais curta; `amix` termina junto com a voz.
-- Vídeo: escala e recorte para 1080×1920 e legenda com o filtro `ass`.
-- Erros levantam `MasteringError` com o final do log do FFmpeg; a saída é validada antes de
-  ser gravada no destino.
-- Se o arquivo já tem a legenda embutida (saída padrão do lote), passe `None` como legenda.
+**Sem limite de cortes** remove o teto final por hora, mantendo critérios de qualidade e de não sobreposição. Não significa que a IA examina toda janela possível: o orçamento de candidatos enviados ao juiz ainda cresce aproximadamente 10 por hora (mínimo 24). A opção fica desligada por padrão e vale para novas análises e “Refazer seleção”. Essa última ação reaproveita a transcrição, mas substitui a lista atual de cortes; salve seus ajustes antes.
 
 ## Estilo de edição: motor de direção criativa (`app/direction.py`)
 
@@ -595,7 +461,7 @@ e os avisos; "Exportar em alta qualidade" gera o arquivo final com as mesmas op�
 | `AUTOCORTES_WATCH_DIR` | `./entrada` | Pasta monitorada |
 | `AUTOCORTES_OUTPUT_DIR` | `./saida` | Pasta de saída dos cortes validados |
 | `AUTOCORTES_WATCH_INTERVAL` | 5 | Segundos entre verificações da pasta de entrada |
-| `AUTOCORTES_JOB_RETRIES` / `AUTOCORTES_RETRY_SECONDS` | 2 / 30 | Novas tentativas para falhas temporárias da OpenAI (espera dobra a cada vez) |
+| `AUTOCORTES_JOB_RETRIES` / `AUTOCORTES_RETRY_SECONDS` | 2 / 30 | Novas tentativas para falhas temporárias de processamento (espera dobra a cada vez) |
 
 ## Testes
 
@@ -616,7 +482,7 @@ corrompido) e exercitam exportação, validação, fila, cancelamento, recupera�
 
 ## Direitos autorais
 
-A revisão é preventiva e baseada nas suas declarações (e, se autorizado, em amostras de reconhecimento musical).
+A revisão é preventiva e baseada nas suas declarações (sem reconhecimento musical externo nesta versão).
 Ela separa vídeo original, música, imagens, trechos de terceiros, conteúdo reutilizado e monetização. Nenhuma
 categoria é marcada como "livre", e o app não consulta o Content ID. Também não aplica técnicas para enganar sistemas de
 detecção (pitch, velocidade, espelhamento). Antes de publicar, confirme licenças e confira as verificações da plataforma.
@@ -638,15 +504,10 @@ exceto a configuração de CI Windows/Linux (execução remota ainda não verifi
 - `av>=11,<19` evita incompatibilidade reproduzida entre faster-whisper 1.2.1 e PyAV 19.
 - O launcher reutiliza a venv mesmo sem `py` no PATH. `AUTOCORTES_NO_BROWSER=1` suprime a abertura do navegador
   e pausas em erros (útil em diagnóstico automatizado). O servidor permanece em 127.0.0.1.
-- Consentimentos para roteiro e TTS são registrados no projeto antes do processamento;
-  o TTS exige autorização separada na interface. Uma exportação usa o roteiro existente ao entrar na fila.
 - A pasta `evidencias/` contém resultados dos testes e capturas. Nenhuma chave, modelo baixado ou vídeo do YouTube
   é distribuído no pacote.
 
-Os nomes `gpt-6-luna` e `gpt-4o-mini-tts` foram conferidos na documentação oficial, mas não houve
-chamada autenticada neste ambiente. Os snapshots do mini TTS têm retirada anunciada para 06/01/2027;
-revise a integração antes dessa data. A migração para Realtime exige adaptação do protocolo,
-não apenas trocar `OPENAI_TTS_MODEL`. Fontes em `ENTREGA_ETAPA1.md`.
+A narração por roteiro/TTS desta etapa foi retirada na versão enxuta; o histórico está em `ENTREGA_ETAPA1.md`.
 
 ### Validar a seleção com um segundo vídeo (feedback)
 

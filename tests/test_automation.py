@@ -1,5 +1,5 @@
 """Automação (v2.2): configurações, piloto automático, pasta de entrada/saída, exportar todos,
-novas tentativas automáticas e encurtamento de pausas. FFmpeg real; OpenAI simulada."""
+novas tentativas automáticas e encurtamento de pausas. FFmpeg real."""
 import os
 import shutil
 import subprocess
@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from app import autopilot, config, media, narration, publish, service, settings, storage, transcription, watcher
+from app import autopilot, config, media, publish, service, settings, storage, transcription, watcher
 from app.errors import AppError
 from app.jobs import Handler, JobManager
 from tests.helpers import HAS_FFMPEG, fake_transcript, make_video
@@ -28,24 +28,6 @@ def wait_until(predicate, timeout=240, step=0.2):
     return predicate()
 
 
-class FakeOpenAI:
-    def __init__(self, fail_first=0):
-        self.calls, self.fail_first = [], fail_first
-
-    def __call__(self, path, payload, binary=False, timeout=None):
-        self.calls.append(path)
-        if self.fail_first > 0:
-            self.fail_first -= 1
-            raise AppError('Serviço da OpenAI indisponível no momento.', 502, 'openai_unavailable')
-        if path == '/responses':
-            import json
-            body = {'title': 'Roteiro automático', 'segments': [{'start': 0.0, 'end': 4.0, 'text': 'Olha só o que acontece aqui.'}]}
-            return {'status': 'completed', 'output': [{'type': 'message', 'content': [
-                {'type': 'output_text', 'text': json.dumps(body)}]}]}
-        return subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=f=600:d=2', '-c:a', 'libmp3lame',
-                               '-f', 'mp3', 'pipe:1'], capture_output=True, check=True).stdout
-
-
 class SettingsTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix='autocortes-set-'))
@@ -61,7 +43,6 @@ class SettingsTests(unittest.TestCase):
         self.assertFalse(s['autopilot']['enabled'])
         self.assertFalse(s['watch']['enabled'])
         self.assertFalse(s['autopilot']['include_temporal'])
-        self.assertFalse(s['autopilot']['narration']['enabled'])
         self.assertEqual(s['upload_defaults']['source_rights'], 'unknown')
 
     def test_update_validates_and_persists(self):
@@ -73,13 +54,6 @@ class SettingsTests(unittest.TestCase):
                     {'autopilot': {'enabled': 'sim'}}, 'texto'):
             with self.subTest(bad=bad), self.assertRaises(AppError):
                 settings.update(bad)
-
-    def test_narration_autopilot_requires_consent_and_records_time(self):
-        with self.assertRaises(AppError) as ctx:
-            settings.update({'autopilot': {'narration': {'enabled': True}}})
-        self.assertEqual(ctx.exception.code, 'consent_required')
-        s = settings.update({'autopilot': {'narration': {'enabled': True, 'consent': True}}})
-        self.assertIsNotNone(s['autopilot']['narration']['consent_at'])
 
     def test_unknown_keys_ignored_and_no_paths_writable(self):
         s = settings.update({'paths': {'watch_dir': '/etc'}, 'chave_desconhecida': 1})
@@ -179,16 +153,15 @@ class RetryTests(unittest.TestCase):
 
 
 class PublishTests(unittest.TestCase):
-    def test_package_mentions_pending_rights_and_ai_voice(self):
+    def test_package_mentions_pending_rights(self):
         project = {'id': 'a' * 32, 'name': 'Meu vídeo: teste?.mp4',
                    'rights': {'items': [{'label': 'Música', 'status': 'nao_verificado', 'status_label': 'Não verificado'}]}}
-        clip = {'id': 2, 'title': 'Título', 'description': 'O segredo do café é a água. A água muda tudo no café.',
-                'narration': {'title': 'Narração', 'segments': [{'text': 'O café perfeito começa na água.'}]}}
+        clip = {'id': 2, 'title': 'Título', 'description': 'O segredo do café é a água. A água muda tudo no café.'}
         record = {'file': 'clip_02_9x16_v1.mp4', 'srt_file': None, 'width': 1080, 'height': 1920, 'format': '9:16',
-                  'ai_narration': True, 'warnings': ['Aviso X']}
+                  'warnings': ['Aviso X']}
         text = publish.package(project, clip, record)
-        self.assertIn('Narração', text)
-        self.assertIn('voz sintética', text)
+        self.assertIn('Título', text)
+        self.assertIn('Aviso X', text)
         self.assertIn('Pendências de direitos', text)
         self.assertIn('#shorts', text)
         self.assertNotIn('?', publish.output_folder(project).name)
@@ -200,7 +173,7 @@ class AutomationFlowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix='autocortes-auto-'))
         cls.saved = (config.DATA_DIR, config.WATCH_DIR, config.OUTPUT_DIR, transcription.available,
-                     transcription.transcribe, narration._request, config.JOB_RETRY_BASE_SECONDS)
+                     transcription.transcribe, config.JOB_RETRY_BASE_SECONDS)
         config.DATA_DIR = cls.tmp / 'data'
         config.WATCH_DIR = cls.tmp / 'entrada'
         config.OUTPUT_DIR = cls.tmp / 'saida'
@@ -211,8 +184,6 @@ class AutomationFlowTests(unittest.TestCase):
                                   for n, w in enumerate(['clima', 'mercado', 'futebol', 'saúde', 'música', 'cinema',
                                                          'ciência', 'turismo', 'tecnologia', 'culinária'])]),
             {'state': 'ok', 'message': 'simulada'})
-        cls.fake = FakeOpenAI()
-        narration._request = cls.fake
         cls.video = make_video(cls.tmp / 'Gravação própria.mp4', size='1280x720', duration=45)
         service.startup()
         watcher.stop()  # nos testes a varredura é chamada manualmente
@@ -221,7 +192,7 @@ class AutomationFlowTests(unittest.TestCase):
     def tearDownClass(cls):
         service.shutdown()
         (config.DATA_DIR, config.WATCH_DIR, config.OUTPUT_DIR, transcription.available, transcription.transcribe,
-         narration._request, config.JOB_RETRY_BASE_SECONDS) = cls.saved
+         config.JOB_RETRY_BASE_SECONDS) = cls.saved
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def settle(self, pid):
@@ -307,28 +278,6 @@ class AutomationFlowTests(unittest.TestCase):
         runs = {j['params'].get('autopilot_run_id') for j in service.manager.for_project(res['id'])
                 if j['params'].get('autopilot')}
         self.assertEqual(runs, {first_run, second['run_id']})
-
-    def test_narration_autopilot_with_retry_and_fallback(self):
-        settings.update({'autopilot': {'enabled': True, 'formats': ['9:16'], 'max_clips': 1, 'min_score': 0,
-                                       'narration': {'enabled': True, 'consent': True, 'voice': 'marin'}},
-                         'output': {'enabled': False}})
-        self.fake.fail_first = 1  # primeira chamada falha (transitória) → nova tentativa automática
-        with mock.patch.dict(os.environ, {'OPENAI_API_KEY': 'sk-teste'}):
-            res = self.upload({**OWNED, 'target_seconds': '12', 'desired_count': '2'})
-            ap = self.settle(res['id'])
-        self.assertEqual(ap['status'], 'concluido', ap)
-        p = storage.read_project(res['id'])
-        record = next(c for c in p['clips'] if c.get('exports'))['exports']['9:16']
-        self.assertTrue(record['ai_narration'])
-        self.assertTrue(any(c['source'].startswith('piloto') or 'Configurações' in c['source']
-                            for c in p['openai_consents']))
-        # sem chave: narração ignorada com aviso, exporta sem narração
-        res2 = self.upload({**OWNED, 'target_seconds': '12', 'desired_count': '2'})
-        with mock.patch.dict(os.environ, {'OPENAI_API_KEY': ''}):
-            ap2 = self.settle(res2['id'])
-        self.assertEqual(ap2['status'], 'concluido')
-        self.assertTrue(any('Narração automática ignorada' in e['message'] for e in ap2['events']))
-        settings.update({'autopilot': {'enabled': False, 'narration': {'enabled': False, 'consent': False}}})
 
     def test_export_all(self):
         settings.update({'autopilot': {'enabled': False}, 'output': {'enabled': False}})

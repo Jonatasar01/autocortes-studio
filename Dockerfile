@@ -24,7 +24,7 @@ RUN apt-get update \
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --extra ai --extra music --extra links --python /usr/local/bin/python \
+RUN uv sync --locked --no-dev --extra ai --extra links --python /usr/local/bin/python \
     && uv cache clean
 COPY app ./app
 

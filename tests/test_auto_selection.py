@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 
 from app import autopilot, curation, selection
-from tests.test_merge_v23 import PHRASES, FakeProvider, openai_reply
+from tests.test_merge_v23 import PHRASES, FakeProvider, gemini_reply
 from tests.helpers import fake_transcript
 
 
@@ -142,9 +142,9 @@ class AutopilotTests(unittest.TestCase):
 
 class CurationAutoTests(unittest.TestCase):
     def test_ai_curation_accepts_automatic_count(self):
-        fake = FakeProvider(openai_reply)
-        with mock.patch.dict(os.environ, {'OPENAI_API_KEY': 'sk-teste'}), mock.patch.object(curation, '_post', fake):
-            clips, status = curation.curate('openai', fake_transcript(25, PHRASES), 25, 12, selection.AUTO, [])
+        fake = FakeProvider(gemini_reply)
+        with mock.patch.dict(os.environ, {'GEMINI_API_KEY': 'AIza-teste'}), mock.patch.object(curation, '_post', fake):
+            clips, status = curation.curate('gemini', fake_transcript(25, PHRASES), 25, 12, selection.AUTO, [])
         self.assertEqual(status['state'], 'ok')
         self.assertGreaterEqual(len(clips), 1)
         self.assertTrue(all(c['end'] - c['start'] >= selection.AUTO_MIN_SECONDS - 0.5 for c in clips))

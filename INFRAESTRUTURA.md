@@ -7,11 +7,10 @@ Esta edição v2.3.1 acrescenta infraestrutura e corrige as três falhas de auto
 Instale uv e FFmpeg com libass/libx264. Na pasta do projeto:
 
 ```sh
-uv sync --locked --extra ai --extra music --no-dev --python 3.12
 uv run --no-sync python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-`pyproject.toml` define as dependências e `uv.lock` fixa a resolução. O extra `ai` inclui faster-whisper e OpenCV; `music` inclui o cliente HTTP opcional. Sem `--extra ai`, a instalação básica não inclui transcrição ou rastreamento facial. Os lançadores BAT/SH existentes continuam disponíveis com os arquivos requirements exportados do lockfile.
+`pyproject.toml` define as dependências e `uv.lock` fixa a resolução. O extra `ai` inclui faster-whisper e OpenCV. Sem `--extra ai`, a instalação básica não inclui transcrição ou rastreamento facial. Os lançadores BAT/SH existentes continuam disponíveis com os arquivos requirements exportados do lockfile.
 
 Para desenvolvimento:
 
@@ -25,7 +24,6 @@ Para atualizar dependências deliberadamente, edite pyproject.toml e execute `uv
 ```sh
 uv export --locked --no-dev --no-hashes --format requirements-txt --output-file requirements.txt
 uv export --locked --no-dev --extra ai --no-hashes --format requirements-txt --output-file requirements-ai.txt
-uv export --locked --no-dev --extra music --no-hashes --format requirements-txt --output-file requirements-music.txt
 uv export --locked --no-hashes --format requirements-txt --output-file requirements-dev.txt
 ```
 

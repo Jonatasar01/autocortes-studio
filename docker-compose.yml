@@ -11,8 +11,7 @@ services:
       WHISPER_DEVICE: cpu
       WHISPER_LANGUAGE: "${WHISPER_LANGUAGE:-pt}"
       AUTOCORTES_FFMPEG_THREADS: "${AUTOCORTES_FFMPEG_THREADS:-2}"
-      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
     volumes:
       - state:/state
       - models:/models

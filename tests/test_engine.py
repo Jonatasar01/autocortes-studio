@@ -141,17 +141,11 @@ class RightsTests(unittest.TestCase):
         self.assertTrue(review['requires_acknowledgement'])
 
     def test_unrecognized_music_is_not_free(self):
-        review = rights_review('owned', 'unknown', '', True, 'none', 'no', 'yes',
-                               music_review={'status': 'no_match', 'matches': []})
+        review = rights_review('owned', 'unknown', '', True, 'none', 'no', 'yes')
         music = next(i for i in review['items'] if i['key'] == 'musica_audio')
         self.assertEqual(music['status'], 'nao_verificado')
-        self.assertIn('NÃO indica', music['reason'])
+        self.assertIn('não foram confirmados', music['reason'])
 
-    def test_music_match_raises_risk(self):
-        review = rights_review('owned', 'no', '', True, 'none', 'no', 'yes',
-                               music_review={'status': 'matched', 'matches': [
-                                   {'title': 'Canção', 'artist': 'Artista', 'uncertain': True}]})
-        self.assertEqual(review['level'], 'alto')
 
     def test_categories_are_separate(self):
         keys = [i['key'] for i in rights_review('unknown', 'unknown', '', True)['items']]
@@ -162,27 +156,6 @@ class RightsTests(unittest.TestCase):
         review = rights_review('owned', 'no', 'x', True, 'none', 'no', 'yes')
         mon = next(i for i in review['items'] if i['key'] == 'monetizacao')
         self.assertNotEqual(mon['status'], 'declarado')
-
-
-class MusicTests(unittest.TestCase):
-    def test_music_fails_closed_without_optin(self):
-        from pathlib import Path
-        from app.music import recognize_music
-        out = recognize_music(Path('nao_existe.mp4'), 120, False, True)
-        self.assertEqual(out['status'], 'not_requested')
-        self.assertEqual(out['matches'], [])
-
-    def test_not_configured_says_not_performed(self):
-        import os
-        from pathlib import Path
-        from app.music import recognize_music
-        saved = {k: os.environ.pop(k, None) for k in ('ACRCLOUD_HOST', 'ACRCLOUD_ACCESS_KEY', 'ACRCLOUD_ACCESS_SECRET')}
-        try:
-            out = recognize_music(Path('x.mp4'), 120, True, True)
-        finally:
-            os.environ.update({k: v for k, v in saved.items() if v})
-        self.assertEqual(out['status'], 'not_configured')
-        self.assertIn('NÃO', out['message'])
 
 
 if __name__ == '__main__':

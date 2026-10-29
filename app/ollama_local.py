@@ -21,6 +21,8 @@ STATUS_TTL = 15.0
 
 
 def request(path: str, payload: dict | None = None, timeout: float | None = None) -> dict:
+    if config.OLLAMA_DISABLED:
+        raise AppError('Ollama desativado (AUTOCORTES_DISABLE_OLLAMA).', 503, 'ollama_unavailable')
     body = json.dumps(payload).encode('utf-8') if payload is not None else None
     req = urllib.request.Request(config.OLLAMA_URL + path, data=body, headers={'Content-Type': 'application/json'})
     try:
@@ -63,6 +65,9 @@ def pick_model(names: set[str]) -> str | None:
 def status(refresh: bool = False) -> dict:
     """Ollama no ar e modelo disponível (em cache por alguns segundos: a tela consulta com frequência)."""
     global _status_cache
+    if config.OLLAMA_DISABLED:
+        return {'running': False, 'model': None, 'models': [], 'fallback': False,
+                'message': 'Ollama desativado (AUTOCORTES_DISABLE_OLLAMA).'}
     with _status_lock:
         if not refresh and _status_cache and time.monotonic() - _status_cache[0] < STATUS_TTL:
             return dict(_status_cache[1])

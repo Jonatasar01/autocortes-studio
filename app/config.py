@@ -69,6 +69,7 @@ OLLAMA_ENABLED = _flag('OLLAMA_ENABLED', False)   # refinador do ranking (a cura
 OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen3:4b')
 OLLAMA_FALLBACK_MODEL = os.getenv('OLLAMA_FALLBACK_MODEL', 'qwen3:1.7b')
 OLLAMA_URL = 'http://127.0.0.1:11434'  # fixo: nunca envia transcrições para fora da máquina
+OLLAMA_DISABLED = _flag('AUTOCORTES_DISABLE_OLLAMA', False)   # testes: nunca chama o modelo real
 OLLAMA_TIMEOUT = _int('OLLAMA_TIMEOUT', 90, 5, 600)
 OLLAMA_TOTAL_TIMEOUT = _int('OLLAMA_TOTAL_TIMEOUT', 600, 30, 3600)
 OLLAMA_CURATION_TIMEOUT = _int('OLLAMA_CURATION_TIMEOUT', 300, 30, 1800)   # por chamada (bloco de 5 min na CPU)
@@ -79,16 +80,8 @@ LOCAL_CURATION_CHUNK_SECONDS = _int('AUTOCORTES_LOCAL_CURATION_CHUNK_SECONDS', 3
 LOCAL_CURATION_OVERLAP_SECONDS = _int('AUTOCORTES_LOCAL_CURATION_OVERLAP_SECONDS', 30, 0, 300)
 LOCAL_CURATION_JUDGE_BATCH = _int('AUTOCORTES_LOCAL_CURATION_JUDGE_BATCH', 4, 1, 16)
 
-# Reconhecimento musical externo (opt-in)
-ACRCLOUD_MAX_SAMPLES = _int('ACRCLOUD_MAX_SAMPLES', 3, 1, 10)
-
-# Narração com ChatGPT/OpenAI (opt-in; chave apenas por variável de ambiente OPENAI_API_KEY)
-OPENAI_BASE_URL = 'https://api.openai.com/v1'
-OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-6-luna')
-OPENAI_TTS_MODEL = os.getenv('OPENAI_TTS_MODEL', 'gpt-4o-mini-tts')
-OPENAI_VOICE = os.getenv('OPENAI_VOICE', 'cedar')
-OPENAI_TIMEOUT = _int('OPENAI_TIMEOUT', 120, 10, 600)
-OPENAI_MAX_FRAMES = _int('OPENAI_MAX_FRAMES', 8, 0, 20)
+# Curadoria com o Gemini (nuvem, opt-in; chave só pela variável de ambiente GEMINI_API_KEY)
+CLOUD_TIMEOUT = _int('AUTOCORTES_CLOUD_TIMEOUT', 120, 10, 600)
 
 # Automação: pastas definidas só por variável de ambiente (a interface não grava em caminhos arbitrários)
 WATCH_DIR = Path(os.getenv('AUTOCORTES_WATCH_DIR', str(ROOT / 'entrada'))).resolve()

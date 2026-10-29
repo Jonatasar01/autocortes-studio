@@ -71,7 +71,6 @@ class FlowTests(ServiceBase):
         self.assertEqual(p['selection']['mode'], 'transcricao')
         self.assertGreaterEqual(len(p['clips']), 2)
         self.assertEqual(p['rights']['level'], 'informado_sem_alertas')
-        self.assertEqual(p['music_review']['status'], 'not_requested')
         clip = service.edit_clip(res['id'], 1, 1.0, 7.5, 'Título <editado>\x00')
         self.assertEqual(clip['title'], 'Título <editado>')
         job = service.request_export(res['id'], 1, {'format': '9:16', 'framing': 'blur', 'subtitles': True})
@@ -276,10 +275,10 @@ class FlowTests(ServiceBase):
         from unittest import mock
         from app import curation, settings
         ai_clip = {'start': 0.5, 'end': 9.0, 'score': 88.0, 'title': 'Escolhido pela IA', 'description': 'x',
-                   'reasons': ['IA'], 'selection_mode': 'transcricao', 'ai_curation': 'anthropic'}
-        settings.update({'curation': {'provider': 'anthropic', 'consent': True}})
+                   'reasons': ['IA'], 'selection_mode': 'transcricao', 'ai_curation': 'gemini'}
+        settings.update({'curation': {'provider': 'gemini', 'consent': True}})
         try:
-            with mock.patch.object(curation, 'curate', return_value=([ai_clip], {'state': 'ok', 'provider': 'anthropic',
+            with mock.patch.object(curation, 'curate', return_value=([ai_clip], {'state': 'ok', 'provider': 'gemini',
                                                                                'message': 'ok'})):
                 res = self.create(self.video)
         finally:

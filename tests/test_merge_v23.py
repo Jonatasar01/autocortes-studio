@@ -193,13 +193,9 @@ PHRASES = [
 ]
 
 
-def openai_reply(obj):
-    return {'status': 'completed', 'output': [{'type': 'message', 'content': [
-        {'type': 'output_text', 'text': json.dumps(obj, ensure_ascii=False)}]}]}
-
-
-def anthropic_reply(obj):
-    return {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': '```json\n' + json.dumps(obj) + '\n```'}]}
+def gemini_reply(obj):
+    return {'candidates': [{'finishReason': 'STOP',
+                            'content': {'parts': [{'text': json.dumps(obj, ensure_ascii=False)}]}}]}
 
 
 class FakeProvider:
@@ -215,18 +211,13 @@ class FakeProvider:
         text = json.dumps(payload)
         if 'cortes_propostos' in text or 'Proponha' in text:
             return self.wrap({'clips': [
-                {'start': 0, 'end': 3, 'title': 'O erro no preço do café', 'hook_text': 'Você erra o preço do café?',
-                 'summary': 'Dicas para pagar menos no café.', 'hashtags': ['#café', 'economia', '#dicas']},
-                {'start': 4, 'end': 5, 'title': 'Bilionário revela fortuna secreta', 'hook_text': 'Fortuna secreta revelada',
-                 'summary': 'A seca e o preço.', 'hashtags': ['#seca']},
-                {'start': 99, 'end': 120, 'title': 'fora do texto', 'hook_text': '', 'summary': '', 'hashtags': []},
+                {'start': 0, 'end': 3, 'title': 'O erro no preço do café', 'hook_text': 'Você erra o preço do café?'},
+                {'start': 4, 'end': 5, 'title': 'Bilionário revela fortuna secreta', 'hook_text': 'Fortuna secreta revelada'},
+                {'start': 99, 'end': 120, 'title': 'fora do texto', 'hook_text': ''},
             ]})
-        ids = [int(m) for m in re.findall(r'id=(\d+)', payload.get('messages', [{}])[0].get('content', '')
-                                           if 'messages' in payload else payload['input'][1]['content'])]
+        ids = [int(m) for m in re.findall(r'id=(\d+)', payload['contents'][0]['parts'][0]['text'])]
         return self.wrap({'results': [
-            {'id': i, 'gancho': 9 - i, 'coerencia': 8, 'valor': 7.5, 'tendencia': 6, 'comentario_gancho': 'Pergunta forte.',
-             'comentario_coerencia': 'Começo e fim claros.', 'comentario_valor': 'Dica prática.',
-             'comentario_tendencia': 'Tema de interesse amplo.'} for i in ids]})
+            {'id': i, 'gancho': 9 - i, 'coerencia': 8, 'valor': 7.5, 'tendencia': 6} for i in ids]})
 
 
 class CurationTests(unittest.TestCase):
@@ -235,22 +226,22 @@ class CurationTests(unittest.TestCase):
 
     def run_curation(self, provider, wrap):
         fake = FakeProvider(wrap)
-        env = {'OPENAI_API_KEY': 'sk-teste', 'ANTHROPIC_API_KEY': 'sk-ant-teste'}
+        env = {'GEMINI_API_KEY': 'AIza-teste'}
         with mock.patch.dict(os.environ, env), mock.patch.object(curation, '_post', fake):
             clips, status = curation.curate(provider, self.transcript, 25, 12, 3, [])
         return clips, status, fake
 
-    def test_openai_curation_scores_and_grounds_titles(self):
-        clips, status, fake = self.run_curation('openai', openai_reply)
+    def test_gemini_curation_scores_and_grounds_titles(self):
+        clips, status, fake = self.run_curation('gemini', gemini_reply)
         self.assertEqual(status['state'], 'ok')
         self.assertEqual(len(clips), 2)
         best = clips[0]
         self.assertEqual(best['rank'], 1)
-        self.assertEqual(best['ai_curation'], 'openai')
+        self.assertEqual(best['ai_curation'], 'gemini')
         self.assertEqual(best['title'], 'O erro no preço do café')
         self.assertEqual(best['hook_text'], 'Você erra o preço do café?')
-        self.assertIn('#café', best['hashtags'])
-        self.assertIn('#economia', best['hashtags'])
+        self.assertNotIn('hashtags', best)          # pedido enxuto: sem hashtags, resumo nem comentários
+        self.assertNotIn('ai_summary', best)
         self.assertTrue(any(r.startswith('Gancho 9.0/10') for r in best['reasons']))
         self.assertGreaterEqual(best['score'], clips[1]['score'])
         # título e gancho inventados são descartados
@@ -262,47 +253,37 @@ class CurationTests(unittest.TestCase):
         self.assertLessEqual(clips[0]['end'], 25)
         a, b = sorted(clips, key=lambda c: c['start'])
         self.assertLessEqual(a['end'], b['start'] + 0.2 * (b['end'] - b['start']))
-        # pedido usa esquema estrito, sem armazenamento e marca a transcrição como não confiável
+        # pedido com esquema de resposta JSON, chave no cabeçalho (não na URL) e transcrição como não confiável
         url, payload, headers = fake.calls[0]
-        self.assertTrue(url.endswith('/responses'))
-        self.assertFalse(payload['store'])
-        self.assertTrue(payload['text']['format']['strict'])
-        self.assertIn('<transcricao>', payload['input'][1]['content'])
-        self.assertEqual(headers['Authorization'], 'Bearer sk-teste')
-
-    def test_anthropic_curation(self):
-        clips, status, fake = self.run_curation('anthropic', anthropic_reply)
-        self.assertEqual(status['provider'], 'anthropic')
-        self.assertTrue(clips)
-        url, payload, headers = fake.calls[0]
-        self.assertEqual(url, curation.ANTHROPIC_URL)
-        self.assertEqual(headers['x-api-key'], 'sk-ant-teste')
-        self.assertIn('anthropic-version', headers)
+        self.assertTrue(url.endswith(':generateContent'))
+        self.assertNotIn('AIza', url)
+        self.assertEqual(headers['x-goog-api-key'], 'AIza-teste')
+        config_ = payload['generationConfig']
+        self.assertEqual((config_['responseMimeType'], config_['temperature']), ('application/json', 0))
+        self.assertEqual(config_['responseSchema']['type'], 'OBJECT')
+        self.assertNotIn('additionalProperties', json.dumps(config_['responseSchema']))
+        self.assertIn('NÃO CONFIÁVEL', payload['systemInstruction']['parts'][0]['text'])
+        self.assertIn('<transcricao>', payload['contents'][0]['parts'][0]['text'])
 
     def test_missing_key_and_bad_response_raise(self):
-        with mock.patch.dict(os.environ, {'ANTHROPIC_API_KEY': ''}):
+        with mock.patch.dict(os.environ, {'GEMINI_API_KEY': '', 'GOOGLE_API_KEY': ''}):
             with self.assertRaises(AppError) as ctx:
-                curation.curate('anthropic', self.transcript, 25, 12, 3, [])
+                curation.curate('gemini', self.transcript, 25, 12, 3, [])
         self.assertEqual(ctx.exception.code, 'curation_not_configured')
-        bad = lambda *a, **k: {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': 'sem json'}]}  # noqa: E731
-        with mock.patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'x'}), mock.patch.object(curation, '_post', bad):
-            with self.assertRaises(AppError):
-                curation.curate('anthropic', self.transcript, 25, 12, 3, [])
+        for bad in ({'candidates': [{'content': {'parts': [{'text': 'sem json'}]}}]},
+                    {'candidates': [{'finishReason': 'MAX_TOKENS', 'content': {'parts': [{'text': '{'}]}}]},
+                    {'promptFeedback': {'blockReason': 'SAFETY'}}):
+            with self.subTest(bad=bad), mock.patch.dict(os.environ, {'GEMINI_API_KEY': 'x'}), \
+                    mock.patch.object(curation, '_post', lambda *a, **k: bad):
+                with self.assertRaises(AppError) as ctx:   # todas as respostas ruins: nenhum trecho proposto
+                    curation.curate('gemini', self.transcript, 25, 12, 3, [])
+                self.assertEqual(ctx.exception.code, 'curation_empty')
 
     def test_judge_scores_are_clamped(self):
         self.assertEqual(curation._score(15), 10.0)
         self.assertEqual(curation._score(-3), 0.0)
         self.assertEqual(curation._score('x'), 0.0)
         self.assertEqual(curation._score(float('nan')), 0.0)
-
-    def test_publication_uses_ai_summary_and_hashtags(self):
-        clip = {'id': 1, 'title': 'T', 'description': 'texto do trecho', 'ai_summary': 'Resumo da IA.',
-                'hashtags': ['#café', '#economia']}
-        record = {'file': 'a.mp4', 'width': 1080, 'height': 1920, 'format': '9:16', 'warnings': []}
-        text = publish.package({'rights': {}}, clip, record)
-        self.assertIn('Resumo da IA.', text)
-        self.assertIn('#café #economia #shorts', text)
-
 
 class CurationSettingsTests(unittest.TestCase):
     def setUp(self):
@@ -316,20 +297,28 @@ class CurationSettingsTests(unittest.TestCase):
 
     def test_defaults_send_nothing(self):
         s = settings.load()
-        self.assertEqual(s['curation']['provider'], 'heuristica')
+        self.assertEqual(s['curation']['provider'], 'ollama')      # local: nada sai do computador
         self.assertFalse(s['curation']['consent'])
         self.assertEqual(s['autopilot']['subtitle_style'], 'dinamica')
 
     def test_cloud_provider_requires_consent_and_records_time(self):
         with self.assertRaises(AppError) as ctx:
-            settings.update({'curation': {'provider': 'anthropic', 'consent': False}})
+            settings.update({'curation': {'provider': 'gemini', 'consent': False}})
         self.assertEqual(ctx.exception.code, 'consent_required')
-        saved = settings.update({'curation': {'provider': 'anthropic', 'consent': True, 'prompt': 'café'}})
+        saved = settings.update({'curation': {'provider': 'gemini', 'consent': True, 'prompt': 'café'}})
         self.assertIsNotNone(saved['curation']['consent_at'])
         saved = settings.update({'curation': {'provider': 'heuristica', 'consent': False}})
         self.assertIsNone(saved['curation']['consent_at'])
         with self.assertRaises(AppError):
             settings.update({'curation': {'provider': 'outro', 'consent': True}})
+
+    def test_retired_cloud_providers_become_ollama(self):
+        (config.DATA_DIR).mkdir(parents=True, exist_ok=True)
+        (config.DATA_DIR / 'settings.json').write_text(json.dumps(
+            {'curation': {'provider': 'openai', 'consent': True}, 'autopilot': {'max_clips': 7}}), encoding='utf-8')
+        s = settings.load()
+        self.assertEqual((s['curation']['provider'], s['curation']['consent']), ('ollama', False))
+        self.assertEqual(s['autopilot']['max_clips'], 7)            # o resto das configurações continua
 
     def test_autopilot_accepts_track_and_rejects_bad_style(self):
         saved = settings.update({'autopilot': {'framing': 'track', 'subtitle_style': 'classica', 'hook': False}})
@@ -380,7 +369,7 @@ class PipelineV23Tests(unittest.TestCase):
 
     def analyze(self, fake):
         form = {**OWNED, 'target_seconds': 12, 'desired_count': 3, 'autopilot': False}
-        with mock.patch.dict(os.environ, {'OPENAI_API_KEY': 'sk-teste'}), mock.patch.object(curation, '_post', fake):
+        with mock.patch.dict(os.environ, {'GEMINI_API_KEY': 'AIza-teste'}), mock.patch.object(curation, '_post', fake):
             with self.video.open('rb') as fh:
                 pid = service.create_project(iter(lambda: fh.read(1 << 20), b''), self.video.name, form)['id']
             p = wait_until(lambda: (lambda q: q if q.get('status') in ('ready', 'error') else None)(
@@ -389,14 +378,14 @@ class PipelineV23Tests(unittest.TestCase):
         return pid, p
 
     def test_cloud_curation_then_tracked_dynamic_export(self):
-        settings.update({'curation': {'provider': 'openai', 'consent': True}})
+        settings.update({'curation': {'provider': 'gemini', 'consent': True}})
         try:
-            pid, p = self.analyze(FakeProvider(openai_reply))
+            pid, p = self.analyze(FakeProvider(gemini_reply))
         finally:
             settings.update({'curation': {'provider': 'heuristica', 'consent': False}})
         self.assertEqual(p['curation']['state'], 'ok', p['curation'])
-        self.assertTrue(all(c.get('ai_curation') == 'openai' for c in p['clips']))
-        self.assertEqual(p['cloud_consents'][-1]['provider'], 'OpenAI (ChatGPT)')
+        self.assertTrue(all(c.get('ai_curation') == 'gemini' for c in p['clips']))
+        self.assertEqual(p['cloud_consents'][-1]['provider'], 'Google Gemini (nuvem)')
         clip = p['clips'][0]
         with mock.patch.object(reframe, 'detect_faces', return_value=[(0.6, 0.3, 0.12, 0.22)]), \
                 mock.patch.object(reframe, 'yunet_available', return_value=False):
@@ -410,12 +399,12 @@ class PipelineV23Tests(unittest.TestCase):
         self.assertTrue(record['face_tracking'])
         self.assertTrue(record['subtitles_burned'])
         package = (storage.project_dir(pid) / 'clips' / record['package_file']).read_text(encoding='utf-8')
-        self.assertIn('Dicas para pagar menos no café.', package)
+        self.assertIn('TÍTULO SUGERIDO', package)
 
     def test_cloud_failure_keeps_heuristic_selection(self):
-        settings.update({'curation': {'provider': 'openai', 'consent': True}})
+        settings.update({'curation': {'provider': 'gemini', 'consent': True}})
         try:
-            pid, p = self.analyze(FakeProvider(openai_reply, fail=True))
+            pid, p = self.analyze(FakeProvider(gemini_reply, fail=True))
         finally:
             settings.update({'curation': {'provider': 'heuristica', 'consent': False}})
         self.assertEqual(p['curation']['state'], 'failed')

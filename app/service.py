@@ -16,7 +16,7 @@ import unicodedata
 from pathlib import Path
 from typing import Iterable
 
-from . import (autopilot, config, curation, direction, downloads, filters, media, music, narration, pipeline, publish, reframe, rights, settings,
+from . import (autopilot, config, curation, direction, downloads, filters, media, pipeline, publish, reframe, rights, settings,
                storage, subtitles, transcription, watcher)
 from .errors import AppError
 from .jobs import Handler, JobManager
@@ -58,10 +58,7 @@ def _startup() -> JobManager:
         'download': Handler(downloads.run, 1),
         'filmcraft': Handler(advanced.run, 1),
         'analysis': Handler(pipeline.run_analysis, config.ANALYSIS_WORKERS, _end_analysis),
-        'export': Handler(pipeline.run_export, config.EXPORT_WORKERS, _end_export,
-                          retry_codes=RETRYABLE, max_retries=config.JOB_MAX_RETRIES),
-        'narration': Handler(pipeline.run_narration, 1, _end_narration,
-                             retry_codes=RETRYABLE, max_retries=config.JOB_MAX_RETRIES),
+        'export': Handler(pipeline.run_export, config.EXPORT_WORKERS, _end_export),
     })
     stale = manager.start()
     watcher.start()
@@ -85,9 +82,6 @@ def _startup() -> JobManager:
     return manager
 
 
-RETRYABLE = {'openai_unreachable', 'openai_rate_limit', 'openai_unavailable'}
-
-
 def _end_analysis(ctx, status, error):
     pipeline.end_analysis(ctx, status, error)
     if status == 'done':
@@ -100,10 +94,6 @@ def _end_analysis(ctx, status, error):
 def _end_export(ctx, status, error):
     pipeline.end_export(ctx, status, error)
     autopilot.after_job('export', ctx, status, error)
-
-
-def _end_narration(ctx, status, error):
-    autopilot.after_job('narration', ctx, status, error)
 
 
 def shutdown() -> None:
@@ -158,7 +148,6 @@ def validate_options(form: dict) -> dict:
                                        'Resposta sobre trechos de terceiros inválida.'),
         'monetization': _choice(form.get('monetization', 'unknown'), rights.YES_NO_UNKNOWN, 'Resposta sobre monetização inválida.'),
         'license_notes': _clean_text(form.get('license_notes', ''), 2000),
-        'recognize_music': str(form.get('recognize_music_opt_in', '')).strip().lower() in truthy,
         'target_seconds': _int_range(form.get('target_seconds', 35), 10, 90, 'Duração por corte deve ficar entre 10 e 90 s.'),
         # 0 = automático: entram os cortes com nota boa, sem número fixo (limite de segurança por hora de vídeo).
         'desired_count': _int_range(form.get('desired_count', 0), 0, 15,
@@ -241,15 +230,11 @@ class Upload:
                     'selection': {'mode': 'manual', 'reason': 'Os cortes serão definidos pelo usuário.'},
                     'transcription': {'state': 'not_requested', 'message': 'Transcrição não solicitada.'},
                     'transcript_status': 'Transcrição não solicitada.',
-                    'music_review': {'status': 'not_requested', 'message': 'Reconhecimento musical não executado.'},
                     'rights': rights.rights_review(
                         options['source_rights'], options['external_audio'], options['license_notes'],
                         info['audio'], options['graphics_rights'], options['third_party_footage'],
                         options['monetization']),
                 })
-            if self.options['recognize_music'] and self.editing_mode != 'manual':
-                project['music_consent'] = {'granted_at': time.time(), 'provider': 'ACRCloud',
-                                            'scope': f'até {config.ACRCLOUD_MAX_SAMPLES} amostras de 12 s de áudio'}
             storage.write_project(self.project_id, project)
             if self.editing_mode == 'manual':
                 return {'id': self.project_id, 'status': 'ready', 'warnings': warnings}
@@ -347,7 +332,7 @@ def public_job(job: dict | None) -> dict | None:
     return {k: job.get(k) for k in ('id', 'kind', 'status', 'stage', 'progress', 'message', 'error',
                                     'created', 'started', 'finished')} | {
         'clip_id': job['params'].get('clip_id'), 'format': job['params'].get('format'),
-        'narration': job['params'].get('narration'), 'preview': bool(job['params'].get('preview')),
+        'preview': bool(job['params'].get('preview')),
         'result': job.get('result')}
 
 
@@ -817,31 +802,12 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
         _require_ready(p)
         clip = _find_clip(p, clip_id)
         review = p.get('rights') or {}
-        if preview:
-            # A prévia fica no computador e não é publicada; narração (paga) não entra na prévia.
-            options = {**options, 'narration': False}
         if not preview and review.get('requires_acknowledgement') and not options.get('acknowledge_rights'):
             raise AppError('Há riscos relevantes de direitos neste projeto. Leia os alertas e confirme que está '
                            'ciente antes de exportar.', 409, 'rights_ack_required')
         if not preview and options.get('acknowledge_rights') and review.get('requires_acknowledgement'):
             p.setdefault('rights_acknowledgements', []).append({'at': time.time(), 'clip_id': clip_id,
                                                                 'level': review.get('level')})
-        use_narration = bool(options.get('narration'))
-        voice = options.get('voice') or config.OPENAI_VOICE
-        if use_narration:
-            if not (clip.get('narration') or {}).get('segments'):
-                raise AppError('Gere o roteiro de narração deste corte antes de exportar com narração.', 409, 'no_script')
-            if not narration.is_configured():
-                raise AppError('Narração indisponível: defina OPENAI_API_KEY e reinicie o aplicativo.', 400,
-                               'openai_not_configured')
-            if voice not in narration.VOICES:
-                raise AppError('Voz inválida.', 400, 'bad_voice')
-            if not options.get('narration_consent'):
-                raise AppError('Confirme o envio do roteiro à OpenAI para gerar a voz.', 409, 'consent_required')
-            p.setdefault('openai_consents', []).append({
-                'granted_at': time.time(), 'provider': 'OpenAI', 'clip_id': clip_id,
-                'scope': 'síntese de voz', 'model': config.OPENAI_TTS_MODEL,
-                'source': 'piloto automático (Configurações)' if options.get('autopilot') else 'pedido na interface'})
         plan_name = options.get('edit_plan')
         plan = None
         if plan_name:
@@ -865,19 +831,13 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
         hook_text = None
         if hook:
             hook_text = clip.get('hook_text') or (clip.get('title') if clip.get('selection_mode') != 'temporal' else None)
-        subtitle_source = options.get('subtitle_source') or ('narracao' if use_narration else 'fala')
-        if subtitle_source not in ('fala', 'narracao'):
-            raise AppError('Origem de legenda inválida.', 400, 'bad_input')
         params = {'clip_id': clip_id, 'format': fmt, 'framing': framing,
                   'subtitles': bool(options.get('subtitles', True)),
                   'subtitle_style': subtitle_style, 'hook': bool(hook_text), 'hook_text': hook_text,
                   'refine_subtitles': bool(options.get('refine_subtitles', True)),
                   'normalize_audio': bool(options.get('normalize_audio', False)),
-                  'narration': use_narration, 'voice': voice if use_narration else None,
-                  'original_volume': _int_range(options.get('original_volume', 100), 0, 100, 'Volume inválido.'),
-                  'subtitle_source': subtitle_source,
                   'filter': _filter_id(options.get('filter')),
-                  'shorten_pauses': bool(options.get('shorten_pauses', False)) and not use_narration,
+                  'shorten_pauses': bool(options.get('shorten_pauses', False)),
                   'autopilot': bool(options.get('autopilot', False)),
                   'autopilot_run_id': ((p.get('autopilot') or {}).get('run_id')
                                        if options.get('autopilot') else None),
@@ -895,8 +855,6 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
                                           or auto_framing_segments(p, clip))
         if preview:
             params['preview'] = True
-        if use_narration:
-            params['narration_script'] = copy.deepcopy(clip['narration'])
     key = 'export:' + project_id + ':' + hashlib.sha256(
         json.dumps(params, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     job, created = _jobs().submit(project_id, 'export', params, dedupe_key=key)
@@ -913,49 +871,6 @@ def preview_path(project_id: str, clip_id: int) -> Path:
     if not path.is_file():
         raise AppError('A prévia não está mais disponível. Gere de novo.', 404, 'no_preview')
     return path
-
-
-def request_narration(project_id: str, clip_id: int, options: dict) -> dict:
-    """Gera o roteiro com ChatGPT (tarefa na fila). Exige consentimento explícito para envio à OpenAI."""
-    style = options.get('style') or 'recap'
-    if style not in narration.STYLES:
-        raise AppError('Estilo de narração inválido.', 400, 'bad_style')
-    if not narration.is_configured():
-        raise AppError('Narração indisponível: defina a variável OPENAI_API_KEY e reinicie o aplicativo.', 400,
-                       'openai_not_configured')
-    if not options.get('consent'):
-        raise AppError('Confirme que autoriza o envio da transcrição do trecho (e dos quadros, se marcado) à OpenAI.',
-                       409, 'consent_required')
-    with storage.edit_project(project_id) as p:
-        _require_ready(p)
-        clip = _find_clip(p, clip_id)
-        params = {'clip_id': clip_id, 'style': style, 'use_frames': bool(options.get('use_frames')),
-                  'context': _clean_text(options.get('context', ''), 500), 'start': clip['start'], 'end': clip['end'],
-                  'revision': clip.get('revision', 1), 'autopilot': bool(options.get('autopilot', False))}
-        params['autopilot_run_id'] = ((p.get('autopilot') or {}).get('run_id')
-                                      if options.get('autopilot') else None)
-        p.setdefault('openai_consents', []).append({
-            'granted_at': time.time(), 'provider': 'OpenAI', 'clip_id': clip_id,
-            'scope': 'roteiro e quadros' if params['use_frames'] else 'roteiro', 'model': config.OPENAI_MODEL,
-            'source': _clean_text(options.get('consent_source') or 'pedido na interface', 120)})
-    key = 'narration:{}:{clip_id}:{style}:{use_frames}:{start}:{end}'.format(project_id, **params) + hashlib.sha1(params['context'].encode()).hexdigest()[:12]
-    if params['autopilot_run_id']:
-        key += ':' + params['autopilot_run_id']
-    job, created = _jobs().submit(project_id, 'narration', params, dedupe_key=key)
-    return public_job(job) | {'duplicate': not created}
-
-
-def update_narration(project_id: str, clip_id: int, segments: list) -> dict:
-    """Salva o roteiro editado pelo usuário (validado como o da IA)."""
-    with storage.edit_project(project_id) as p:
-        _require_ready(p)
-        clip = _find_clip(p, clip_id)
-        script = clip.get('narration')
-        if not script:
-            raise AppError('Gere o roteiro antes de editá-lo.', 409, 'no_script')
-        clean, warnings = narration.validate_segments(segments, clip['end'] - clip['start'])
-        script.update({'segments': clean, 'warnings': warnings, 'edited_at': time.time(), 'edited_manually': True})
-        return dict(script)
 
 
 def export_all(project_id: str, options: dict) -> dict:
@@ -1269,17 +1184,12 @@ def report(project_id: str) -> dict:
         'project': p['name'], 'media': p['media'],
         'rights_declarations': {k: p.get(k) for k in ('source_rights', 'external_audio', 'graphics_rights',
                                                       'third_party_footage', 'monetization', 'license_notes')},
-        'analysis': p.get('rights'), 'music_recognition': p.get('music_review'),
-        'music_consent': p.get('music_consent'), 'rights_acknowledgements': p.get('rights_acknowledgements', []),
-        'openai_consents': p.get('openai_consents', []),
+        'analysis': p.get('rights'), 'rights_acknowledgements': p.get('rights_acknowledgements', []),
+        'cloud_consents': p.get('cloud_consents', []),
         'transcription': p.get('transcription'), 'selection': p.get('selection'), 'ranking': p.get('ranker'),
-        'warnings': p.get('warnings', []),
+        'curation': p.get('curation'), 'warnings': p.get('warnings', []),
         'clips': [{k: c.get(k) for k in ('id', 'start', 'end', 'score', 'selection_mode', 'title', 'reasons')} |
-                  {'narration': ({k: (c.get('narration') or {}).get(k) for k in
-                                  ('style', 'model', 'title', 'segments', 'consent', 'edited_manually')}
-                                 if c.get('narration') else None),
-                   'exports': {f: {k: r.get(k) for k in ('file', 'width', 'height', 'subtitles_burned',
-                                                          'ai_narration', 'narration', 'warnings')} |
+                  {'exports': {f: {k: r.get(k) for k in ('file', 'width', 'height', 'subtitles_burned', 'warnings')} |
                                {'validado': (r.get('validation') or {}).get('valid')}
                                for f, r in (c.get('exports') or {}).items()}}
                   for c in p.get('clips', [])],
@@ -1292,15 +1202,10 @@ def health() -> dict:
     return {'ok': caps['ffmpeg'] and caps['ffprobe'], 'version': config.VERSION, 'mode': 'local', 'bind': '127.0.0.1',
             'ffmpeg': caps, 'transcription': transcription.available(),
             'whisper_model': config.WHISPER_MODEL if transcription.available() else None,
-            'ollama_enabled': config.OLLAMA_ENABLED, 'music_provider_configured': music.is_configured(),
-            'openai_configured': narration.is_configured(),
             'curation': curation.status(),
             'face_tracking': reframe.available(),
             'automation': {'watch': watcher.status(), 'output_dir': str(config.OUTPUT_DIR),
                            'autopilot_default': settings.load()['autopilot']['enabled']},
-            'narration': {'styles': {k: v['label'] for k, v in narration.STYLES.items()},
-                          'voices': list(narration.VOICES), 'default_voice': config.OPENAI_VOICE,
-                          'model': config.OPENAI_MODEL, 'tts_model': config.OPENAI_TTS_MODEL},
             'free_disk_gb': round(free / 1024 ** 3, 1),
             'limits': {'max_upload_gb': round(config.MAX_UPLOAD_BYTES / 1024 ** 3, 1),
                        'max_source_hours': config.MAX_SOURCE_SECONDS // 3600,

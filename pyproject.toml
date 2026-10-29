@@ -17,9 +17,7 @@ ai = [
   "opencv-python-headless>=4.8,<5",  # o OpenCV 5 tirou o CascadeClassifier (detecção de rostos)
   "numpy>=1.24",
 ]
-music = ["requests>=2.31,<3"]
 links = ["yt-dlp[default]>=2026.1.1"]
-tts = ["edge-tts>=7.2,<8"]  # narração dos vídeos com coluna script (app/audio/tts_generator.py)
 # Transcrição na GPU NVIDIA no Windows: DLLs do CUDA 12 que o CTranslate2 procura (~1,2 GB).
 gpu = [
   "nvidia-cublas-cu12>=12.4,<13; sys_platform == 'win32'",

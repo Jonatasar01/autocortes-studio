@@ -1,5 +1,13 @@
 ## Não lançado
 
+### Fase 8 — fluxo enxuto e validação
+- Continuação das alterações locais do Claude: curadoria com Ollama e Gemini, pedidos enxutos, heurística de reserva e seleção sem limite opcional preservada.
+- Removidos os módulos de narração/voz, reconhecimento musical externo e lote CSV independente; documentação e dependências acompanham o escopo. Dados e exportações existentes permanecem no disco.
+- Otimizações locais da heurística com cache limitado de normalização e menos varreduras de tokens; não alteram pesos ou critérios.
+- Suíte isola o Ollama real por padrão. Adaptada cobertura de consentimento, recuperação, APIs e respostas malformadas; testes Gemini usam respostas simuladas, sem chave real.
+
+
+
 ### Curadoria local: modo rápido, junção intercalada e sem limite
 - **Modo rápido** (padrão do Ollama): proposta sem resumo/hashtags e juiz só com as notas, até 24 trechos no juiz.
   Medido na mesma janela de 1 h (5 aprovados): **5 de 5 com 6 cortes em 496 s**, contra 4 de 5 com 12 cortes em

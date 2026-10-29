@@ -1,7 +1,7 @@
 """Configurações persistentes do usuário (data/settings.json).
 
 Guardam o perfil de automação: declarações de direitos padrão, critérios do piloto automático,
-formatos de exportação e preferências de narração. Nunca guardam segredos (chaves ficam em
+formatos de exportação e a curadoria com IA. Nunca guardam segredos (chaves ficam em
 variáveis de ambiente) nem caminhos arbitrários (pastas de entrada/saída só por variável de ambiente).
 """
 from __future__ import annotations
@@ -18,8 +18,6 @@ from .errors import AppError
 
 _lock = threading.RLock()
 
-STYLES = ('recap', 'comentario', 'documentario')
-SUBTITLE_SOURCES = ('fala', 'narracao')
 SUBTITLE_STYLES = ('classica', 'dinamica')
 
 
@@ -30,7 +28,6 @@ def defaults() -> dict:
             'target_seconds': 35, 'desired_count': 0,   # 0 = automático
             'source_rights': 'unknown', 'external_audio': 'unknown', 'graphics_rights': 'unknown',
             'third_party_footage': 'unknown', 'monetization': 'unknown', 'license_notes': '',
-            'recognize_music_opt_in': False,
         },
         'autopilot': {
             'enabled': False,             # padrão do formulário de envio e da pasta monitorada
@@ -44,15 +41,10 @@ def defaults() -> dict:
             'hook': True,
             'normalize_audio': True,
             'shorten_pauses': False,
-            'narration': {
-                'enabled': False, 'style': 'recap', 'voice': config.OPENAI_VOICE, 'original_volume': 60,
-                'use_frames': False, 'subtitle_source': 'narracao', 'fallback_without_narration': True,
-                'consent': False, 'consent_at': None,
-            },
         },
         'curation': {
-            'provider': 'heuristica',     # heuristica | ollama (local) | openai | anthropic
-            'local_mode': 'rapido',       # Ollama: rapido (só notas e títulos) | completo (com resumo e comentários)
+            # ollama (local) | gemini (nuvem, com consentimento); a heurística roda sozinha quando a IA falha
+            'provider': 'ollama',
             'all_clips': False,           # automático sem o teto de cortes por hora (todos os aprovados)
             'consent': False, 'consent_at': None,
             'prompt': '',                 # foco opcional ("momentos sobre dinheiro")
@@ -169,7 +161,6 @@ def validate(s: dict) -> dict:
     up['third_party_footage'] = _choice(up['third_party_footage'], rights.YES_NO_UNKNOWN, 'Trechos de terceiros')
     up['monetization'] = _choice(up['monetization'], rights.YES_NO_UNKNOWN, 'Monetização')
     up['license_notes'] = str(up.get('license_notes') or '')[:2000]
-    up['recognize_music_opt_in'] = _bool(up['recognize_music_opt_in'])
     ap = s['autopilot']
     ap['enabled'] = _bool(ap['enabled'])
     ap['max_clips'] = _int(ap['max_clips'], 0, 15, 'Cortes por vídeo (0 = todos os aprovados)')
@@ -184,23 +175,11 @@ def validate(s: dict) -> dict:
     for key in ('subtitles', 'normalize_audio', 'shorten_pauses', 'hook'):
         ap[key] = _bool(ap[key])
     ap['subtitle_style'] = _choice(ap['subtitle_style'], SUBTITLE_STYLES, 'Estilo de legenda')
-    nr = ap['narration']
-    for key in ('enabled', 'use_frames', 'fallback_without_narration', 'consent'):
-        nr[key] = _bool(nr[key])
-    nr['style'] = _choice(nr['style'], STYLES, 'Estilo de narração')
-    from .narration import VOICES
-    nr['voice'] = _choice(nr['voice'], VOICES, 'Voz')
-    nr['original_volume'] = _int(nr['original_volume'], 0, 100, 'Volume do áudio original')
-    nr['subtitle_source'] = _choice(nr['subtitle_source'], SUBTITLE_SOURCES, 'Origem das legendas')
-    if nr['enabled'] and not nr['consent']:
-        raise AppError('Para narrar automaticamente, autorize o envio de transcrições e roteiros à OpenAI.',
-                       400, 'consent_required')
-    if not nr['consent']:
-        nr['consent_at'] = None
     cu = s['curation']
-    from .curation import LOCAL_MODES, PROVIDERS, requires_external_consent
+    from .curation import PROVIDERS, RETIRED_PROVIDERS, requires_external_consent
+    if cu['provider'] in RETIRED_PROVIDERS:   # OpenAI/Anthropic saíram: vira o Ollama, sem herdar consentimento
+        cu['provider'], cu['consent'] = 'ollama', False
     cu['provider'] = _choice(cu['provider'], PROVIDERS, 'Provedor da curadoria')
-    cu['local_mode'] = _choice(cu.get('local_mode', 'rapido'), LOCAL_MODES, 'Modo da curadoria local')
     cu['all_clips'] = _bool(cu.get('all_clips', False))
     cu['consent'] = _bool(cu['consent'])
     cu['prompt'] = str(cu.get('prompt') or '')[:300]
@@ -224,12 +203,8 @@ def update(changes: dict) -> dict:
         raise AppError('Configurações inválidas.', 400, 'bad_settings')
     with _lock:
         current = load()
-        had_consent = current['autopilot']['narration']['consent']
         had_curation_consent = current['curation']['consent']
         merged = validate(_merge(current, changes))
-        nr = merged['autopilot']['narration']
-        if nr['consent'] and not had_consent:
-            nr['consent_at'] = time.time()
         cu = merged['curation']
         if cu['consent'] and not had_curation_consent:
             cu['consent_at'] = time.time()

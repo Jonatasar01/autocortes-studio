@@ -99,7 +99,7 @@ function setLoading(text, progress = null, steps = '') {
 }
 
 // Andamento da análise: etapa atual, porcentagem, tempo restante estimado e quanto levou cada etapa.
-const STAGE_NAMES = {validando: 'Validação', musica: 'Música', extraindo_audio: 'Áudio', transcrevendo: 'Transcrição',
+const STAGE_NAMES = {validando: 'Validação', extraindo_audio: 'Áudio', transcrevendo: 'Transcrição',
   cenas: 'Cenas', audio_eventos: 'Reações no áudio', selecionando: 'Seleção', ia_local: 'IA local', curadoria_ia: 'Curadoria IA', fila: 'Fila'};
 // Faixa da barra geral ocupada pelas etapas com progresso real (as outras são rápidas ou sem medida).
 const STAGE_SPANS = {extraindo_audio: [0.08, 0.14], transcrevendo: [0.14, 0.74], cenas: [0.75, 0.88]};
@@ -507,7 +507,7 @@ function jobRow(j, {project = true, actions = true} = {}) {
     : JOB_STATUS[j.status] + (elapsed ? ' · ' + elapsed : '') + (j.error ? ' · ' + j.error : '');
   const buttons = !actions ? '' : (active && j.status !== 'cancelling'
     ? '<button type="button" class="btn ghost danger qcancel" data-jobcancel="' + j.id + '"><svg class="ic"><use href="#i-x"/></svg><span>Cancelar</span></button>' : '') +
-    (['failed', 'interrupted'].includes(j.status) && ['export', 'analysis', 'download'].includes(j.kind) && !j.narration
+    (['failed', 'interrupted'].includes(j.status) && ['export', 'analysis', 'download'].includes(j.kind)
       ? '<button type="button" class="btn ghost" data-retry="' + j.id + '">Tentar de novo</button>' : '') +
     (j.project_id && j.kind !== 'download' ? '<button type="button" class="btn ghost" data-jobopen="' + escape(j.project_id) + '">Abrir</button>' : '');
   return '<li class="jobrow" data-status="' + j.status + '"><div class="qmain"><strong>' + escape(project ? j.project_name : what) +
@@ -1058,7 +1058,7 @@ function params() {
     monetization: $('monetization').value, license_notes: $('licenseNotes').value,
     editing_mode: editMode() === 'manual' ? 'manual' : 'automatic',  // avançado = automático com os ajustes à mostra
     target_seconds: $('target').value, desired_count: 0,  // 0: todos os trechos válidos
-    autopilot: 'false', recognize_music_opt_in: 'false',
+    autopilot: 'false',
   };
 }
 
@@ -1637,13 +1637,13 @@ async function openSelection() {
   try {
     const [cfg, health] = await Promise.all([api('/api/settings'), api('/api/health')]);
     const cur = cfg.curation, providers = health.curation || {};
-    $('curationProvider').innerHTML = Object.entries(providers).map(([id, info]) =>
-      '<option value="' + id + '"' + (id === cur.provider ? ' selected' : '') + '>' + escape(info.label) +
-      (id !== 'heuristica' && !info.configured ? (id === 'ollama' ? ' — não instalado' : ' — sem chave') : '') +
-      '</option>').join('');
+    // Só as duas IAs aparecem; a heurística roda sozinha quando a IA escolhida não está disponível.
+    const chosen = ['ollama', 'gemini'].includes(cur.provider) ? cur.provider : 'ollama';
+    $('curationProvider').innerHTML = Object.entries(providers).filter(([id]) => id !== 'heuristica').map(([id, info]) =>
+      '<option value="' + id + '"' + (id === chosen ? ' selected' : '') + '>' + escape(info.label) +
+      (!info.configured ? (id === 'ollama' ? ' — não instalado' : ' — sem chave') : '') + '</option>').join('');
     $('curationProvider').dataset.providers = JSON.stringify(providers);
     $('curationConsent').checked = !!cur.consent;
-    $('curationLocalMode').value = cur.local_mode || 'rapido';
     $('curationAllClips').checked = !!cur.all_clips;
     $('curationPrompt').value = cur.prompt || '';
     syncCuration();
@@ -1658,27 +1658,22 @@ async function openSelection() {
 function syncCuration() {
   const id = $('curationProvider').value;
   const info = JSON.parse($('curationProvider').dataset.providers || '{}')[id] || {};
-  const ai = id !== 'heuristica', cloud = ai && !info.local;
-  // Local (Ollama): nada sai do computador, então não há consentimento nem chave; mostra o status do modelo.
-  $('curationConsentRow').hidden = !cloud;
-  $('curationModeRow').hidden = id !== 'ollama';
-  $('curationKeyNote').hidden = !ai;
-  const env = id === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+  // Ollama: nada sai do computador, então não há consentimento nem chave; mostra o status do modelo.
+  $('curationConsentRow').hidden = !!info.local;
+  const fallback = ' Enquanto isso, a seleção usa a heurística local.';
   $('curationKeyNote').textContent = id === 'ollama'
-    ? '100% local: a transcrição não sai deste computador. ' + (info.message || '') +
-      (info.configured ? ' No processador a análise fica mais lenta (alguns minutos por hora de vídeo, ou mais).' : '')
+    ? '100% local: a transcrição não sai deste computador. ' + (info.message || '') + (info.configured ? '' : fallback)
     : info.configured ? 'Chave encontrada. Modelo: ' + (info.model || '—') + '.'
-      : 'Chave não encontrada: defina ' + env + ' no Windows e reinicie o AutoCortes.';
-  $('curationKeyNote').classList.toggle('warn', ai && !info.configured);
-  $('reselect').disabled = ai && !info.configured;  // sem chave/modelo a IA falharia e voltaria à heurística
+      : 'Chave não encontrada: defina GEMINI_API_KEY no Windows e reinicie o AutoCortes.' + fallback;
+  $('curationKeyNote').classList.toggle('warn', !info.configured);
 }
 $('curationProvider').addEventListener('change', syncCuration);
 
 async function saveCuration() {
   const provider = $('curationProvider').value;
   await api('/api/settings', 'PUT', {curation: {
-    provider, consent: !['heuristica', 'ollama'].includes(provider) && $('curationConsent').checked,
-    prompt: $('curationPrompt').value.trim(), local_mode: $('curationLocalMode').value,
+    provider, consent: provider === 'gemini' && $('curationConsent').checked,
+    prompt: $('curationPrompt').value.trim(),
     all_clips: $('curationAllClips').checked,
   }});
 }
@@ -2752,8 +2747,7 @@ function clipLabel(id) {
 }
 
 function jobLine(j) {
-  const kind = j.kind === 'narration' ? 'Narrado · ' : '';
-  return kind + (j.format || '') + ' · ' + (j.message || 'Processando') + ' · ' + Math.round((j.progress || 0) * 100) + '%';
+  return (j.format || '') + ' · ' + (j.message || 'Processando') + ' · ' + Math.round((j.progress || 0) * 100) + '%';
 }
 
 // Três escopos: o que está renderizando agora, o que espera a vez e o que já pode ser baixado.
@@ -2791,7 +2785,7 @@ function renderExports() {
     group('running', 'Em andamento', running, running.map((j) =>
       row(clipLabel(j.clip_id), batchPosition(j) + jobLine(j), {progress: j.progress || 0, actions: cancel(j)})).join('')) +
     group('queued', 'Na fila', queued, queued.map((j, i) =>
-      row(clipLabel(j.clip_id), (i + 1) + 'º na fila · ' + (j.kind === 'narration' ? 'Narrado · ' : '') + (j.format || ''),
+      row(clipLabel(j.clip_id), (i + 1) + 'º na fila · ' + (j.format || ''),
         {actions: cancel(j)})).join('')) +
     group('done', 'Concluídas', done, done.map(({c, format}) =>
       row(clipLabel(c.id), format + (c.exports[format]?.validation?.duration ? ' · ' + fmt(c.exports[format].validation.duration) : ''), {
@@ -2807,7 +2801,7 @@ function renderExports() {
     group('failed', 'Com erro', failed, failed.map((j) =>
       row(clipLabel(j.clip_id), (j.format || '') + ' · ' + (j.error || 'A exportação não terminou.'), {
         tone: 'error',
-        actions: j.kind === 'export' && !j.narration ? '<button type="button" class="btn ghost" data-retry="' + j.id +
+        actions: j.kind === 'export' ? '<button type="button" class="btn ghost" data-retry="' + j.id +
           '">Tentar de novo</button>' : '',
       })).join(''));
 

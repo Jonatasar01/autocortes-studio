@@ -13,7 +13,6 @@ def project(tmp_path, monkeypatch):
     pid, folder = storage.new_project_dir()
     cfg = settings.defaults()['autopilot']
     cfg['formats'] = ['9:16']
-    cfg['narration']['fallback_without_narration'] = False
     storage.write_project(pid, {'id': pid, 'name': 'Teste', 'status': 'ready', 'filename': 'source.mp4',
                                'autopilot': {'status': 'executando', 'run_id': 'new', 'config': cfg,
                                              'selected': [1, 2], 'events': [], 'handled_narrations': []}})
@@ -67,35 +66,22 @@ def test_previous_run_does_not_affect_new_run(project, old_status):
 
 def test_failed_script_is_not_success(project):
     pid, _, manager = project
-    script = job(pid, 'narration', 'failed')
+    script = job(pid, 'export', 'failed')
     manager.for_project.return_value = [script, job(pid, 'export', 'done', clip=2)]
-    autopilot.after_job('narration', JobContext(manager, script), 'failed', 'teste')
+    autopilot.after_job('export', JobContext(manager, script), 'failed', 'teste')
     assert status(pid) == 'concluido_com_falhas'
 
 
 def test_only_script_failed_is_not_reported_as_cancelled(project):
     pid, _, manager = project
-    script = job(pid, 'narration', 'failed')
+    script = job(pid, 'export', 'failed')
     manager.for_project.return_value = [script]
-    autopilot.after_job('narration', JobContext(manager, script), 'failed', 'teste')
+    autopilot.after_job('export', JobContext(manager, script), 'failed', 'teste')
     assert status(pid) == 'concluido_com_falhas'
 
 
-def test_callback_pending_does_not_finish_run(project):
-    pid, _, manager = project
-    manager.for_project.return_value = [job(pid, 'narration', 'failed'), job(pid, 'export', 'done', clip=2)]
-    autopilot.refresh(pid)
-    assert status(pid) == 'executando'
 
 
-def test_successful_fallback_does_not_count_as_failure(project):
-    pid, _, manager = project
-    script = job(pid, 'narration', 'failed')
-    with storage.edit_project(pid) as p:
-        p['autopilot']['handled_narrations'] = [script['id']]
-    manager.for_project.return_value = [script, job(pid, 'export', 'done'), job(pid, 'export', 'done', clip=2)]
-    autopilot.refresh(pid)
-    assert status(pid) == 'concluido'
 
 
 def test_dispatch_pending_does_not_finish_run(project):
@@ -118,22 +104,22 @@ def test_late_callback_cannot_enqueue_for_new_run(project, monkeypatch):
     pid, _, manager = project
     submit = Mock()
     monkeypatch.setattr(autopilot, 'submit_exports', submit)
-    script = job(pid, 'narration', 'done', run='old')
-    autopilot.after_job('narration', JobContext(manager, script), 'done', None)
+    script = job(pid, 'export', 'done', run='old')
+    autopilot.after_job('export', JobContext(manager, script), 'done', None)
     submit.assert_not_called()
     assert status(pid) == 'executando'
 
 
 def test_restart_replays_callback_without_reexporting_completed_files(project, monkeypatch):
     pid, _, manager = project
-    script = job(pid, 'narration', 'done')
+    script = job(pid, 'export', 'done')
     manager.for_project.return_value = [script, job(pid, 'export', 'done'), job(pid, 'export', 'done', clip=2)]
     submit = Mock()
     monkeypatch.setattr(service, 'request_export', submit)
     autopilot.recover(pid)
     submit.assert_not_called()
     assert status(pid) == 'concluido'
-    assert script['id'] in storage.read_project(pid)['autopilot']['handled_narrations']
+    assert status(pid) == 'concluido'
 
 
 def test_cancel_callback_does_not_hold_database_lock(tmp_path):

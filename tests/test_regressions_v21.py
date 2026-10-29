@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-from app import config, media, narration, selection, service, storage, subtitles
+from app import config, media, curation, selection, service, storage, subtitles
 from app.errors import AppError, sanitize
 from app.jobs import Handler, JobManager
 from tests.helpers import HAS_FFMPEG, make_video
@@ -22,23 +22,14 @@ def test_malformed_origins_and_negative_length():
 
 
 def test_secrets_and_foreign_paths_redacted():
-    with mock.patch.dict(os.environ, {'OPENAI_API_KEY': 'a-unique-secret'}):
+    with mock.patch.dict(os.environ, {'GEMINI_API_KEY': 'a-unique-secret'}):
         message = sanitize('a-unique-secret sk-other-secret C:\\Private Folder\\movie.mp4')
     assert 'secret' not in message and 'Private' not in message
     assert '/home/someone/private.mp4' not in sanitize('Failed /home/someone/private.mp4')
 
 
-@pytest.mark.parametrize('response', [[], None, {'output': ['bad', {'type': 'message', 'content': [None]}]}])
-def test_malformed_openai_response_is_domain_error(response):
-    with pytest.raises(AppError) as exc:
-        narration._output_text(response)
-    assert exc.value.code == 'openai_bad_response'
 
 
-def test_nonfinite_script_times_rejected():
-    for value in (float('inf'), float('-inf'), float('nan')):
-        with pytest.raises(AppError):
-            narration.validate_segments([{'start': value, 'end': 5, 'text': 'x'}], 10)
 
 
 def test_subtitle_never_extends_past_clip():
@@ -55,24 +46,6 @@ def test_ollama_rejects_string_boolean_and_score():
             assert selection.refine_with_ollama([dict(clip)])['state'] == 'failed'
 
 
-def test_export_snapshots_script_and_records_consent(tmp_path):
-    with mock.patch.object(config, 'DATA_DIR', tmp_path), mock.patch.dict(os.environ, {'OPENAI_API_KEY': 'test'}):
-        pid, _ = storage.new_project_dir()
-        storage.write_project(pid, {'status': 'ready', 'media': {'duration': 10}, 'clips': [
-            {'id': 1, 'start': 0, 'end': 5, 'title': 'A', 'revision': 1, 'narration': {
-                'segments': [{'start': 0, 'end': 3, 'text': 'Texto original'}]}}]})
-        manager = JobManager(tmp_path/'jobs.db', {'export': Handler(lambda _: None)})
-        try:
-            with mock.patch.object(service, 'manager', manager):
-                options = {'format': 'original', 'narration': True, 'narration_consent': True}
-                first = service.request_export(pid, 1, options)
-                service.update_narration(pid, 1, [{'start': 0, 'end': 3, 'text': 'Texto novo'}])
-                second = service.request_export(pid, 1, options)
-                assert first['id'] != second['id']
-                assert manager.get(first['id'])['params']['narration_script']['segments'][0]['text'] == 'Texto original'
-                assert len(storage.read_project(pid)['openai_consents']) == 2
-        finally:
-            manager.stop()
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason='FFmpeg ausente')
@@ -132,3 +105,10 @@ def test_real_whisper_audio_decoder(tmp_path):
         f.setframerate(16000)
         f.writeframes(b'\0\0' * 16000)
     assert len(audio.decode_audio(str(wav), sampling_rate=16000)) == 16000
+
+@pytest.mark.parametrize('response', [[], None, {'candidates':[None]}, {'candidates':[{'content':[]} ]}, {'candidates':[{'content':{'parts':[{'text':42}]}}]}])
+def test_malformed_gemini_response_is_domain_error(response):
+    with mock.patch.dict(os.environ, {'GEMINI_API_KEY':'test-only'}), mock.patch.object(curation, '_post', return_value=response):
+        with pytest.raises(AppError) as exc:
+            curation.ask('gemini', 'system', 'user', {}, 'test')
+    assert exc.value.code == 'curation_bad_response'

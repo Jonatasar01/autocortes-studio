@@ -18,9 +18,6 @@ from pathlib import Path
 
 from . import config, selection
 
-AI_VOICE = ('Este vídeo usa narração com voz sintética gerada por IA. Informe isso ao público e marque a opção de '
-            'conteúdo alterado/sintético da plataforma quando aplicável.')
-
 
 def _fold(word: str) -> str:
     return ''.join(c for c in unicodedata.normalize('NFD', word) if unicodedata.category(c) != 'Mn')
@@ -58,15 +55,10 @@ def _summary(text: str, limit: int = 300) -> str:
 
 
 def package(project: dict, clip: dict, record: dict) -> str:
-    script = clip.get('narration') if record.get('ai_narration') else None
-    title = (script or {}).get('title') or record.get('title') or clip.get('title') or 'Corte'
-    source_text = ' '.join(s['text'] for s in (script or {}).get('segments', [])) if script else clip.get('description', '')
+    title = record.get('title') or clip.get('title') or 'Corte'
+    source_text = clip.get('description', '')
     description = _summary(source_text)
     tags = hashtags(source_text, record.get('format'))
-    if not script and clip.get('ai_summary'):
-        description = clip['ai_summary']
-    if not script and clip.get('hashtags'):
-        tags = list(dict.fromkeys(clip['hashtags'] + (['#shorts'] if record.get('format') == '9:16' else [])))
     rights_info = project.get('rights') or {}
     pending = [f"- {i['label']}: {i['status_label']}" for i in rights_info.get('items', [])
                if i['status'] in ('risco_alto', 'revisar', 'nao_verificado')]
@@ -79,14 +71,12 @@ def package(project: dict, clip: dict, record: dict) -> str:
     if record.get('srt_file'):
         lines.append(f"- Legendas: {record['srt_file']}")
     lines += ['', 'ANTES DE PUBLICAR']
-    if record.get('ai_narration'):
-        lines.append('- ' + AI_VOICE)
     if pending:
         lines.append('- Pendências de direitos (não publique sem resolver):')
         lines += ['  ' + item for item in pending]
     else:
         lines.append('- Direitos declarados sem pendências. Isso não é liberação jurídica; confira as verificações da plataforma.')
-    lines += ['- ' + w for w in warnings if not w.startswith('A narração usa voz sintética')]
+    lines += ['- ' + w for w in warnings]
     lines += ['', 'Gerado localmente pelo AutoCortes Studio. Sugestões baseadas no conteúdo do corte; revise antes de usar.']
     return '\n'.join(lines) + '\n'
 

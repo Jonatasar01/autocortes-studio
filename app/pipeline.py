@@ -14,7 +14,7 @@ import shutil
 import threading
 import time
 
-from . import (audio_events, config, curation, direction, filters, media, music, narration, publish, reframe, rights, selection, settings,
+from . import (audio_events, config, curation, direction, filters, media, publish, reframe, rights, selection, settings,
                storage, subtitles, transcription)
 from .errors import AppError, Cancelled
 from .jobs import JobContext
@@ -89,8 +89,7 @@ def run_analysis(ctx: JobContext) -> dict:
         p['analysis_job'] = ctx.id
         source = folder / p['filename']
         opts = {k: p.get(k) for k in ('source_rights', 'external_audio', 'license_notes', 'graphics_rights',
-                                      'third_party_footage', 'monetization', 'recognize_music',
-                                      'target_seconds', 'desired_count')}
+                                      'third_party_footage', 'monetization', 'target_seconds', 'desired_count')}
 
     saved = _saved_analysis(pid) if ctx.params.get('reselect') else None
     audio_index = None
@@ -103,15 +102,11 @@ def run_analysis(ctx: JobContext) -> dict:
         warnings = media.integrity_warnings(source, info)
         ctx.progress(0.03)
 
-        ctx.stage('musica', 'Verificando música (somente se autorizado)')
-        music_review = music.recognize_music(source, info['duration'], bool(opts['recognize_music']), info['audio'],
-                                             cancel_event=ctx.cancel_event, audio_index=info.get('audio_index'))
         review = rights.rights_review(opts['source_rights'], opts['external_audio'], opts['license_notes'] or '',
                                       info['audio'], opts.get('graphics_rights') or 'unknown',
-                                      opts.get('third_party_footage') or 'unknown', opts.get('monetization') or 'unknown',
-                                      music_review)
+                                      opts.get('third_party_footage') or 'unknown', opts.get('monetization') or 'unknown')
         with storage.edit_project(pid) as p:
-            p.update({'media': info, 'rights': review, 'music_review': music_review, 'warnings': warnings})
+            p.update({'media': info, 'rights': review, 'warnings': warnings})
         ctx.progress(0.08)
 
         # Cenas em paralelo com a transcrição: na GPU a detecção quase não usa CPU, e em vídeos longos ela
@@ -208,7 +203,7 @@ def run_analysis(ctx: JobContext) -> dict:
         try:
             ai_clips, curation_status = curation.curate(
                 provider, transcript, info['duration'], opts['target_seconds'], opts['desired_count'], scenes,
-                prompt=cur_cfg.get('prompt') or '', mode=cur_cfg.get('local_mode') or 'rapido', unlimited=unlimited,
+                prompt=cur_cfg.get('prompt') or '', unlimited=unlimited,
                 cancel_event=ctx.cancel_event, on_progress=ctx.span(0.9, 0.99))
             # Fusão: um bom candidato da heurística não some só porque a IA trouxe outra lista.
             clips = selection.merge_candidates(ai_clips, clips, limit=sel.get('limit'))
@@ -276,28 +271,8 @@ def run_export(ctx: JobContext) -> dict:
     storage.ensure_free_space(int((end - start) * 1.5 * 1024 ** 2 * 2) + 100 * 1024 ** 2, folder)
     ass_text = srt_text = None
     warnings: list[str] = []
-    placed: list[dict] | None = None
-    if prm.get('narration'):
-        clip_now = next((c for c in p.get('clips', []) if c['id'] == prm['clip_id']), {})
-        script = prm.get('narration_script') or clip_now.get('narration') or {}
-        if not script.get('segments'):
-            raise AppError('Gere o roteiro de narração deste corte antes de exportar com narração.', 409, 'no_script')
-        if abs(script.get('clip_start', start) - start) > 0.05 or abs(script.get('clip_end', end) - end) > 0.05:
-            warnings.append('Os tempos do corte mudaram depois que o roteiro foi gerado; confira se a narração '
-                            'continua alinhada às cenas.')
-        ctx.stage('narracao', 'Gerando a voz da narração (OpenAI)')
-        voiced = narration.synthesize(script['segments'], style=script.get('style', 'recap'),
-                                      voice=prm.get('voice') or 'cedar', cache_dir=folder / 'narration',
-                                      cancel_event=ctx.cancel_event, on_progress=ctx.span(0.0, 0.25))
-        placed, place_warnings = narration.place(voiced, end - start)
-        warnings += place_warnings
-        if not placed:
-            raise AppError('Nenhum bloco de narração cabe no trecho.', 422, 'no_script')
-        warnings.append(narration.AI_VOICE_NOTICE)
-        if (p.get('rights') or {}).get('level') == 'alto':
-            warnings.append(narration.THIRD_PARTY_NOTICE)
     keep = None
-    if prm.get('shorten_pauses') and not placed:
+    if prm.get('shorten_pauses'):
         ctx.stage('pausas', 'Encurtando pausas longas')
         keep = (media.pause_intervals(p.get('transcript') or [], start, end) or
                 media.silence_intervals(folder / p['filename'], info, start, end - start, cancel_event=ctx.cancel_event))
@@ -306,7 +281,7 @@ def run_export(ctx: JobContext) -> dict:
         else:
             warnings.append('Nenhuma pausa longa encontrada neste trecho; exportado sem encurtar.')
     plan = prm.get('edit_plan')
-    if plan and not placed:
+    if plan:
         # O plano de edição define as pausas removidas (cada uma com justificativa no projeto).
         keep = direction.keep_intervals(plan, end - start)
         if keep:
@@ -319,8 +294,7 @@ def run_export(ctx: JobContext) -> dict:
         if box:
             info = {**info, 'letterbox': box}
             warnings.append(f"Faixas pretas do vídeo original removidas (área útil {box['w']}×{box['h']}).")
-    narration_subs = bool(placed) and prm.get('subtitle_source', 'narracao') == 'narracao'
-    if prm.get('subtitles') and prm.get('refine_subtitles', True) and not narration_subs:
+    if prm.get('subtitles') and prm.get('refine_subtitles', True):
         p = _refine_transcript(ctx, folder, p, info, start, end, warnings, title=prm.get('title'))
     width, height = media.target_size(prm['format'], info)
     segments = prm.get('framing_segments') if prm['framing'] == 'mix' else None
@@ -369,11 +343,7 @@ def run_export(ctx: JobContext) -> dict:
     sub_report = subtitles._new_report()
     if prm.get('subtitles'):
         style = subtitles.style_for(width, height)
-        narration_source = bool(placed) and prm.get('subtitle_source', 'narracao') == 'narracao'
-        if narration_source:
-            cues = subtitles.build_cues([{'start': x['start'], 'end': x['end'], 'text': x['text']} for x in placed],
-                                        0, end - start, style['max_chars'])
-        elif not p.get('transcript'):
+        if not p.get('transcript'):
             cues = None
             warnings.append('Legendas não geradas: não há transcrição para este vídeo.')
         else:
@@ -387,7 +357,7 @@ def run_export(ctx: JobContext) -> dict:
             cues = [c for c in cues if c['end'] - c['start'] >= 0.15]
         if cues:
             srt_text = subtitles.to_srt(cues)
-            if prm.get('subtitle_style') == 'dinamica' and not narration_source:
+            if prm.get('subtitle_style') == 'dinamica':
                 lines = subtitles.build_word_lines(p['transcript'], start, end)
                 if plan:
                     marked = direction.emphasis_starts(plan)
@@ -405,8 +375,6 @@ def run_export(ctx: JobContext) -> dict:
                 else:
                     warnings.append('Legenda dinâmica indisponível (a transcrição não tem o tempo de cada palavra); '
                                     'usada a legenda clássica.')
-            elif prm.get('subtitle_style') == 'dinamica':
-                warnings.append('Legenda dinâmica usa a fala transcrita; com legenda da narração foi usada a clássica.')
             if ass_text is None:
                 ass_text = subtitles.to_ass(cues, width, height, hook_text=hook_text, clip_len=out_len,
                                             report=sub_report, video_band=band)
@@ -419,7 +387,7 @@ def run_export(ctx: JobContext) -> dict:
         remap = (lambda t: media.remap_time(t, keep)) if keep else (lambda t: t)
         post = direction.video_post_filters(plan, (width, height), media.output_fps(info) or info.get('fps') or 30,
                                             out_len, remap)
-        audio_extra = '' if placed else direction.audio_filters(plan, out_len)
+        audio_extra = direction.audio_filters(plan, out_len)
     post = look + post
     preview = bool(prm.get('preview'))
     ctx.stage('renderizando', 'Renderizando a prévia' if preview else 'Renderizando o corte')
@@ -428,10 +396,8 @@ def run_export(ctx: JobContext) -> dict:
                                start, end, fmt=prm['format'], framing=prm['framing'], ass_text=ass_text,
                                srt_text=None if preview else srt_text,
                                normalize_audio=bool(prm.get('normalize_audio')),
-                               on_progress=(ctx.span(0.25, 1.0) if placed else (lambda f, m='': ctx.progress(f))),
-                               cancel_event=ctx.cancel_event, narration=placed, keep=keep,
-                               original_volume=max(0, min(100, int(prm.get('original_volume', 100)))) / 100,
-                               track=track, post=post, audio_extra=audio_extra, preview=preview,
+                               on_progress=lambda f, m='': ctx.progress(f),
+                               cancel_event=ctx.cancel_event, keep=keep, track=track, post=post, audio_extra=audio_extra, preview=preview,
                                segments=segments)
     result['warnings'] = warnings + result['warnings']
     # Verificação de qualidade visual registrada na exportação: a legenda cabe e o rosto não foi cortado.
@@ -453,9 +419,6 @@ def run_export(ctx: JobContext) -> dict:
               'revision': prm.get('revision')}
     if preview:
         return _publish_preview(ctx, folder, prm, record)
-    if placed:
-        record['narration'] = {'voice': prm.get('voice'), 'tts_model': narration.config.OPENAI_TTS_MODEL,
-                               'blocks': len(placed), 'ai_voice': True}
     clips_dir = folder / 'clips'
     snapshot = storage.read_project(pid)
     clip_snapshot = next((c for c in snapshot.get('clips', []) if c['id'] == prm['clip_id']), {'id': prm['clip_id']})
@@ -605,31 +568,3 @@ def _publish_preview(ctx: JobContext, folder: Path, prm: dict, record: dict) -> 
 def end_export(ctx: JobContext, status: str, error: str | None) -> None:
     # Nada a desfazer: arquivos só são publicados após validação; temporários são removidos.
     return None
-
-
-# --------------------------------------------------------------------------- roteiro de narração (OpenAI)
-
-def run_narration(ctx: JobContext) -> dict:
-    pid, prm = ctx.project_id, ctx.params
-    folder = storage.project_dir(pid)
-    p = storage.read_project(pid)
-    if p.get('status') != 'ready':
-        raise AppError('O projeto não está pronto.', 409, 'not_ready')
-    clip = next((c for c in p.get('clips', []) if c['id'] == prm['clip_id']), None)
-    if clip is None:
-        raise AppError('Trecho não encontrado.', 404, 'not_found')
-    ctx.stage('roteiro', 'Escrevendo o roteiro com ChatGPT')
-    ctx.progress(0.1)
-    script = narration.generate_script(folder / p['filename'], p['media'], prm['start'], prm['end'],
-                                       p.get('transcript') or [], style=prm['style'], context=prm.get('context', ''),
-                                       use_frames=bool(prm.get('use_frames')), cancel_event=ctx.cancel_event)
-    with storage.edit_project(pid) as p:
-        target = next((c for c in p.get('clips', []) if c['id'] == prm['clip_id']), None)
-        if target is not None:
-            if (target['start'], target['end']) != (prm['start'], prm['end']):
-                raise AppError('O corte foi alterado durante a geração. Gere o roteiro novamente para os novos tempos.',
-                               409, 'stale_script')
-            target['narration'] = script
-    for message in script['warnings']:
-        ctx.warn(message)
-    return {'segments': len(script['segments']), 'title': script['title']}

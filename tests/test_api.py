@@ -100,7 +100,7 @@ class ApiTests(unittest.TestCase):
                                  data={'source_rights': 'owned', 'external_audio': 'no', 'desired_count': '2',
                                        'target_seconds': '20'}, headers=H)
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(self.wait_ready(r.json()['id'])['music_review']['status'], 'not_requested')
+        self.assertEqual(self.wait_ready(r.json()['id'])['status'], 'ready')
 
     def test_security(self):
         self.assertEqual(self.client.post('/api/projects', content=b'x').status_code, 403)
@@ -111,33 +111,6 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/static/../main.py').status_code, 404)
         self.assertEqual(self.client.get('/api/projects/..%2F..%2Fetc').status_code, 404)
         self.assertEqual(self.client.get('/api/docs').status_code, 404)
-
-    def test_narration_endpoints_validate(self):
-        bad_style = self.client.post('/api/projects/' + '0' * 32 + '/clips/1/narration',
-                                     json={'style': 'outro', 'consent': True}, headers=H)
-        self.assertEqual(bad_style.status_code, 422)
-        empty = self.client.put('/api/projects/' + '0' * 32 + '/clips/1/narration', json={'segments': []}, headers=H)
-        self.assertEqual(empty.status_code, 422)
-        self.assertIn('openai_configured', self.client.get('/api/health').json())
-
-    def test_narration_api_complete_flow(self):
-        from unittest import mock
-        from app import narration, storage
-        from tests.test_narration import FakeOpenAI
-        r = self.client.post('/api/projects?source_rights=owned&target_seconds=10&desired_count=1',
-                             content=self.video.read_bytes(), headers={**H, 'X-Filename': 'narracao.mp4'})
-        self.assertEqual(r.status_code, 200)
-        p = self.wait_ready(r.json()['id'])
-        route = f"/api/projects/{p['id']}/clips/1/narration"
-        with mock.patch.dict('os.environ', {'OPENAI_API_KEY': 'test'}), mock.patch.object(narration, '_request', FakeOpenAI()):
-            self.assertEqual(self.client.post(route, json={'consent': False}, headers=H).status_code, 409)
-            job = self.client.post(route, json={'consent': True}, headers=H)
-            self.assertEqual(job.status_code, 200)
-            self.assertEqual(self.wait_job(job.json()['id'])['status'], 'done')
-            saved = self.client.put(route, json={'segments': [{'start': 0, 'end': 2, 'text': 'Texto revisado.'}]}, headers=H)
-            self.assertEqual(saved.status_code, 200)
-            self.assertTrue(saved.json()['edited_manually'])
-        self.assertTrue(storage.read_project(p['id'])['openai_consents'])
 
     def test_automation_endpoints(self):
         self.assertEqual(self.client.get('/api/settings').status_code, 200)

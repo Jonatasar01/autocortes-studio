@@ -71,7 +71,7 @@ def home():
 
 @app.get('/classic')
 def classic_editor():
-    # O editor clássico foi removido; links antigos abrem o Studio.
+    # Compatibility for saved links; the removed editor is not restored.
     return RedirectResponse('/', status_code=307)
 
 
@@ -376,11 +376,6 @@ class ExportOptions(BaseModel):
     hook: bool = False
     normalize_audio: bool = False
     acknowledge_rights: bool = False
-    narration: bool = False
-    narration_consent: bool = False
-    voice: Optional[str] = Field(default=None, max_length=20)
-    original_volume: int = Field(default=100, ge=0, le=100)
-    subtitle_source: Optional[Literal['fala', 'narracao']] = None
     shorten_pauses: bool = False
     filter: Optional[str] = Field(default=None, max_length=20)   # filtro de cor (app/filters.py)
     edit_plan: Optional[str] = Field(default=None, pattern=r'^[a-z_]{1,40}$')
@@ -482,36 +477,6 @@ def preview_clip(project_id: str, clip_id: int, options: ExportOptions):
 def preview_file(project_id: str, clip_id: int):
     return FileResponse(service.preview_path(project_id, clip_id), media_type='video/mp4',
                         content_disposition_type='inline', headers={'Cache-Control': 'no-cache'})
-
-
-class NarrationRequest(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    style: Literal['recap', 'comentario', 'documentario'] = 'recap'
-    context: str = Field(default='', max_length=500)
-    use_frames: bool = False
-    consent: bool = False
-
-
-@app.post('/api/projects/{project_id}/clips/{clip_id}/narration')
-def request_narration(project_id: str, clip_id: int, options: NarrationRequest):
-    return service.request_narration(project_id, clip_id, options.model_dump())
-
-
-class NarrationSegment(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    start: float = Field(ge=0, allow_inf_nan=False)
-    end: float = Field(gt=0, allow_inf_nan=False)
-    text: str = Field(min_length=1, max_length=600)
-
-
-class NarrationEdit(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    segments: list[NarrationSegment] = Field(min_length=1, max_length=60)
-
-
-@app.put('/api/projects/{project_id}/clips/{clip_id}/narration')
-def update_narration(project_id: str, clip_id: int, edit: NarrationEdit):
-    return service.update_narration(project_id, clip_id, [s.model_dump() for s in edit.segments])
 
 
 class ExportAllOptions(ExportOptions):

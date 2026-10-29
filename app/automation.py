@@ -5,23 +5,20 @@ import json
 import uuid
 import zipfile
 from pathlib import Path
-from . import autopilot, config, curation, downloads, narration, service, settings, storage, transcription
+from . import autopilot, config, curation, downloads, service, settings, storage, transcription
 from .errors import AppError
 
 PRESETS = {
     'shorts': {'name': 'Shorts automáticos', 'description': '3 melhores cortes verticais, legenda dinâmica e áudio normalizado.',
-               'target': 35, 'count': 0, 'max': 3, 'formats': ['9:16'], 'narration': False},
+               'target': 35, 'count': 0, 'max': 3, 'formats': ['9:16']},
     'multiformato': {'name': 'Distribuição multiformato', 'description': '3 cortes em vertical, horizontal e quadrado.',
-                     'target': 45, 'count': 0, 'max': 3, 'formats': ['9:16', '16:9', '1:1'], 'narration': False},
-    'narrado': {'name': 'Recap com IA', 'description': 'Seleção, roteiro e voz quando configurados e autorizados. Fallback local explícito.',
-                'target': 45, 'count': 0, 'max': 3, 'formats': ['9:16'], 'narration': True},
+                     'target': 45, 'count': 0, 'max': 3, 'formats': ['9:16', '16:9', '1:1']},
 }
 
 
 def readiness():
     cfg = settings.load()
     cu = cfg['curation']
-    nr = cfg['autopilot']['narration']
     providers = curation.status()
     return [
         {'name': 'Transcrição local', 'ready': transcription.available(),
@@ -32,9 +29,7 @@ def readiness():
                    and (cu['consent'] or not curation.requires_external_consent(cu['provider']))),
          'detail': (providers['ollama'].get('message', '') + ' Processamento 100% local.'
                     if cu['provider'] == 'ollama' else
-                    f"Provedor: {cu['provider']}. Requer chave e consentimento nas Configurações para IA na nuvem.")},
-        {'name': 'Roteiro e voz', 'ready': nr['enabled'] and nr['consent'] and narration.is_configured(),
-         'detail': 'OpenAI: ativação, chave e consentimento necessários. Pode gerar cobrança.'},
+                    'Google Gemini: requer GEMINI_API_KEY e o consentimento nas Configurações.')},
         {'name': 'Importação por link', 'ready': downloads.available(), 'detail': 'YouTube e Shorts públicos, até 1080p; sem login.'},
         {'name': 'Piloto automático', 'ready': cfg['autopilot']['enabled'],
          'detail': f"Até {cfg['autopilot']['max_clips']} cortes · {', '.join(cfg['autopilot']['formats'])}"},
@@ -65,8 +60,7 @@ def apply_preset(name):
                            'autopilot': {'enabled': True, 'max_clips': preset['max'], 'min_score': 55,
                              'formats': preset['formats'], 'framing': 'blur', 'subtitles': True,
                              'subtitle_style': 'dinamica', 'hook': True, 'normalize_audio': True,
-                             'shorten_pauses': not preset['narration'], 'include_temporal': False,
-                             'narration': {'enabled': preset['narration']}}})
+                             'shorten_pauses': True, 'include_temporal': False}})
 
 
 def import_url(url, form):
@@ -76,7 +70,6 @@ def import_url(url, form):
         raise AppError('Instale o extra links para importar por URL.', 400, 'download_missing')
     # Só campos validados seguem para a tarefa; consentimentos são snapshots explícitos.
     clean = {k: str(v).lower() if isinstance(v, bool) else v for k, v in opts.items() if v is not None}
-    clean['recognize_music_opt_in'] = clean.pop('recognize_music')
     clean['editing_mode'] = str(form.get('editing_mode', 'automatic')).strip().lower()
     params = {'url': url, 'form': clean, 'automation_snapshot': autopilot.snapshot(opts['autopilot']),
               'curation_snapshot': copy.deepcopy(settings.load()['curation'])}
@@ -95,7 +88,7 @@ def retry(job_id):
         return import_url(params['url'], params['form'])
     if job['kind'] == 'analysis':
         return service.reanalyze(pid)
-    if job['kind'] == 'export' and not params.get('narration') and not params.get('preview'):
+    if job['kind'] == 'export' and not params.get('preview'):
         # Mesmas opções, mas com os tempos e o título atuais do corte (as edições feitas depois valem).
         options = {k: params[k] for k in RETRY_OPTIONS if k in params}
         if params.get('edit_plan_name'):
@@ -107,7 +100,7 @@ def retry(job_id):
 
 # Opções de uma exportação que voltam na nova tentativa (tempos, título e trechos vêm do corte atual).
 RETRY_OPTIONS = ('format', 'framing', 'subtitles', 'subtitle_style', 'refine_subtitles', 'hook', 'normalize_audio',
-                 'original_volume', 'subtitle_source', 'shorten_pauses', 'filter')
+                 'shorten_pauses', 'filter')
 
 
 def bundle(project_id):

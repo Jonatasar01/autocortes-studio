@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from . import config, downloads, media, reframe, service, storage, transcription
 
-KIND_LABELS = {'analysis': 'Análise', 'export': 'Exportação', 'narration': 'Narração',
+KIND_LABELS = {'analysis': 'Análise', 'export': 'Exportação',
                'download': 'Importação por link', 'filmcraft': 'Edição avançada'}
 ACTIVE = ('queued', 'running', 'cancelling')
 

@@ -20,12 +20,10 @@ class AutomationHubTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.object(config, 'DATA_DIR', Path(tmp)):
             original = settings.load()
             with self.assertRaises(AppError):
-                automation.apply_preset('narrado')
+                automation.apply_preset('narrado')   # perfil de narração removido
             automation.apply_preset('shorts')
             result = settings.load()
             self.assertTrue(result['autopilot']['enabled'])
-            self.assertFalse(result['autopilot']['narration']['enabled'])
-            self.assertFalse(result['autopilot']['narration']['consent'])
             self.assertEqual(result['curation'], original['curation'])
             self.assertEqual(result['upload_defaults']['source_rights'], 'unknown')
             with self.assertRaises(AppError):
