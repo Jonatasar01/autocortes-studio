@@ -2707,6 +2707,7 @@ function exportOptions(format, rights) {
   return {
     format, framing: $('framing').value, subtitles: $('subtitles').checked,
     subtitle_style: $('subtitleStyle').value, refine_subtitles: $('refineSubtitles').checked,
+    subtitle_look: lookIsDefault(subtitleLook()) ? null : subtitleLook(),
     normalize_audio: $('normalize').checked, hook: $('hook').checked, acknowledge_rights: rights,
     edit_plan: exportPlanName(), filter: state.filter === 'nenhum' ? null : state.filter,
     keep_framing: true,   // o enquadramento escolhido vale mesmo com plano de edição
@@ -2785,6 +2786,58 @@ $('subtitleStyle').addEventListener('change', () => store.set('subtitleStyle', $
 $('refineSubtitles').checked = store.get('refineSubtitles') !== 'off';
 $('refineSubtitles').addEventListener('change', () => store.set('refineSubtitles',
   $('refineSubtitles').checked ? 'on' : 'off'));
+
+// Aparência da legenda (fonte, tamanho, cores, fundo): lembrada entre sessões e enviada na exportação.
+// O padrão é a legenda de sempre; a amostra usa a mesma fonte e as mesmas cores do vídeo exportado.
+const LOOK_DEFAULT = {font: 'Arial', size: 'm', color: '#ffffff', highlight: '#04f827', outline: '#000000',
+  background: 'contorno', case: 'auto'};
+const LOOK_INPUTS = {font: 'subFont', size: 'subSize', color: 'subColor', highlight: 'subHighlight',
+  outline: 'subOutline', background: 'subBackground', case: 'subCase'};
+const HEAVY_FONTS = ['Impact', 'Arial Black'];   // já são pesadas: o vídeo não aplica negrito nelas
+function subtitleLook() {
+  const look = {};
+  for (const [key, id] of Object.entries(LOOK_INPUTS)) look[key] = $(id).value;
+  return look;
+}
+const lookIsDefault = (look) => Object.keys(LOOK_DEFAULT).every((k) => String(look[k]).toLowerCase() === LOOK_DEFAULT[k].toLowerCase());
+function rgba(hex, alpha) {
+  const n = parseInt(hex.slice(1), 16);
+  return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + alpha + ')';
+}
+function renderLook() {
+  const look = subtitleLook(), animated = $('subtitleStyle').value === 'dinamica';
+  const box = look.background === 'caixa', bare = look.background === 'nenhum';
+  const sample = $('subSample');
+  sample.style.fontFamily = '"' + look.font + '", Arial, sans-serif';
+  sample.style.fontSize = {p: 19, m: 22, g: 26}[look.size] + 'px';
+  sample.style.fontWeight = HEAVY_FONTS.includes(look.font) ? '400' : '700';
+  sample.style.textTransform = look.case === 'upper' || (look.case === 'auto' && animated) ? 'uppercase' : 'none';
+  const stroke = [-2, 0, 2].flatMap((x) => [-2, 0, 2].map((y) => x + 'px ' + y + 'px 0 ' + look.outline)).join(',');
+  [...sample.children].forEach((span, i) => {
+    span.style.color = animated && i === 1 ? look.highlight : look.color;
+    span.style.textShadow = box || bare ? 'none' : stroke;
+    span.style.background = box ? rgba(look.outline, 0.85) : 'transparent';
+  });
+  $('subHighlightField').hidden = !animated;
+  $('subOutlineField').hidden = bare;
+  $('subOutlineLabel').textContent = box ? 'Caixa' : 'Contorno';
+  $('subLookReset').hidden = lookIsDefault(look);
+}
+function setLook(look) {
+  for (const [key, id] of Object.entries(LOOK_INPUTS)) {
+    const value = look?.[key], el = $(id);
+    const valid = el.tagName === 'SELECT' ? [...el.options].some((o) => o.value === value)
+      : /^#[0-9a-f]{6}$/i.test(value || '');
+    el.value = valid ? value : LOOK_DEFAULT[key];
+  }
+  renderLook();
+}
+try { setLook(JSON.parse(store.get('subtitleLook') || 'null')); } catch { setLook(null); }
+for (const id of Object.values(LOOK_INPUTS)) {
+  $(id).addEventListener('input', () => { renderLook(); store.set('subtitleLook', JSON.stringify(subtitleLook())); });
+}
+$('subLookReset').onclick = () => { setLook(null); store.set('subtitleLook', JSON.stringify(subtitleLook())); };
+$('subtitleStyle').addEventListener('change', renderLook);
 function syncSubtitleStyle() {
   const plan = current()?.edit_plans?.[exportPlanName()];
   const planned = Boolean(plan);
@@ -2807,6 +2860,8 @@ function syncSubtitleStyle() {
   $('subtitleStyle').disabled = !$('subtitles').checked || planned;
   $('subtitleStyleNote').hidden = !planned || !$('subtitles').checked;
   $('refineSubtitles').disabled = !$('subtitles').checked;
+  $('lookBox').disabled = !$('subtitles').checked;
+  renderLook();   // o plano pode ter trocado o estilo (a cor da palavra falada só vale na animada)
 }
 $('subtitles').addEventListener('change', syncSubtitleStyle);
 

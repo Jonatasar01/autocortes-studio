@@ -99,8 +99,8 @@ def retry(job_id):
 
 
 # Opções de uma exportação que voltam na nova tentativa (tempos, título e trechos vêm do corte atual).
-RETRY_OPTIONS = ('format', 'framing', 'subtitles', 'subtitle_style', 'refine_subtitles', 'hook', 'normalize_audio',
-                 'shorten_pauses', 'filter')
+RETRY_OPTIONS = ('format', 'framing', 'subtitles', 'subtitle_style', 'subtitle_look', 'refine_subtitles', 'hook',
+                 'normalize_audio', 'shorten_pauses', 'filter')
 
 
 def bundle(project_id):

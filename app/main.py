@@ -365,6 +365,22 @@ def auto_clip_framing(project_id: str, clip_id: int):
     return service.set_framing_segments(project_id, clip_id, None, auto=True)
 
 
+_HEX_COLOR = r'^#[0-9A-Fa-f]{6}$'
+
+
+class SubtitleLook(BaseModel):
+    """Aparência da legenda (aba Legendas); o padrão é a legenda de sempre."""
+    model_config = ConfigDict(extra='forbid')
+    font: Literal['Arial', 'Arial Black', 'Impact', 'Verdana', 'Trebuchet MS', 'Segoe UI', 'Bahnschrift',
+                  'Georgia', 'Comic Sans MS'] = 'Arial'
+    size: Literal['p', 'm', 'g'] = 'm'
+    color: str = Field(default='#FFFFFF', pattern=_HEX_COLOR)
+    highlight: str = Field(default='#04F827', pattern=_HEX_COLOR)   # palavra falada (legenda animada)
+    outline: str = Field(default='#000000', pattern=_HEX_COLOR)     # contorno, ou a caixa atrás do texto
+    background: Literal['contorno', 'caixa', 'nenhum'] = 'contorno'
+    case: Literal['auto', 'upper', 'normal'] = 'auto'
+
+
 class ExportOptions(BaseModel):
     model_config = ConfigDict(extra='forbid')
     format: Optional[Literal['9:16', '16:9', '1:1', 'original']] = None
@@ -372,6 +388,7 @@ class ExportOptions(BaseModel):
     framing: Literal['fit', 'blur', 'track', 'streamer', 'split', 'mix'] = 'fit'   # mix = por trecho
     subtitles: bool = True
     subtitle_style: Literal['classica', 'dinamica'] = 'classica'
+    subtitle_look: Optional[SubtitleLook] = None
     refine_subtitles: bool = True   # legenda precisa: retranscreve o corte com o modelo maior (GPU)
     hook: bool = False
     normalize_audio: bool = False

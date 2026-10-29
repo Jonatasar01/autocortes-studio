@@ -139,6 +139,14 @@ class FontMetrics:
 FAMILY_FILES = {
     'arial black': ('ariblk.ttf', 'Arial_Black.ttf', 'Arial Black.ttf'),
     'arial': ('arialbd.ttf', 'Arial_Bold.ttf', 'Arial Bold.ttf'),
+    # Fontes que a aba Legendas oferece (arquivo do Windows na versão usada pelo estilo).
+    'impact': ('impact.ttf', 'Impact.ttf'),
+    'verdana': ('verdanab.ttf', 'Verdana_Bold.ttf', 'Verdana Bold.ttf'),
+    'trebuchet ms': ('trebucbd.ttf', 'Trebuchet_MS_Bold.ttf', 'Trebuchet MS Bold.ttf'),
+    'segoe ui': ('segoeuib.ttf',),
+    'bahnschrift': ('bahnschrift.ttf',),
+    'georgia': ('georgiab.ttf', 'Georgia_Bold.ttf', 'Georgia Bold.ttf'),
+    'comic sans ms': ('comicbd.ttf', 'Comic_Sans_MS_Bold.ttf', 'Comic Sans MS Bold.ttf'),
 }
 FONT_DIRS = (Path(os.environ.get('WINDIR', r'C:\Windows')) / 'Fonts',
              Path('/usr/share/fonts/truetype/msttcorefonts'), Path('/Library/Fonts'),

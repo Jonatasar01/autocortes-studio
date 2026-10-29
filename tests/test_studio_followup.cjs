@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'), fs=require('node:fs'), vm=require('n
 const source=fs.readFileSync('app/static/studio.js','utf8');
 const controls={};const $=id=>controls[id]??=( {value:'',checked:false,disabled:false,hidden:false,dispatchEvent(){}} );
 const context=vm.createContext({$,state:{profiles:{},project:{id:'x'}},current:()=>({id:1,edit_plans:{p:{settings:{subtitle_style:'classica',framing:'blur',normalize_audio:false}}}}),
- exportPlanName:()=> 'p',profileTouched:()=>{$('profileSel').value=''},Boolean,Event:class{}});
+ exportPlanName:()=> 'p',profileTouched:()=>{$('profileSel').value=''},renderLook:()=>{},Boolean,Event:class{}});
 vm.runInContext(source.slice(source.indexOf('function syncSubtitleStyle()'),source.indexOf("$('subtitles').addEventListener('change', syncSubtitleStyle)")),context);
 $('subtitles').checked=true;$('subtitleStyle').value='dinamica';$('profileSel').value='b:podcast';
 context.syncSubtitleStyle();

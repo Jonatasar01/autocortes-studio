@@ -448,6 +448,20 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
   background: var(--surface); font-size: 12.5px; color: var(--text-2); pointer-events: auto; cursor: default; }
 .focusbar span { min-width: 0; }
 .focusbox { display: grid; gap: 6px; margin-top: 8px; }
+.lookbox { margin: 14px 0 4px; padding: 10px 12px 12px; border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+.lookbox legend { padding: 0 4px; font-size: 12px; color: var(--text-2); }
+.lookbox .cols .field { margin-top: 10px; }
+.lookbox:disabled { opacity: 0.55; }
+/* Amostra da legenda com a fonte e as cores escolhidas (o vídeo exportado usa o mesmo estilo). */
+.subsample { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 0.3em; padding: 14px 8px; border-radius: 6px;
+  background: linear-gradient(135deg, #5b6b7d, #2c3440); font-size: 22px; font-weight: 700; line-height: 1.25; text-align: center; overflow-wrap: anywhere; }
+.subsample span { padding: 0 2px; border-radius: 3px; }
+.colorrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.colorfield { display: grid; justify-items: center; gap: 4px; font-size: 12px; color: var(--text-2); text-align: center; cursor: pointer; }
+.colorfield[hidden] { display: none; }
+.colorfield input[type=color] { width: 100%; max-width: 72px; height: 34px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); cursor: pointer; }
+.colorfield input[type=color]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+#subLookReset { margin-top: 10px; }
 .coverbox { display: grid; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .coverbox .planbtns { margin-top: 0; flex-wrap: wrap; }
 /* Aproximação no player do que a exportação faz (lá a área é apagada e preenchida pela borda). */

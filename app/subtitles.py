@@ -153,6 +153,66 @@ def srt_timestamp(sec: float) -> str:
 
 
 SUBTITLE_STYLES = ('classica', 'dinamica')
+
+# Aparência escolhida na aba Legendas. Fonte: nome da família (libass) -> arquivo para medir a largura e se o
+# estilo pede negrito (Impact e Arial Black já são pesadas; negrito nelas seria sintético e mais largo).
+SUBTITLE_FONTS = {
+    'Arial': ('arialbd.ttf', True), 'Arial Black': ('ariblk.ttf', False), 'Impact': ('impact.ttf', False),
+    'Verdana': ('verdanab.ttf', True), 'Trebuchet MS': ('trebucbd.ttf', True), 'Segoe UI': ('segoeuib.ttf', True),
+    'Bahnschrift': ('bahnschrift.ttf', True), 'Georgia': ('georgiab.ttf', True),
+    'Comic Sans MS': ('comicbd.ttf', True),
+}
+SIZE_SCALE = {'p': 0.85, 'm': 1.0, 'g': 1.18}
+LOOK_DEFAULT = {'font': 'Arial', 'size': 'm', 'color': '#FFFFFF', 'highlight': '#04F827', 'outline': '#000000',
+                'background': 'contorno', 'case': 'auto'}
+_HEX = re.compile(r'^#[0-9A-Fa-f]{6}$')
+
+
+def clean_look(look: dict | None) -> dict:
+    """Aparência válida, com o padrão no que faltar ou vier inválido (o padrão é a legenda de sempre)."""
+    look = look or {}
+    out = dict(LOOK_DEFAULT)
+    if look.get('font') in SUBTITLE_FONTS:
+        out['font'] = look['font']
+    if look.get('size') in SIZE_SCALE:
+        out['size'] = look['size']
+    for key in ('color', 'highlight', 'outline'):
+        if isinstance(look.get(key), str) and _HEX.match(look[key]):
+            out[key] = look[key].upper()
+    if look.get('background') in ('contorno', 'caixa', 'nenhum'):
+        out['background'] = look['background']
+    if look.get('case') in ('auto', 'upper', 'normal'):
+        out['case'] = look['case']
+    return out
+
+
+def ass_color(hex_color: str, alpha: int = 0) -> str:
+    """``#RRGGBB`` -> ``&HAABBGGRR`` do ASS (alpha 0 = opaco, 255 = transparente)."""
+    r, g, b = hex_color[1:3], hex_color[3:5], hex_color[5:7]
+    return f'&H{alpha:02X}{b}{g}{r}'.upper()
+
+
+def _look_style(look: dict, size: int, outline: int, shadow: int, back_alpha: int) -> str:
+    """Campos do estilo ASS de ``Fontname`` até ``Shadow`` para a aparência escolhida."""
+    bold = -1 if SUBTITLE_FONTS[look['font']][1] else 0
+    text = ass_color(look['color'])
+    if look['background'] == 'caixa':
+        # BorderStyle 3: o contorno vira uma caixa (cor do "contorno", um pouco transparente) com margem.
+        pad = max(6, round(size * 0.18))
+        return (f"{look['font']},{size},{text},{text},{ass_color(look['outline'], 0x26)},"
+                f"{ass_color(look['outline'], 0x26)},{bold},0,0,0,100,100,0,0,3,{pad},0")
+    if look['background'] == 'nenhum':   # só o texto: sem contorno e sem sombra
+        outline = shadow = 0
+    return (f"{look['font']},{size},{text},{text},{ass_color(look['outline'])},&H{back_alpha:02X}000000,"
+            f"{bold},0,0,0,100,100,0,0,1,{outline},{shadow}")
+
+
+def _look_padding(look: dict, size: int, outline: int) -> int:
+    if look['background'] == 'nenhum':
+        return 0
+    return max(6, round(size * 0.18)) if look['background'] == 'caixa' else outline
+
+
 HOOK_SECONDS = 3.0
 HIGHLIGHT = '&H0027F804'   # verde (ASS usa &HAABBGGRR)
 EMPHASIS = '&H0000E1FF'    # âmbar: termos enfatizados na fala (plano de edição)
@@ -257,8 +317,12 @@ def placement(width: int, height: int, size: int, default_margin: int,
 
 def to_ass(cues: list[dict], width: int, height: int, font_name: str = 'Arial', *,
            hook_text: str | None = None, clip_len: float | None = None, report: dict | None = None,
-           video_band: tuple[int, int] | None = None) -> str:
+           video_band: tuple[int, int] | None = None, look: dict | None = None) -> str:
+    look = clean_look({'font': font_name, **(look or {})})
+    font_name = look['font']
     st = style_for(width, height)
+    st['font'] = round(st['font'] * SIZE_SCALE[look['size']])
+    pad = _look_padding(look, st['font'], st['outline'])
     align, margin_v = placement(width, height, st['font'], st['margin_v'], video_band)
     header = [
         '[Script Info]', 'ScriptType: v4.00+', f'PlayResX: {width}', f'PlayResY: {height}',
@@ -268,16 +332,16 @@ def to_ass(cues: list[dict], width: int, height: int, font_name: str = 'Arial', 
         'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, '
         'Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, '
         'Alignment, MarginL, MarginR, MarginV, Encoding',
-        f"Style: Default,{font_name},{st['font']},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,"
-        f"-1,0,0,0,100,100,0,0,1,{st['outline']},{st['shadow']},{align},{st['margin_h']},{st['margin_h']},"
-        f"{margin_v},1",
+        f"Style: Default,{_look_style(look, st['font'], st['outline'], st['shadow'], 0x64)},"
+        f"{align},{st['margin_h']},{st['margin_h']},{margin_v},1",
         _hook_style(width, height, font_name),
         '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
     ]
     lines = _hook_event(hook_text, clip_len, width, height, font_name, report)
     available = width - 2 * st['margin_h']
     for c in cues:
-        body, size = _layout_text(c['text'], available=available, size=st['font'], outline=st['outline'],
+        text = c['text'].upper() if look['case'] == 'upper' else c['text']
+        body, size = _layout_text(text, available=available, size=st['font'], outline=pad,
                                   shadow=st['shadow'], max_rows=2, family=font_name, report=report)
         fs = f'\\fs{size}' if size != st['font'] else ''
         lines.append(f"Dialogue: 0,{_ass_time(c['start'])},{_ass_time(c['end'])},Default,,0,0,0,,"
@@ -320,17 +384,21 @@ def build_word_lines(transcript: list[dict], start: float, end: float,
 
 def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: str = 'Arial', *,
                    hook_text: str | None = None, clip_len: float | None = None,
-                   highlight: str = HIGHLIGHT, report: dict | None = None,
-                   video_band: tuple[int, int] | None = None) -> str:
+                   highlight: str | None = None, report: dict | None = None,
+                   video_band: tuple[int, int] | None = None, look: dict | None = None) -> str:
     """Legenda em caixa alta, poucas palavras por vez, com a palavra falada destacada.
 
     O layout de cada grupo é medido uma vez, no pior caso (qualquer palavra ampliada a 108%, termos
     enfatizados a 112%), e fixado com ``\\N``: a linha não muda de quebra quando o destaque anda.
     """
+    look = clean_look({'font': font_name, **(look or {})})
+    font_name = look['font']
+    highlight = highlight or ass_color(look['highlight'])
     st = style_for(width, height)
     portrait = height > width * 1.1
-    size = round(width * (0.078 if portrait else 0.05))
+    size = round(width * (0.078 if portrait else 0.05) * SIZE_SCALE[look['size']])
     outline = max(3, round(size * 0.09))
+    pad = _look_padding(look, size, outline)
     align, margin_v = placement(width, height, size, round(height * (0.27 if portrait else 0.12)), video_band)
     header = [
         '[Script Info]', 'ScriptType: v4.00+', f'PlayResX: {width}', f'PlayResY: {height}',
@@ -339,8 +407,8 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
         'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, '
         'Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, '
         'Alignment, MarginL, MarginR, MarginV, Encoding',
-        f"Style: Dyn,{font_name},{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,"
-        f"-1,0,0,0,100,100,0,0,1,{outline},2,{align},{st['margin_h']},{st['margin_h']},{margin_v},1",
+        f"Style: Dyn,{_look_style(look, size, outline, 2, 0x80)},"
+        f"{align},{st['margin_h']},{st['margin_h']},{margin_v},1",
         _hook_style(width, height, font_name),
         '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
     ]
@@ -348,9 +416,9 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
     available = width - 2 * st['margin_h']
     metrics = textfit.metrics_for_family(font_name)
     for line in lines:
-        texts = [w['text'].upper() for w in line]
+        texts = [w['text'] if look['case'] == 'normal' else w['text'].upper() for w in line]
         layout = textfit.plan_rows(texts, safe_width=available * SAFE_FILL, size=size,
-                                   min_size=max(12, round(size * 0.72)), outline=outline, shadow=2, max_rows=2,
+                                   min_size=max(12, round(size * 0.72)), outline=pad, shadow=2, max_rows=2,
                                    active_scale=ACTIVE_SCALE,
                                    scales=[EMPHASIS_SCALE if w.get('emph') else 1.0 for w in line],
                                    metrics=metrics)

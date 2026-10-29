@@ -392,16 +392,17 @@ def run_export(ctx: JobContext) -> dict:
                     lines = [line for line in lines if line]
                 if lines:
                     ass_text = subtitles.to_ass_dynamic(lines, width, height, hook_text=hook_text, clip_len=out_len,
-                                                        report=sub_report, video_band=band)
+                                                        report=sub_report, video_band=band,
+                                                        look=prm.get('subtitle_look'))
                 else:
                     warnings.append('Legenda dinâmica indisponível (a transcrição não tem o tempo de cada palavra); '
                                     'usada a legenda clássica.')
             if ass_text is None:
                 ass_text = subtitles.to_ass(cues, width, height, hook_text=hook_text, clip_len=out_len,
-                                            report=sub_report, video_band=band)
+                                            report=sub_report, video_band=band, look=prm.get('subtitle_look'))
     if ass_text is None and hook_text:
         ass_text = subtitles.to_ass([], width, height, hook_text=hook_text, clip_len=out_len, report=sub_report,
-                                    video_band=band)
+                                    video_band=band, look=prm.get('subtitle_look'))
     post = audio_extra = ''
     look = filters.chain(prm.get('filter'))   # filtro de cor escolhido, antes da cor/zoom do plano
     if plan:

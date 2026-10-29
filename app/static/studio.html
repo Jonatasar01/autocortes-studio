@@ -315,6 +315,54 @@
                 <option value="classica">Simples (texto fixo)</option>
               </select>
               <p id="subtitleStyleNote" class="hint" hidden>O plano de edição em uso define o estilo da legenda.</p>
+              <fieldset id="lookBox" class="lookbox">
+                <legend>Aparência do texto</legend>
+                <div id="subSample" class="subsample" aria-hidden="true"><span>Assim fica</span> <span class="hl">a legenda</span></div>
+                <div class="cols">
+                  <label class="field" for="subFont">Fonte
+                    <select id="subFont">
+                      <option value="Arial">Arial (padrão)</option>
+                      <option value="Arial Black">Arial Black</option>
+                      <option value="Impact">Impact</option>
+                      <option value="Verdana">Verdana</option>
+                      <option value="Trebuchet MS">Trebuchet</option>
+                      <option value="Segoe UI">Segoe UI</option>
+                      <option value="Bahnschrift">Bahnschrift</option>
+                      <option value="Georgia">Georgia (com serifa)</option>
+                      <option value="Comic Sans MS">Comic Sans</option>
+                    </select>
+                  </label>
+                  <label class="field" for="subSize">Tamanho
+                    <select id="subSize">
+                      <option value="p">Pequeno</option>
+                      <option value="m">Médio</option>
+                      <option value="g">Grande</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="cols">
+                  <label class="field" for="subCase">Letras
+                    <select id="subCase">
+                      <option value="auto">Automático</option>
+                      <option value="upper">TUDO MAIÚSCULO</option>
+                      <option value="normal">Como foi falado</option>
+                    </select>
+                  </label>
+                  <label class="field" for="subBackground">Fundo
+                    <select id="subBackground">
+                      <option value="contorno">Contorno</option>
+                      <option value="caixa">Caixa</option>
+                      <option value="nenhum">Sem contorno</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="colorrow">
+                  <label class="colorfield" for="subColor"><input id="subColor" type="color" value="#ffffff"><span>Texto</span></label>
+                  <label class="colorfield" id="subHighlightField" for="subHighlight"><input id="subHighlight" type="color" value="#04f827"><span>Palavra falada</span></label>
+                  <label class="colorfield" id="subOutlineField" for="subOutline"><input id="subOutline" type="color" value="#000000"><span id="subOutlineLabel">Contorno</span></label>
+                </div>
+                <button id="subLookReset" class="btn ghost" type="button" hidden>Voltar ao padrão</button>
+              </fieldset>
               <label class="switch"><input id="refineSubtitles" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda mais precisa</strong><small>Antes de exportar, transcreve o corte de novo com um modelo maior. Acerta mais nomes e gírias e leva alguns segundos a mais. Precisa de placa de vídeo NVIDIA.</small></span></label>
               <button id="editSubtitles" type="button" class="btn ghost block"><svg class="ic"><use href="#i-pencil"/></svg><span>Corrigir texto da legenda</span></button>
               <section class="coverbox" aria-labelledby="coverTitle">

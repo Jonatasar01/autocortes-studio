@@ -863,6 +863,9 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
         if plan is not None:
             params['edit_plan'] = copy.deepcopy(plan)
             params['edit_plan_name'] = plan_name
+        look = subtitles.clean_look(options.get('subtitle_look'))
+        if look != subtitles.LOOK_DEFAULT:   # fonte, cores e fundo escolhidos na aba Legendas
+            params['subtitle_look'] = look
         if p.get('caption_cover'):
             params['caption_cover'] = list(p['caption_cover'])   # legenda antiga gravada no vídeo, apagada
         if clip.get('focus_rect') and framing in ('streamer', 'split', 'mix'):
