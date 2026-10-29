@@ -207,6 +207,7 @@
         </div>
         <div class="videobox" id="videoBox">
           <video id="video" playsinline preload="metadata"></video>
+          <div id="coverMark" class="covermark" title="Legenda antiga: apagada na exportação" hidden></div>
           <div id="focusLayer" class="focuslayer" hidden>
             <div id="focusArea" class="focusarea" hidden></div>
             <div id="focusBar" class="focusbar" hidden>
@@ -316,6 +317,14 @@
               <p id="subtitleStyleNote" class="hint" hidden>O plano de edição em uso define o estilo da legenda.</p>
               <label class="switch"><input id="refineSubtitles" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda mais precisa</strong><small>Antes de exportar, transcreve o corte de novo com um modelo maior. Acerta mais nomes e gírias e leva alguns segundos a mais. Precisa de placa de vídeo NVIDIA.</small></span></label>
               <button id="editSubtitles" type="button" class="btn ghost block"><svg class="ic"><use href="#i-pencil"/></svg><span>Corrigir texto da legenda</span></button>
+              <section class="coverbox" aria-labelledby="coverTitle">
+                <span class="eyebrow" id="coverTitle">Legenda que já vem no vídeo</span>
+                <p id="coverInfo" class="hint"></p>
+                <div class="planbtns">
+                  <button id="coverDraw" class="btn ghost" type="button"><svg class="ic"><use href="#i-pencil"/></svg><span>Marcar legenda antiga</span></button>
+                  <button id="coverClear" class="btn ghost" type="button" hidden>Não apagar</button>
+                </div>
+              </section>
             </div>
 
             <div role="tabpanel" id="panelEffects" aria-labelledby="tabEffects" hidden>

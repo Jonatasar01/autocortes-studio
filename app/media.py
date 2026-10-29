@@ -247,6 +247,43 @@ def integrity_warnings(path: Path, media: dict) -> list[str]:
     return warnings
 
 
+BROWSER_AUDIO = {'aac', 'mp3'}
+
+
+def needs_browser_remux(path: Path, media: dict) -> bool:
+    """H.264 com AAC/MP3 fora de MP4/MOV (ex.: .ts da Twitch salvo como .mp4): o navegador não abre o
+    contêiner, mas as trilhas já servem e podem ser copiadas para um MP4 sem recodificar."""
+    container = media.get('container') or ''
+    if 'mp4' in container or 'webm' in container or media.get('video_codec') != 'h264':
+        return False
+    streams = _ffprobe_json(path).get('streams', []) or []
+    return all(s.get('codec_name') in BROWSER_AUDIO for s in streams if s.get('codec_type') == 'audio')
+
+
+def remux_for_browser(path: Path, media: dict, *, on_progress: ProgressFn | None = None,
+                      cancel_event: threading.Event | None = None) -> bool:
+    """Copia vídeo e áudio para um MP4 com faststart e substitui o arquivo. Sem perda: nada é recodificado.
+
+    Os tempos continuam os mesmos (o FFmpeg já mede tudo a partir do início do arquivo). Falta de espaço
+    ou falha deixam o original como está e devolvem False.
+    """
+    if shutil.disk_usage(path.parent).free < path.stat().st_size * 1.1 + 512 * 1024 ** 2:
+        log.info('Sem espaço para converter %s para MP4; o original fica como está.', path.name)
+        return False
+    tmp = path.with_name(f'.remux-{secrets.token_hex(4)}.mp4')
+    try:
+        run_ffmpeg(['-i', str(path), '-map', f"0:{media['video_index']}", '-map', '0:a?', '-dn', '-sn',
+                    '-c', 'copy', '-movflags', '+faststart', '-f', 'mp4', str(tmp)],
+                   duration=media['duration'], on_progress=on_progress, cancel_event=cancel_event)
+        os.replace(tmp, path)
+        return True
+    except (FFmpegError, OSError) as exc:  # OSError: no Windows, o original aberto (no player) não é substituído
+        log.warning('Conversão para MP4 falhou; o original fica como está: %s', exc)
+        return False
+    finally:
+        _unlink_quietly(tmp)
+
+
 def run_ffmpeg(args: list[str], *, duration: float, cwd: Path | None = None,
                on_progress: ProgressFn | None = None, cancel_event: threading.Event | None = None,
                timeout: float | None = None) -> str:
@@ -559,10 +596,25 @@ def content_band(fmt: str, framing: str, media: dict, size: tuple[int, int],
     return round(top), round(top + h)
 
 
+def caption_cover_filter(media: dict) -> str:
+    """``delogo`` sobre a legenda já gravada no vídeo (``caption_cover``: x, y, largura, altura em fração do quadro).
+
+    Apaga a área e a preenche com os pixels da borda; vem antes de qualquer recorte, nas coordenadas do quadro
+    inteiro. O delogo recusa áreas encostadas na borda, por isso a margem de 1 px.
+    """
+    rect = media.get('caption_cover')
+    if not rect:
+        return ''
+    W, H = media['width'], media['height']
+    x, y = max(1, round(rect[0] * W)), max(1, round(rect[1] * H))
+    w, h = min(round(rect[2] * W), W - 1 - x), min(round(rect[3] * H), H - 1 - y)
+    return f'delogo=x={x}:y={y}:w={w}:h={h},' if w >= 4 and h >= 4 else ''
+
+
 def source_label(media: dict) -> str:
-    """Rótulo de entrada do vídeo no filtergraph, já sem as faixas pretas."""
+    """Rótulo de entrada do vídeo no filtergraph, já sem a legenda antiga (se marcada) e sem as faixas pretas."""
     box = media.get('letterbox')
-    label = f"[0:{media['video_index']}]"
+    label = f"[0:{media['video_index']}]" + caption_cover_filter(media)
     return label + (f"crop={box['w']}:{box['h']}:{box['x']}:{box['y']}," if box else '')
 
 
@@ -859,7 +911,7 @@ def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str |
     """``post``: filtros extras (começando com vírgula) aplicados no quadro final, antes da legenda."""
     W, H = target_size(fmt, media)
     # Formato original mantém o quadro como está; os demais descartam as faixas pretas embutidas.
-    src = f"[0:{media['video_index']}]" if fmt == 'original' else source_label(media)
+    src = f"[0:{media['video_index']}]{caption_cover_filter(media)}" if fmt == 'original' else source_label(media)
     pre = f'fps={output_fps(media):g},' if output_fps(media) else ''
     if keep:
         fps = output_fps(media) or media.get('fps') or 30

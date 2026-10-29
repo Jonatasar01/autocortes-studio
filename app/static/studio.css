@@ -448,6 +448,11 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
   background: var(--surface); font-size: 12.5px; color: var(--text-2); pointer-events: auto; cursor: default; }
 .focusbar span { min-width: 0; }
 .focusbox { display: grid; gap: 6px; margin-top: 8px; }
+.coverbox { display: grid; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.coverbox .planbtns { margin-top: 0; flex-wrap: wrap; }
+/* Aproximação no player do que a exportação faz (lá a área é apagada e preenchida pela borda). */
+.covermark { position: absolute; z-index: 1; pointer-events: none; border-radius: 4px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); outline: 1px dashed color-mix(in srgb, var(--on-media) 55%, transparent); }
 .focusbox .planbtns { margin-top: 0; flex-wrap: wrap; }
 .novideo { display: grid; justify-items: center; gap: 8px; padding: 24px; text-align: center; color: var(--text-3); }
 .novideo strong { color: var(--text-2); font-weight: 600; }

@@ -454,21 +454,38 @@ def edit_clip(project_id: str, clip_id: int, start: float, end: float, title: st
 # --------------------------------------------------------------------------- área do streamer definida à mão
 
 FOCUS_MIN = 0.05   # lado mínimo da área (fração do quadro)
+COVER_MIN = 0.02   # a legenda antiga é uma faixa baixa: 2% basta
+
+
+def _clean_rect(rect, minimum: float) -> list[float]:
+    """``x, y, largura, altura`` em fração do vídeo inteiro, cortado para caber no quadro."""
+    if (not isinstance(rect, (list, tuple)) or len(rect) != 4
+            or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in rect)):
+        raise AppError('Área inválida.', 400, 'bad_input')
+    x, y, w, h = (float(v) for v in rect)
+    x, y = min(max(x, 0.0), 1.0), min(max(y, 0.0), 1.0)
+    w, h = min(w, 1.0 - x), min(h, 1.0 - y)
+    if w < minimum or h < minimum:
+        raise AppError(f'Desenhe uma área maior (pelo menos {minimum:.0%} do vídeo em cada lado).', 400, 'bad_input')
+    return [round(x, 4), round(y, 4), round(w, 4), round(h, 4)]
+
+
+def set_caption_cover(project_id: str, rect: list | None) -> dict:
+    """Área da legenda já gravada no vídeo, apagada em todas as exportações do projeto. ``None`` desliga."""
+    rect = None if rect is None else _clean_rect(rect, COVER_MIN)
+    with storage.edit_project(project_id) as p:
+        if rect is None:
+            p.pop('caption_cover', None)
+        else:
+            p['caption_cover'] = rect
+        return {'caption_cover': p.get('caption_cover')}
 
 
 def set_focus_rect(project_id: str, clip_id: int, rect: list | None) -> dict:
     """Área do quadro (``x, y, largura, altura`` em fração do vídeo inteiro) que o "Só o streamer" mostra neste corte,
     no lugar da janela achada sozinha. ``None`` volta para a detecção automática."""
     if rect is not None:
-        if (not isinstance(rect, (list, tuple)) or len(rect) != 4
-                or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in rect)):
-            raise AppError('Área inválida.', 400, 'bad_input')
-        x, y, w, h = (float(v) for v in rect)
-        x, y = min(max(x, 0.0), 1.0), min(max(y, 0.0), 1.0)
-        w, h = min(w, 1.0 - x), min(h, 1.0 - y)
-        if w < FOCUS_MIN or h < FOCUS_MIN:
-            raise AppError('Desenhe uma área maior (pelo menos 5% do vídeo em cada lado).', 400, 'bad_input')
-        rect = [round(x, 4), round(y, 4), round(w, 4), round(h, 4)]
+        rect = _clean_rect(rect, FOCUS_MIN)
     with storage.edit_project(project_id) as p:
         clip = _find_clip(p, clip_id)
         if rect is None:
@@ -846,6 +863,8 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
         if plan is not None:
             params['edit_plan'] = copy.deepcopy(plan)
             params['edit_plan_name'] = plan_name
+        if p.get('caption_cover'):
+            params['caption_cover'] = list(p['caption_cover'])   # legenda antiga gravada no vídeo, apagada
         if clip.get('focus_rect') and framing in ('streamer', 'split', 'mix'):
             params['focus_rect'] = list(clip['focus_rect'])   # área do streamer desenhada à mão
         if framing == 'mix':

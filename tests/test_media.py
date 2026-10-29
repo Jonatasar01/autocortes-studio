@@ -33,6 +33,30 @@ class ProbeTests(unittest.TestCase):
                 self.assertTrue(info['audio'])
                 self.assertEqual((info['width'], info['height']), (640, 360))
 
+    def test_ts_saved_as_mp4_is_remuxed_without_reencoding(self):
+        # .ts da Twitch com extensão .mp4: o navegador não abre; vira MP4 copiando as trilhas, nos mesmos tempos.
+        path = make_video(self.dir / 'twitch.mp4', duration=3, extra=['-f', 'mpegts'])
+        info = media.probe_media(path)
+        self.assertIn('mpegts', info['container'])
+        self.assertTrue(media.needs_browser_remux(path, info))
+        frames = lambda p: [line.rsplit(',', 1)[-1].strip() for line in subprocess.run(
+            ['ffmpeg', '-v', 'error', '-i', str(p), '-map', '0:v:0', '-f', 'framemd5', '-'],
+            capture_output=True, text=True, check=True).stdout.splitlines() if not line.startswith('#')]
+        before = frames(path)
+        self.assertTrue(media.remux_for_browser(path, info))
+        after = media.probe_media(path)
+        self.assertIn('mp4', after['container'])
+        self.assertEqual(frames(path), before)   # quadros idênticos depois de decodificados: nada recodificado
+        self.assertAlmostEqual(after['duration'], info['duration'], delta=0.1)
+        self.assertFalse(media.needs_browser_remux(path, after))
+        self.assertEqual([p.name for p in self.dir.glob('.remux-*')], [])
+        for name, opts in {'normal.mp4': {}, 'vp9.webm': {'vcodec': 'libvpx', 'acodec': 'libopus',
+                                                          'extra': ['-deadline', 'realtime', '-cpu-used', '8']},
+                           'mpeg4.avi': {'vcodec': 'mpeg4', 'acodec': 'mp3'}}.items():
+            with self.subTest(name=name):
+                other = make_video(self.dir / name, duration=2, **opts)
+                self.assertFalse(media.needs_browser_remux(other, media.probe_media(other)))
+
     def test_orientations_and_rotation(self):
         self.assertEqual(media.probe_media(make_video(self.dir / 'v.mp4', size='360x640', duration=2))['orientation'], 'vertical')
         self.assertEqual(media.probe_media(make_video(self.dir / 'q.mp4', size='480x480', duration=2))['orientation'], 'quadrado')

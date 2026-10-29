@@ -432,6 +432,12 @@ def clip_focus(project_id: str, clip_id: int, body: FocusRect):
     return service.set_focus_rect(project_id, clip_id, body.rect)
 
 
+@app.put('/api/projects/{project_id}/caption-cover')
+def caption_cover(project_id: str, body: FocusRect):
+    """Área da legenda já gravada no vídeo (fração do quadro), apagada na exportação; ``null`` desliga."""
+    return service.set_caption_cover(project_id, body.rect)
+
+
 class SubtitleLine(BaseModel):
     model_config = ConfigDict(extra='forbid')
     start: float

@@ -1354,6 +1354,7 @@ function closeProject() {
   setThumb(null);
   setLoading(null);
   showTip(null);
+  syncCover();
   hideExport();
   $('noVideo').hidden = false;
   $('mediaCard').hidden = true;
@@ -1628,8 +1629,8 @@ function videoArea() {
   const w = vw * s, h = vh * s;
   return {left: (box.width - w) / 2, top: (box.height - h) / 2, width: w, height: h, box};
 }
-function placeFocus(rect) {
-  const a = videoArea(), el = $('focusArea');
+function placeFocus(rect, el = $('focusArea')) {
+  const a = videoArea();
   el.hidden = !rect;
   if (!rect) return;
   el.style.left = (a.left + rect[0] * a.width) + 'px';
@@ -1637,10 +1638,23 @@ function placeFocus(rect) {
   el.style.width = (rect[2] * a.width) + 'px';
   el.style.height = (rect[3] * a.height) + 'px';
 }
+// Legenda já gravada no vídeo: uma área por projeto, apagada em todas as exportações.
+function syncCover() {
+  const rect = state.project?.caption_cover || null;
+  const editing = state.focusEdit?.kind === 'cover';
+  $('coverClear').hidden = !rect;
+  $('coverDraw').querySelector('span').textContent = rect ? 'Marcar de novo' : 'Marcar legenda antiga';
+  $('coverInfo').textContent = rect
+    ? 'A área marcada (desfocada no player) é apagada em todos os cortes deste projeto, e a legenda nova entra no lugar.'
+    : 'Se o vídeo já tem legenda na imagem, marque onde ela fica para apagá-la na exportação.';
+  placeFocus(editing || !video.videoWidth ? null : rect, $('coverMark'));
+}
+
 function syncFocus() {
   const c = current();
   const usable = Boolean(c) && ['streamer', 'split', 'mix'].includes($('framing').value);
   $('focusBox').hidden = !usable;
+  syncCover();
   if (state.focusEdit) return;   // desenhando: a camada fica como está
   const rect = usable ? c.focus_rect : null;
   $('focusClear').hidden = !rect;
@@ -1656,16 +1670,23 @@ $('framing').addEventListener('change', syncFocus);
 video.addEventListener('loadedmetadata', syncFocus);
 window.addEventListener('resize', () => (state.focusEdit ? placeFocus(state.focusEdit.rect) : syncFocus()));
 
-$('focusDraw').onclick = () => {
-  const c = current();
-  if (!c) return;
+const DRAW_HELP = {focus: 'Arraste sobre o vídeo para marcar a área do streamer.',
+  cover: 'Pare num trecho com a legenda e arraste sobre ela, com uma pequena folga.'};
+function startDraw(kind, rect) {
   if (!video.paused) video.pause();
-  state.focusEdit = {rect: c.focus_rect || null, from: null};
+  state.focusEdit = {kind, rect, from: null};
+  $('focusHelp').textContent = DRAW_HELP[kind];
+  syncCover();
   $('focusLayer').hidden = false;
   $('focusLayer').classList.add('editing');
   $('focusBar').hidden = false;
   $('focusOk').disabled = !state.focusEdit.rect;
   placeFocus(state.focusEdit.rect);
+}
+$('focusDraw').onclick = () => current() && startDraw('focus', current().focus_rect || null);
+$('coverDraw').onclick = () => {
+  if (!state.project || !video.videoWidth) return toast('Abra um projeto com o vídeo carregado para marcar a legenda.', true);
+  startDraw('cover', state.project.caption_cover || null);
 };
 function focusPoint(e) {
   const a = videoArea();
@@ -1689,14 +1710,23 @@ $('focusLayer').addEventListener('pointerup', () => {
   const f = state.focusEdit;
   if (!f?.from) return;
   f.from = null;
-  const big = f.rect && f.rect[2] >= 0.05 && f.rect[3] >= 0.05;
+  const min = f.kind === 'cover' ? 0.02 : 0.05;   // a legenda antiga é uma faixa baixa
+  const big = f.rect && f.rect[2] >= min && f.rect[3] >= min;
   $('focusOk').disabled = !big;
   $('focusHelp').textContent = big ? 'Confira a área. Arraste de novo para refazer.' : 'Área pequena demais: arraste de novo.';
 });
 function endFocusEdit() {
   state.focusEdit = null;
-  $('focusHelp').textContent = 'Arraste sobre o vídeo para marcar a área do streamer.';
   syncFocus();
+}
+async function saveCover(rect) {
+  if (!state.project) return;
+  try {
+    const r = await api('/api/projects/' + state.project.id + '/caption-cover', 'PUT', {rect});
+    state.project.caption_cover = r.caption_cover || undefined;
+    toast(rect ? 'A legenda antiga será apagada na exportação de todos os cortes.' : 'A legenda antiga não será mais apagada.');
+  } catch (err) { toast(err.message, true); }
+  endFocusEdit();
 }
 $('focusCancel').onclick = endFocusEdit;
 async function saveFocus(rect) {
@@ -1709,8 +1739,14 @@ async function saveFocus(rect) {
   } catch (err) { toast(err.message, true); }
   endFocusEdit();
 }
-$('focusOk').onclick = () => state.focusEdit?.rect && saveFocus(state.focusEdit.rect.map((v) => Math.round(v * 10000) / 10000));
+$('focusOk').onclick = () => {
+  const f = state.focusEdit;
+  if (!f?.rect) return;
+  const rect = f.rect.map((v) => Math.round(v * 10000) / 10000);
+  return f.kind === 'cover' ? saveCover(rect) : saveFocus(rect);
+};
 $('focusClear').onclick = () => saveFocus(null);
+$('coverClear').onclick = () => saveCover(null);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.focusEdit) { e.preventDefault(); endFocusEdit(); } });
 
 function renderRights(p) {
@@ -2001,7 +2037,8 @@ function renderTimeline() {
       '\nDois cliques: ampliar até o corte';
     if (c.id === state.selected) b.setAttribute('aria-current', 'true');
     // Nome lido pelo leitor de tela (o texto visível junta número, título e duração sem separação).
-    b.setAttribute('aria-label', 'Corte ' + (c.rank || c.id) + ': ' + c.title + ', de ' + fmt(c.start) + ' a ' +
+    b.setAttribute('aria-label', 'Corte ' + (c.rank || c.id) + ': ' + String(c.title || '').replace(/[\s.,;:!?…]+$/, '') +
+      ', de ' + fmt(c.start) + ' a ' +
       fmt(c.end) + (c.score != null ? ', nota ' + Math.round(c.score) : ''));
     const left = el('i', 'handle left'), right = el('i', 'handle right');
     left.dataset.side = 'start';
@@ -2329,8 +2366,8 @@ video.onerror = () => {
   if (!state.project) return;
   setLoading(null);
   setStatus('Vídeo indisponível', 'error');
-  toast('O navegador não conseguiu reproduzir este vídeo. A edição e a exportação continuam funcionando; ' +
-    'para pré-visualizar, converta o arquivo para MP4 (H.264).', true);
+  toast('O navegador não conseguiu reproduzir este vídeo. A edição e a exportação continuam funcionando. ' +
+    'Projetos novos são convertidos para MP4 sem perda na análise; neste, use Analisar de novo.', true);
 };
 $('seek').onpointerdown = () => { state.seeking = true; };
 $('seek').onpointerup = () => { state.seeking = false; };

@@ -103,6 +103,14 @@ def run_analysis(ctx: JobContext) -> dict:
         info = media.probe_media(source)
         warnings = media.integrity_warnings(source, info)
         ctx.progress(0.03)
+        if media.needs_browser_remux(source, info):
+            ctx.stage('validando', 'Convertendo para MP4 sem perda (para o vídeo tocar no navegador)')
+            if media.remux_for_browser(source, info, cancel_event=ctx.cancel_event,
+                                       on_progress=lambda f, _m='': ctx.progress(0.03 + 0.04 * f)):
+                info = media.probe_media(source)
+            else:
+                warnings.append('O vídeo não pôde ser convertido para MP4 e pode não tocar no navegador; '
+                                'a edição e a exportação continuam funcionando.')
 
         review = rights.rights_review(opts['source_rights'], opts['external_audio'], opts['license_notes'] or '',
                                       info['audio'], opts.get('graphics_rights') or 'unknown',
@@ -276,6 +284,8 @@ def run_export(ctx: JobContext) -> dict:
     if p.get('status') != 'ready':
         raise AppError('O projeto não está pronto para exportação.', 409, 'not_ready')
     info = p['media']
+    if prm.get('caption_cover'):   # legenda já gravada no vídeo: a área marcada é apagada antes do enquadramento
+        info = {**info, 'caption_cover': prm['caption_cover']}
     start, end = float(prm['start']), min(float(prm['end']), info['duration'])
     ctx.stage('preparando', 'Preparando exportação')
     # Estimativa conservadora: ~12 Mbit/s + arquivo temporário
