@@ -49,7 +49,7 @@ def test_subtitle_never_extends_past_clip():
 def test_ollama_rejects_string_boolean_and_score():
     clip = {'selection_mode': 'transcricao', 'description': 'Uma frase clara.', 'score': 60}
     for score, complete in [('90', True), (90, 'false'), (True, True)]:
-        answers = [{'models': [{'name': 'llama3.2:latest'}]}, {'response': json.dumps({
+        answers = [{'models': [{'name': 'qwen3:4b'}]}, {'response': json.dumps({
             'title': 'Uma frase', 'score': score, 'complete_thought': complete, 'reason': 'x'})}]
         with mock.patch.object(config, 'OLLAMA_ENABLED', True), mock.patch.object(selection, '_ollama', side_effect=answers):
             assert selection.refine_with_ollama([dict(clip)])['state'] == 'failed'

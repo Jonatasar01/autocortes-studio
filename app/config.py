@@ -64,11 +64,20 @@ WHISPER_DEVICE = os.getenv('WHISPER_DEVICE', 'auto')
 WHISPER_LANGUAGE = os.getenv('WHISPER_LANGUAGE', 'pt')  # 'auto' para detecção automática
 # Legenda de cada corte retranscrita com um modelo maior (só com GPU); 'off' desliga.
 WHISPER_REFINE_MODEL = os.getenv('WHISPER_REFINE_MODEL', 'large-v3-turbo')
-OLLAMA_ENABLED = _flag('OLLAMA_ENABLED', False)
-OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'llama3.2')
+OLLAMA_ENABLED = _flag('OLLAMA_ENABLED', False)   # refinador do ranking (a curadoria local é escolhida nas Configurações)
+# Qwen3 4B cabe com folga em 16 GB de RAM (~2,5 GB); o 1.7B (~1,4 GB) é o reserva quando o 4B não está instalado.
+OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen3:4b')
+OLLAMA_FALLBACK_MODEL = os.getenv('OLLAMA_FALLBACK_MODEL', 'qwen3:1.7b')
 OLLAMA_URL = 'http://127.0.0.1:11434'  # fixo: nunca envia transcrições para fora da máquina
 OLLAMA_TIMEOUT = _int('OLLAMA_TIMEOUT', 90, 5, 600)
 OLLAMA_TOTAL_TIMEOUT = _int('OLLAMA_TOTAL_TIMEOUT', 600, 30, 3600)
+OLLAMA_CURATION_TIMEOUT = _int('OLLAMA_CURATION_TIMEOUT', 300, 30, 1800)   # por chamada (bloco de 5 min na CPU)
+OLLAMA_NUM_CTX = _int('OLLAMA_NUM_CTX', 4096, 1024, 32768)
+OLLAMA_KEEP_ALIVE = os.getenv('OLLAMA_KEEP_ALIVE', '2m')
+# Curadoria local: blocos menores que os da nuvem (contexto de 4K e CPU).
+LOCAL_CURATION_CHUNK_SECONDS = _int('AUTOCORTES_LOCAL_CURATION_CHUNK_SECONDS', 300, 60, 1800)
+LOCAL_CURATION_OVERLAP_SECONDS = _int('AUTOCORTES_LOCAL_CURATION_OVERLAP_SECONDS', 30, 0, 300)
+LOCAL_CURATION_JUDGE_BATCH = _int('AUTOCORTES_LOCAL_CURATION_JUDGE_BATCH', 4, 1, 16)
 
 # Reconhecimento musical externo (opt-in)
 ACRCLOUD_MAX_SAMPLES = _int('ACRCLOUD_MAX_SAMPLES', 3, 1, 10)

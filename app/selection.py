@@ -19,8 +19,6 @@ import re
 import threading
 import time
 import unicodedata
-import urllib.error
-import urllib.request
 
 from . import config
 from .errors import Cancelled, sanitize
@@ -863,16 +861,9 @@ def build_candidates(segments: list[dict], duration: float, target: int, desired
 
 # --------------------------------------------------------------------------- Ollama (opcional)
 
-_no_proxy_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-
-
 def _ollama(path: str, payload: dict | None, timeout: float) -> dict:
-    data = json.dumps(payload).encode('utf-8') if payload is not None else None
-    req = urllib.request.Request(config.OLLAMA_URL + path, data=data,
-                                 headers={'Content-Type': 'application/json'})
-    with _no_proxy_opener.open(req, timeout=timeout) as response:
-        raw = response.read(2_000_000)
-    return json.loads(raw.decode('utf-8'))
+    from . import ollama_local   # mesmo cliente da curadoria (127.0.0.1 fixo, sem proxy)
+    return ollama_local.request(path, payload, timeout)
 
 
 def _grounded(title: str, text: str) -> bool:
@@ -904,11 +895,13 @@ def refine_with_ollama(clips: list[dict], *, cancel_event: threading.Event | Non
     eligible = [c for c in clips if c.get('selection_mode') == 'transcricao']
     if not eligible:
         return {'state': 'skipped', 'message': 'Ollama não usado: não há transcrição para avaliar.'}
+    from . import ollama_local
     try:
         tags = _ollama('/api/tags', None, 3)
         names = {m.get('name', '') for m in tags.get('models', [])}
-        wanted = config.OLLAMA_MODEL
-        if wanted not in names and f'{wanted}:latest' not in names:
+        model = ollama_local.pick_model(names)
+        if not model:
+            wanted = config.OLLAMA_MODEL
             return {'state': 'model_missing', 'message': f'Modelo "{wanted}" não instalado no Ollama '
                     f'(use: ollama pull {wanted}). Mantido ranking heurístico.'}
     except Exception as exc:  # serviço desligado, porta fechada, resposta inválida
@@ -923,7 +916,7 @@ def refine_with_ollama(clips: list[dict], *, cancel_event: threading.Event | Non
             failed += len(eligible) - n + 1
             break
         try:
-            out = _ollama('/api/generate', {'model': config.OLLAMA_MODEL, 'stream': False, 'format': SCHEMA,
+            out = _ollama('/api/generate', {'model': model, 'stream': False, 'format': SCHEMA, 'think': False,
                                             'options': {'temperature': 0},
                                             'prompt': PROMPT.format(text=clip['description'][:2800])},
                           config.OLLAMA_TIMEOUT)
@@ -961,7 +954,7 @@ def refine_with_ollama(clips: list[dict], *, cancel_event: threading.Event | Non
         _finalize(clips)
     if ok == 0:
         return {'state': 'failed', 'message': 'O Ollama não retornou respostas válidas; mantido ranking heurístico.'}
-    message = f'Ranking refinado com Ollama ({config.OLLAMA_MODEL}) em {ok} de {len(eligible)} cortes.'
+    message = f'Ranking refinado com Ollama ({model}) em {ok} de {len(eligible)} cortes.'
     if failed:
         message += f' {failed} resposta(s) inválida(s) ignorada(s).'
     if rejected_titles:

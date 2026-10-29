@@ -208,8 +208,29 @@ pip install -r requirements-ai.txt
   transcrição) para 43 min de análise completa.
 - **Sem transcrição** (não instalada, vídeo sem áudio, falha ou fala insuficiente), os cortes são **temporais** e
   aparecem identificados como tal, sem nota — não houve análise do conteúdo.
-- **Ollama:** instale, rode `ollama pull llama3.2` e defina `OLLAMA_ENABLED=1` (opcional `OLLAMA_MODEL`). O app só
-  conversa com `127.0.0.1:11434`; títulos sugeridos que não constam no trecho são descartados.
+- **Curadoria 100% local com Ollama / Qwen** (sem chave, sem custo, nada sai do computador):
+  1. Instale o Ollama ([ollama.com](https://ollama.com); no Windows, `winget install Ollama.Ollama`) e baixe o
+     modelo: `ollama pull qwen3:4b` (~2,5 GB; para pouca memória, `ollama pull qwen3:1.7b`, ~1,4 GB, usado
+     sozinho quando o 4B não está instalado).
+  2. No editor, **Seleção de cortes e IA → Curadoria → Ollama / Qwen local** (aparece "não instalado" enquanto o
+     Ollama estiver fechado ou sem o modelo). Não pede consentimento nem chave e não entra no registro de envios
+     para a nuvem (`cloud_consents`).
+  3. A análise usa o mesmo motor da curadoria na nuvem: o modelo propõe trechos pelo **número das frases** (nunca
+     tempos livres), os índices são conferidos, os tempos vêm da transcrição, títulos sem respaldo no trecho são
+     trocados e o juiz dá notas de gancho, coerência, valor e tendência. A transcrição é tratada como dado não
+     confiável (instruções dentro da fala são ignoradas).
+  - Para caber num contexto de 4K e na CPU, os blocos são de 5 min (30 s de sobreposição) e o juiz avalia 4 trechos
+    por vez; uma resposta inválida num bloco é pulada, e se o Ollama cair a seleção heurística fica, sem repetir a
+    chamada no refinador. Variáveis: `OLLAMA_MODEL` (`qwen3:4b`), `OLLAMA_FALLBACK_MODEL` (`qwen3:1.7b`),
+    `OLLAMA_NUM_CTX` (4096), `OLLAMA_KEEP_ALIVE` (`2m`), `OLLAMA_CURATION_TIMEOUT` (300 s por chamada),
+    `AUTOCORTES_LOCAL_CURATION_CHUNK_SECONDS` (300), `AUTOCORTES_LOCAL_CURATION_OVERLAP_SECONDS` (30),
+    `AUTOCORTES_LOCAL_CURATION_JUDGE_BATCH` (4). Para garantir que o Ollama não use recursos de nuvem dele:
+    `OLLAMA_NO_CLOUD=1` no ambiente do Ollama.
+  - Sem GPU, cada bloco leva de segundos a minutos: numa live longa a curadoria local pode levar bastante tempo
+    (a análise mostra o progresso e pode ser cancelada). Com pouca memória, use também `WHISPER_MODEL=base`.
+  - O refinador antigo do ranking (`OLLAMA_ENABLED=1`) continua disponível e usa o mesmo modelo; ele só roda
+    quando a curadoria escolhida não é o Ollama. O app só conversa com `127.0.0.1:11434`, sem proxy.
+  - Teste opcional com o Ollama de verdade: `AUTOCORTES_TEST_REAL_OLLAMA=1 python -m pytest tests/test_local_ai.py`.
 
 ## Narração com ChatGPT (opcional, paga, com consentimento)
 

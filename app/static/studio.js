@@ -1639,7 +1639,8 @@ async function openSelection() {
     const cur = cfg.curation, providers = health.curation || {};
     $('curationProvider').innerHTML = Object.entries(providers).map(([id, info]) =>
       '<option value="' + id + '"' + (id === cur.provider ? ' selected' : '') + '>' + escape(info.label) +
-      (id !== 'heuristica' && !info.configured ? ' — sem chave' : '') + '</option>').join('');
+      (id !== 'heuristica' && !info.configured ? (id === 'ollama' ? ' — não instalado' : ' — sem chave') : '') +
+      '</option>').join('');
     $('curationProvider').dataset.providers = JSON.stringify(providers);
     $('curationConsent').checked = !!cur.consent;
     $('curationPrompt').value = cur.prompt || '';
@@ -1655,22 +1656,26 @@ async function openSelection() {
 function syncCuration() {
   const id = $('curationProvider').value;
   const info = JSON.parse($('curationProvider').dataset.providers || '{}')[id] || {};
-  const cloud = id !== 'heuristica';
+  const ai = id !== 'heuristica', cloud = ai && !info.local;
+  // Local (Ollama): nada sai do computador, então não há consentimento nem chave; mostra o status do modelo.
   $('curationConsentRow').hidden = !cloud;
-  $('curationKeyNote').hidden = !cloud;
+  $('curationKeyNote').hidden = !ai;
   const env = id === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
-  $('curationKeyNote').textContent = info.configured
-    ? 'Chave encontrada. Modelo: ' + (info.model || '—') + '.'
-    : 'Chave não encontrada: defina ' + env + ' no Windows e reinicie o AutoCortes.';
-  $('curationKeyNote').classList.toggle('warn', cloud && !info.configured);
-  $('reselect').disabled = cloud && !info.configured;  // sem chave a IA falharia e voltaria à heurística
+  $('curationKeyNote').textContent = id === 'ollama'
+    ? '100% local: a transcrição não sai deste computador. ' + (info.message || '') +
+      (info.configured ? ' No processador a análise fica mais lenta (alguns minutos por hora de vídeo, ou mais).' : '')
+    : info.configured ? 'Chave encontrada. Modelo: ' + (info.model || '—') + '.'
+      : 'Chave não encontrada: defina ' + env + ' no Windows e reinicie o AutoCortes.';
+  $('curationKeyNote').classList.toggle('warn', ai && !info.configured);
+  $('reselect').disabled = ai && !info.configured;  // sem chave/modelo a IA falharia e voltaria à heurística
 }
 $('curationProvider').addEventListener('change', syncCuration);
 
 async function saveCuration() {
   const provider = $('curationProvider').value;
   await api('/api/settings', 'PUT', {curation: {
-    provider, consent: provider !== 'heuristica' && $('curationConsent').checked, prompt: $('curationPrompt').value.trim(),
+    provider, consent: !['heuristica', 'ollama'].includes(provider) && $('curationConsent').checked,
+    prompt: $('curationPrompt').value.trim(),
   }});
 }
 $('curationSave').onclick = async () => {

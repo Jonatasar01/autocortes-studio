@@ -51,7 +51,7 @@ def defaults() -> dict:
             },
         },
         'curation': {
-            'provider': 'heuristica',     # heuristica | openai | anthropic
+            'provider': 'heuristica',     # heuristica | ollama (local) | openai | anthropic
             'consent': False, 'consent_at': None,
             'prompt': '',                 # foco opcional ("momentos sobre dinheiro")
         },
@@ -196,13 +196,15 @@ def validate(s: dict) -> dict:
     if not nr['consent']:
         nr['consent_at'] = None
     cu = s['curation']
-    from .curation import PROVIDERS
+    from .curation import PROVIDERS, requires_external_consent
     cu['provider'] = _choice(cu['provider'], PROVIDERS, 'Provedor da curadoria')
     cu['consent'] = _bool(cu['consent'])
     cu['prompt'] = str(cu.get('prompt') or '')[:300]
-    if cu['provider'] != 'heuristica' and not cu['consent']:
+    if requires_external_consent(cu['provider']) and not cu['consent']:
         raise AppError('Para usar a curadoria com IA na nuvem, autorize o envio do texto das transcrições ao '
                        'provedor escolhido.', 400, 'consent_required')
+    if not requires_external_consent(cu['provider']):
+        cu['consent'] = False   # local (heurística, Ollama): nada é enviado, não há consentimento a guardar
     if not cu['consent']:
         cu['consent_at'] = None
     s['watch']['enabled'] = _bool(s['watch']['enabled'])

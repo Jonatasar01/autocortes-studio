@@ -27,8 +27,12 @@ def readiness():
         {'name': 'Transcrição local', 'ready': transcription.available(),
          'detail': f'Whisper {config.WHISPER_MODEL} (auto: large-v3-turbo na GPU, small na CPU); '
                    'primeiro uso pode baixar o modelo.'},
-        {'name': 'Curadoria com IA', 'ready': cu['provider'] != 'heuristica' and cu['consent'] and providers[cu['provider']]['configured'],
-         'detail': f"Provedor: {cu['provider']}. Requer chave e consentimento nas Configurações para IA na nuvem."},
+        {'name': 'Curadoria com IA',
+         'ready': (cu['provider'] != 'heuristica' and providers[cu['provider']]['configured']
+                   and (cu['consent'] or not curation.requires_external_consent(cu['provider']))),
+         'detail': (providers['ollama'].get('message', '') + ' Processamento 100% local.'
+                    if cu['provider'] == 'ollama' else
+                    f"Provedor: {cu['provider']}. Requer chave e consentimento nas Configurações para IA na nuvem.")},
         {'name': 'Roteiro e voz', 'ready': nr['enabled'] and nr['consent'] and narration.is_configured(),
          'detail': 'OpenAI: ativação, chave e consentimento necessários. Pode gerar cobrança.'},
         {'name': 'Importação por link', 'ready': downloads.available(), 'detail': 'YouTube e Shorts públicos, até 1080p; sem login.'},

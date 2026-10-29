@@ -1,5 +1,19 @@
 ## Não lançado
 
+### Curadoria 100% local com Ollama / Qwen
+- **Ollama vira provedor completo da curadoria** (antes só refinava a nota dos cortes da heurística): em
+  "Seleção de cortes e IA", **Ollama / Qwen local** propõe e julga os cortes com os mesmos esquemas, a mesma
+  validação por número de frase e a mesma proteção de títulos da curadoria na nuvem. Modelo `qwen3:4b`, com
+  `qwen3:1.7b` como reserva automática.
+- **Local × nuvem:** `LOCAL_PROVIDERS` / `REMOTE_PROVIDERS`; só OpenAI e Anthropic exigem consentimento e entram
+  em `cloud_consents`. O Ollama não pede chave nem consentimento (o consentimento salvo é zerado ao escolhê-lo).
+- **CPU / 16 GB:** blocos de 5 min com 30 s de sobreposição, juiz em lotes de 4, contexto de 4K, `keep_alive` de
+  2 min, temperatura 0 e `think: false`; uma resposta inválida num bloco é pulada (a nuvem continua parando).
+  Se a curadoria local falhar, a heurística fica e o refinador não chama o mesmo Ollama de novo.
+- `app/ollama_local.py`: cliente único (127.0.0.1 fixo, sem proxy, erros limpos, status em cache) usado pela
+  curadoria e pelo refinador; tela mostra "100% local", o status e o modelo instalado.
+- Testes em `tests/test_local_ai.py` (Ollama simulado) e teste real opcional com `AUTOCORTES_TEST_REAL_OLLAMA=1`.
+
 ### Player: pular 10 s e 30 s
 - Botões **-30**, **-10**, **+10** e **+30** ao lado do voltar/avançar 1 s; atalhos **J** / **L** (10 s) e
   **Shift+J** / **Shift+L** (30 s), também na ajuda de teclado.
