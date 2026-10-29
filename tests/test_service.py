@@ -171,6 +171,46 @@ class FlowTests(ServiceBase):
         self.assertTrue(p['clips'])
         self.assertEqual(p['curation_profile']['provider'], 'heuristica')
 
+    def test_transcript_survives_a_failure_after_transcription(self):
+        # Numa live, a curadoria depois da transcrição leva quase o mesmo tempo: se ela falhar ou for cancelada,
+        # a transcrição já está gravada e "Refazer seleção" continua sem transcrever de novo.
+        from app import pipeline
+        original_select = pipeline.selection.select_clips
+
+        def broken(*a, **k):
+            raise AppError('falha simulada na seleção', 500, 'simulada')
+        pipeline.selection.select_clips = broken
+        try:
+            res = self.create(self.video, wait=False)
+            self.assertEqual(service.manager.wait(res['job']['id'], 180)['status'], 'failed')
+        finally:
+            pipeline.selection.select_clips = original_select
+        p = storage.read_project(res['id'])
+        self.assertEqual((p['status'], p['transcription']['state']), ('error', 'ok'))
+        self.assertTrue(p['transcript'])
+        original = transcription.transcribe
+
+        def must_not_run(*a, **k):
+            raise AssertionError('refazer a seleção não pode transcrever de novo')
+        transcription.transcribe = must_not_run
+        try:
+            done = service.manager.wait(service.reselect(res['id'])['id'], 180)
+        finally:
+            transcription.transcribe = original
+        self.assertEqual(done['status'], 'done', done.get('error'))
+        p = storage.read_project(res['id'])
+        self.assertEqual(p['status'], 'ready')
+        self.assertTrue(p['clips'])
+
+    def test_reanalyze_uses_the_current_curation_settings(self):
+        res = self.create(self.video)
+        with storage.edit_project(res['id']) as p:
+            p['curation_profile'] = {**p['curation_profile'], 'prompt': 'escolha antiga'}
+        job = service.reanalyze(res['id'])
+        self.assertEqual(service.manager.wait(job['id'], 180)['status'], 'done')
+        from app import settings
+        self.assertEqual(storage.read_project(res['id'])['curation_profile'], settings.load()['curation'])
+
     def test_reselect_requires_a_ready_project_with_transcript(self):
         res = self.create(self.video)
         with storage.edit_project(res['id']) as p:

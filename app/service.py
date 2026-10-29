@@ -943,15 +943,20 @@ def reanalyze(project_id: str) -> dict:
     são substituídos ao terminar; se a nova análise falhar ou for cancelada, eles continuam valendo."""
     if _jobs().for_project(project_id, active_only=True):
         raise AppError('Aguarde as tarefas em andamento deste projeto terminarem.', 409, 'busy')
-    return _queue_analysis(project_id, {}, from_status=('error', 'cancelled', 'interrupted', 'ready'))
+    # Pedido pelo usuário agora: vale a curadoria escolhida agora, não a do dia em que o projeto foi criado.
+    return _queue_analysis(project_id, {}, from_status=('error', 'cancelled', 'interrupted', 'ready'),
+                           refresh_curation=True)
 
 
-def _queue_analysis(project_id: str, params: dict, *, from_status: tuple[str, ...]) -> dict:
+def _queue_analysis(project_id: str, params: dict, *, from_status: tuple[str, ...],
+                    refresh_curation: bool = False) -> dict:
     with storage.edit_project(project_id) as p:
         if p.get('status') not in from_status:
             raise AppError('Este projeto não pode ser analisado de novo agora.', 409, 'bad_state')
         if not (storage.project_dir(project_id) / p['filename']).is_file():
             raise AppError('O vídeo deste projeto não está mais na pasta; envie o arquivo de novo.', 409, 'no_source')
+        if refresh_curation:
+            p['curation_profile'] = copy.deepcopy(settings.load()['curation'])
         p['status'] = 'queued'
         p['error'] = None
     job, _ = _jobs().submit(project_id, 'analysis', dict(params), dedupe_key=f'analysis:{project_id}')
@@ -962,11 +967,12 @@ def _queue_analysis(project_id: str, params: dict, *, from_status: tuple[str, ..
 
 def reselect(project_id: str) -> dict:
     """Refaz só a escolha dos cortes sobre a transcrição já salva, com as Configurações atuais de curadoria
-    (ex.: IA ativada depois da análise). Os cortes atuais são substituídos ao terminar."""
+    (ex.: IA ativada depois da análise). Os cortes atuais são substituídos ao terminar. Vale também para uma
+    análise cancelada, interrompida ou com erro depois da transcrição, que fica gravada assim que termina."""
     if _jobs().for_project(project_id, active_only=True):
         raise AppError('Aguarde as tarefas em andamento deste projeto terminarem.', 409, 'busy')
     with storage.edit_project(project_id) as p:
-        if p.get('status') != 'ready':
+        if p.get('status') not in ('ready', 'error', 'cancelled', 'interrupted'):
             raise AppError('A seleção só pode ser refeita em projetos prontos.', 409, 'bad_state')
         if (p.get('transcription') or {}).get('state') != 'ok' or not p.get('transcript'):
             raise AppError('Este projeto não tem transcrição salva; use Reanalisar.', 409, 'no_transcript')

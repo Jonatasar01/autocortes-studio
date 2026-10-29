@@ -90,6 +90,8 @@ def run_analysis(ctx: JobContext) -> dict:
         source = folder / p['filename']
         opts = {k: p.get(k) for k in ('source_rights', 'external_audio', 'license_notes', 'graphics_rights',
                                       'third_party_footage', 'monetization', 'target_seconds', 'desired_count')}
+        # Projeto já pronto: a transcrição nova só substitui a atual (com as correções do usuário) no fim.
+        keep_early = not p.get('clips')
 
     saved = _saved_analysis(pid) if ctx.params.get('reselect') else None
     audio_index = None
@@ -145,6 +147,12 @@ def run_analysis(ctx: JobContext) -> dict:
                 ctx.stage('transcrevendo', 'Transcrevendo a fala localmente')
                 transcript, t_status = transcription.transcribe(wav, info['duration'], on_progress=ctx.span(0.14, 0.74),
                                                                 cancel_event=ctx.cancel_event)
+                if keep_early and t_status['state'] == 'ok':
+                    # Gravada já: numa live, a curadoria depois leva quase tanto quanto a transcrição. Se a análise
+                    # for cancelada ou falhar daqui em diante, "Refazer seleção" continua sem transcrever de novo.
+                    with storage.edit_project(pid) as p:
+                        p.update({'transcript': transcript, 'transcription': t_status,
+                                  'transcript_status': t_status['message']})
                 # Energia do áudio a partir do WAV já extraído (sem decodificar o vídeo de novo).
                 audio_index = _audio_layer(ctx, folder, info, transcript, wav=wav, original=source)
             except media.FFmpegError as exc:
@@ -167,6 +175,9 @@ def run_analysis(ctx: JobContext) -> dict:
         if scene_state['error'] is not None:
             raise scene_state['error']
         scenes = scene_state['scenes']
+        if keep_early:
+            with storage.edit_project(pid) as p:
+                p['scenes'] = scenes
         ctx.progress(0.88)
 
     if audio_index is None and saved:

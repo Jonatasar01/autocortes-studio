@@ -1220,7 +1220,9 @@ async function openProject(id) {
     m.size_bytes ? fmtSize(m.size_bytes) : null, p.editing_mode === 'manual' ? 'Edição manual' : 'Seleção automática']
     .filter(Boolean).join(' · ');
   $('mediaCard').hidden = false;
-  $('openSelection').hidden = !(p.status === 'ready' && p.transcription?.state === 'ok');
+  // Análise parada depois da transcrição: a transcrição ficou gravada e a seleção pode ser refeita a partir dela.
+  const transcribed = p.transcription?.state === 'ok';
+  $('openSelection').hidden = !(transcribed && (p.status === 'ready' || STOPPED.includes(p.status)));
   $('reanalyze').hidden = !(p.status === 'ready' || STOPPED.includes(p.status));
   loadCacheUsage();
   render();
@@ -1240,7 +1242,8 @@ async function openProject(id) {
   } else {
     setLoading(null);
     setStatus('Projeto indisponível', 'error');
-    toast(p.error || 'O projeto não está pronto para edição.', true);
+    toast((p.error || 'O projeto não está pronto para edição.') + (transcribed
+      ? ' A transcrição ficou salva: use Seleção de cortes para continuar sem transcrever de novo.' : ''), true);
   }
 }
 
@@ -1659,8 +1662,9 @@ async function openSelection() {
     syncCuration();
     const clips = state.project?.clips || [];
     const exported = clips.filter((c) => Object.keys(c.exports || {}).length).length;
-    $('reselectNote').textContent = 'Refazer a seleção usa a transcrição já salva (não transcreve de novo) e substitui os ' +
-      clips.length + ' cortes atuais' + (exported ? ', incluindo ' + exported + ' já exportado(s) — baixe-os antes' : '') + '.';
+    $('reselectNote').textContent = 'Refazer a seleção usa a transcrição já salva (não transcreve de novo)' + (clips.length
+      ? ' e substitui os ' + clips.length + ' cortes atuais' + (exported ? ', incluindo ' + exported + ' já exportado(s) — baixe-os antes' : '')
+      : '') + '.';
     dlg.showModal();
   } catch (e) { toast(e.message, true); }
 }
