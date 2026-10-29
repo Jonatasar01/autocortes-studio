@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 from typing import Callable
@@ -96,6 +97,29 @@ JUDGE_SYSTEM = (
     '- valor: entrega ideia, emoção, informação ou entretenimento que vale o tempo?\n'
     '- tendencia: o tema tem apelo amplo ou está em alta?\n'
     'Responda apenas com o JSON pedido, um resultado por id.')
+
+# Modo rápido do modelo local: o tempo de um modelo pequeno vai quase todo em escrever texto. Sem resumo, hashtags
+# e comentários (que o app quase não usa), cada chamada gera uma fração dos tokens; a escolha dos trechos é a mesma.
+LOCAL_MODES = ('rapido', 'completo')
+AUTO_JUDGE_MAX_FAST = 24   # modo rápido: trechos levados ao juiz no automático
+PROPOSE_SCHEMA_FAST = {
+    'type': 'object', 'additionalProperties': False, 'required': ['clips'],
+    'properties': {'clips': {'type': 'array', 'items': {
+        'type': 'object', 'additionalProperties': False, 'required': ['start', 'end', 'title', 'hook_text'],
+        'properties': {'start': {'type': 'integer'}, 'end': {'type': 'integer'}, 'title': {'type': 'string'},
+                       'hook_text': {'type': 'string'}}}}},
+}
+JUDGE_SCHEMA_FAST = {
+    'type': 'object', 'additionalProperties': False, 'required': ['results'],
+    'properties': {'results': {'type': 'array', 'items': {
+        'type': 'object', 'additionalProperties': False,
+        'required': ['id', 'gancho', 'coerencia', 'valor', 'tendencia'],
+        'properties': {'id': {'type': 'integer'}, 'gancho': {'type': 'number'}, 'coerencia': {'type': 'number'},
+                       'valor': {'type': 'number'}, 'tendencia': {'type': 'number'}}}}},
+}
+PROPOSE_SYSTEM_FAST = PROPOSE_SYSTEM.replace(
+    ', "summary" (1-2 frases para a descrição do post) e "hashtags" (3 a 5)', '')
+JUDGE_SYSTEM_FAST = JUDGE_SYSTEM.replace(' e um comentário curto e específico (até 160 caracteres)', '')
 
 
 # --------------------------------------------------------------------------- disponibilidade
@@ -250,13 +274,19 @@ def _chunks(units: list[dict], seconds: float = CHUNK_SECONDS, overlap: float = 
         lo = back
 
 
-def _limits(provider: str) -> dict:
-    """Tamanho dos blocos e lotes: o modelo local (contexto de 4K, CPU) recebe pedidos menores que a nuvem."""
+def _limits(provider: str, mode: str = 'completo') -> dict:
+    """Tamanho dos blocos e lotes: o modelo local (contexto de 4K, CPU) recebe pedidos menores que a nuvem; no
+    modo rápido, sem resumo/hashtags/comentários e com menos trechos no juiz."""
+    full = {'propose': (PROPOSE_SYSTEM, PROPOSE_SCHEMA), 'judge': (JUDGE_SYSTEM, JUDGE_SCHEMA),
+            'judge_max': AUTO_JUDGE_MAX}
     if provider == 'ollama':
+        fast = mode == 'rapido'
         return {'chunk': config.LOCAL_CURATION_CHUNK_SECONDS, 'overlap': config.LOCAL_CURATION_OVERLAP_SECONDS,
-                'batch': config.LOCAL_CURATION_JUDGE_BATCH, 'text': LOCAL_JUDGE_TEXT_LIMIT, 'tolerant': True}
+                'batch': config.LOCAL_CURATION_JUDGE_BATCH, 'text': LOCAL_JUDGE_TEXT_LIMIT, 'tolerant': True,
+                **({'propose': (PROPOSE_SYSTEM_FAST, PROPOSE_SCHEMA_FAST), 'judge': (JUDGE_SYSTEM_FAST, JUDGE_SCHEMA_FAST),
+                    'judge_max': AUTO_JUDGE_MAX_FAST} if fast else full)}
     return {'chunk': CHUNK_SECONDS, 'overlap': CHUNK_OVERLAP, 'batch': JUDGE_BATCH, 'text': JUDGE_TEXT_LIMIT,
-            'tolerant': False}
+            'tolerant': False, **full}
 
 
 def _fit(units: list[dict], i: int, j: int, min_len: float, max_len: float) -> tuple[int, int] | None:
@@ -273,13 +303,17 @@ def _fit(units: list[dict], i: int, j: int, min_len: float, max_len: float) -> t
 
 
 def curate(provider: str, segments: list[dict], duration: float, target: int, desired: int,
-           scenes: list[float] | None = None, *, prompt: str = '',
+           scenes: list[float] | None = None, *, prompt: str = '', mode: str = 'completo',
            cancel_event: threading.Event | None = None,
            on_progress: Callable[[float, str], None] | None = None) -> tuple[list[dict], dict]:
-    """Seleciona e avalia cortes com IA. Levanta AppError em falhas (o chamador mantém a heurística)."""
+    """Seleciona e avalia cortes com IA. Levanta AppError em falhas (o chamador mantém a heurística).
+
+    ``mode`` (só o modelo local): 'rapido' pede só o essencial e julga menos trechos; 'completo' é o pedido inteiro.
+    """
+    limits = _limits(provider, mode)
     target = max(10, min(90, int(target)))
     auto = int(desired) == selection.AUTO
-    desired = AUTO_JUDGE_MAX // 3 if auto else max(1, min(15, int(desired)))
+    desired = limits['judge_max'] // 3 if auto else max(1, min(15, int(desired)))
     scenes = sorted(scenes or [])
     units = selection.build_units(segments or [])
     if not units:
@@ -291,8 +325,8 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
         min_len = min(max(6.0, target * 0.6), duration)
         max_len = min(target * 1.35, config.MAX_CLIP_SECONDS)
     progress = on_progress or (lambda f, m='': None)
-    limits = _limits(provider)
     skipped = 0   # modelo local: bloco/lote com resposta inválida é pulado (a nuvem continua parando na falha)
+    timings: list[float] = []   # duração de cada chamada, para estimar o tempo restante na tela
 
     def check_cancel():
         if cancel_event is not None and cancel_event.is_set():
@@ -300,6 +334,7 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
 
     def call(system: str, user: str, schema: dict, name: str) -> dict | None:
         nonlocal skipped
+        t0 = time.monotonic()
         try:
             return ask(provider, system, user, schema, name)
         except AppError as exc:
@@ -307,6 +342,16 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
                 skipped += 1
                 return None
             raise
+        finally:
+            timings.append(time.monotonic() - t0)
+
+    def report(fraction: float, what: str, remaining_calls: int) -> None:
+        """A barra geral mal anda nesta etapa (é o fim da análise): a mensagem diz onde está e quanto falta."""
+        eta = ''
+        if timings and remaining_calls > 0:
+            minutes = round(sum(timings) / len(timings) * remaining_calls / 60)
+            eta = f' · cerca de {minutes} min restantes' if minutes >= 1 else ' · menos de 1 min'
+        progress(fraction, f'Curadoria com IA: {what}{eta}')
 
     # 1. Proposta
     windows: dict[tuple[int, int], dict] = {}
@@ -320,7 +365,8 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
         focus = f'\nFoco pedido pelo usuário: {_clean(prompt, 300)}' if prompt else ''
         user = (f'Proponha até {want} trechos com duração entre {min_len:.0f} e {max_len:.0f} segundos.{focus}\n'
                 f'<transcricao>\n{lines}\n</transcricao>')
-        data = call(PROPOSE_SYSTEM, user, PROPOSE_SCHEMA, 'cortes_propostos') or {}
+        system, schema = limits['propose']
+        data = call(system, user, schema, 'cortes_propostos') or {}
         for item in data.get('clips') or []:
             if not isinstance(item, dict):
                 continue
@@ -333,7 +379,8 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
             fitted = _fit(units, i, max(i, j), min_len, max_len)
             if fitted and fitted not in windows:
                 windows[fitted] = item
-        progress(0.5 * n / len(chunks), '')
+        judge_calls = -(-max(desired * 3, 6) // limits['batch'])   # estimativa até saber quantos trechos vieram
+        report(0.5 * n / len(chunks), f'lendo o vídeo, bloco {n} de {len(chunks)}', len(chunks) - n + judge_calls)
     if not windows:
         raise AppError('A IA não propôs trechos válidos para a duração pedida.', 422, 'curation_empty')
 
@@ -360,14 +407,17 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
         batch = candidates[start:start + limits['batch']]
         body = '\n\n'.join(f'<trecho id={k}>\n{_clean(c["text"], limits["text"])}\n</trecho>'
                            for k, c in enumerate(batch))
-        data = call(JUDGE_SYSTEM, body, JUDGE_SCHEMA, 'avaliacao_cortes') or {}
+        system, schema = limits['judge']
+        data = call(system, body, schema, 'avaliacao_cortes') or {}
         results = {}
         for r in data.get('results') or []:
             if isinstance(r, dict) and type(r.get('id')) is int:
                 results[r['id']] = r
         for k, c in enumerate(batch):
             c['judge'] = results.get(k)
-        progress(0.5 + 0.5 * min(1.0, (start + len(batch)) / len(candidates)), '')
+        done = start + len(batch)
+        report(0.5 + 0.5 * min(1.0, done / len(candidates)), f'avaliando trechos, {done} de {len(candidates)}',
+               -(-(len(candidates) - done) // limits['batch']))
 
     # 4. Nota final, regras de sobreposição/repetição e montagem dos cortes
     for c in candidates:
@@ -450,5 +500,8 @@ def curate(provider: str, segments: list[dict], duration: float, target: int, de
         message += f' {rejected} título(s) da IA trocado(s) por não constarem no trecho.'
     if skipped:
         message += f' {skipped} resposta(s) inválida(s) do modelo local ignorada(s).'
+    if provider == 'ollama':
+        message += ' Modo rápido.' if mode == 'rapido' else ' Modo completo.'
     return clips, {'state': 'ok', 'provider': provider, 'model': model_for(provider), 'message': message,
-                   'proposed': len(windows), 'judged': len(candidates), 'skipped_calls': skipped}
+                   'proposed': len(windows), 'judged': len(candidates), 'skipped_calls': skipped,
+                   'mode': mode if provider == 'ollama' else None}

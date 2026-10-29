@@ -1643,6 +1643,7 @@ async function openSelection() {
       '</option>').join('');
     $('curationProvider').dataset.providers = JSON.stringify(providers);
     $('curationConsent').checked = !!cur.consent;
+    $('curationLocalMode').value = cur.local_mode || 'rapido';
     $('curationPrompt').value = cur.prompt || '';
     syncCuration();
     const clips = state.project?.clips || [];
@@ -1659,6 +1660,7 @@ function syncCuration() {
   const ai = id !== 'heuristica', cloud = ai && !info.local;
   // Local (Ollama): nada sai do computador, então não há consentimento nem chave; mostra o status do modelo.
   $('curationConsentRow').hidden = !cloud;
+  $('curationModeRow').hidden = id !== 'ollama';
   $('curationKeyNote').hidden = !ai;
   const env = id === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
   $('curationKeyNote').textContent = id === 'ollama'
@@ -1675,7 +1677,7 @@ async function saveCuration() {
   const provider = $('curationProvider').value;
   await api('/api/settings', 'PUT', {curation: {
     provider, consent: !['heuristica', 'ollama'].includes(provider) && $('curationConsent').checked,
-    prompt: $('curationPrompt').value.trim(),
+    prompt: $('curationPrompt').value.trim(), local_mode: $('curationLocalMode').value,
   }});
 }
 $('curationSave').onclick = async () => {

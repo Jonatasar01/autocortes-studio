@@ -82,7 +82,7 @@ class JobContext:
 
     def span(self, low: float, high: float) -> Callable[[float, str], None]:
         """Converte o progresso de uma etapa (0–1) para a faixa global [low, high]."""
-        return lambda p, msg='': self.progress(low + (high - low) * max(0.0, min(1.0, p)))
+        return lambda p, msg='': self.progress(low + (high - low) * max(0.0, min(1.0, p)), msg or None)
 
     def warn(self, message: str) -> None:
         self.manager.event(self.id, self.stage_name, 'warning', message)

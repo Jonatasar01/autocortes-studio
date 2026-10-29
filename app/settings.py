@@ -52,6 +52,7 @@ def defaults() -> dict:
         },
         'curation': {
             'provider': 'heuristica',     # heuristica | ollama (local) | openai | anthropic
+            'local_mode': 'rapido',       # Ollama: rapido (só notas e títulos) | completo (com resumo e comentários)
             'consent': False, 'consent_at': None,
             'prompt': '',                 # foco opcional ("momentos sobre dinheiro")
         },
@@ -196,8 +197,9 @@ def validate(s: dict) -> dict:
     if not nr['consent']:
         nr['consent_at'] = None
     cu = s['curation']
-    from .curation import PROVIDERS, requires_external_consent
+    from .curation import LOCAL_MODES, PROVIDERS, requires_external_consent
     cu['provider'] = _choice(cu['provider'], PROVIDERS, 'Provedor da curadoria')
+    cu['local_mode'] = _choice(cu.get('local_mode', 'rapido'), LOCAL_MODES, 'Modo da curadoria local')
     cu['consent'] = _bool(cu['consent'])
     cu['prompt'] = str(cu.get('prompt') or '')[:300]
     if requires_external_consent(cu['provider']) and not cu['consent']:

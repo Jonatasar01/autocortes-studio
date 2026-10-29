@@ -208,7 +208,8 @@ def run_analysis(ctx: JobContext) -> dict:
         try:
             ai_clips, curation_status = curation.curate(
                 provider, transcript, info['duration'], opts['target_seconds'], opts['desired_count'], scenes,
-                prompt=cur_cfg.get('prompt') or '', cancel_event=ctx.cancel_event, on_progress=ctx.span(0.9, 0.99))
+                prompt=cur_cfg.get('prompt') or '', mode=cur_cfg.get('local_mode') or 'rapido',
+                cancel_event=ctx.cancel_event, on_progress=ctx.span(0.9, 0.99))
             # Fusão: um bom candidato da heurística não some só porque a IA trouxe outra lista.
             clips = selection.merge_candidates(ai_clips, clips, limit=sel.get('limit'))
         except Cancelled:

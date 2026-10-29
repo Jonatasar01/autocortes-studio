@@ -605,6 +605,13 @@
     <label class="field" for="curationProvider">Curadoria</label>
     <select id="curationProvider"></select>
     <p id="curationKeyNote" class="hint" hidden></p>
+    <div id="curationModeRow" hidden>
+      <label class="field" for="curationLocalMode">Modo da IA local</label>
+      <select id="curationLocalMode">
+        <option value="rapido">Rápido: notas e títulos (recomendado)</option>
+        <option value="completo">Completo: também resumo, hashtags e comentários (mais lento)</option>
+      </select>
+    </div>
     <label class="switch" id="curationConsentRow" hidden><input id="curationConsent" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Autorizo enviar o texto das transcrições</strong><small>Só o texto vai ao provedor, nunca o vídeo ou o áudio. Cada análise usa a API e tem custo.</small></span></label>
     <label class="field" for="curationPrompt">Foco (opcional)</label>
     <input id="curationPrompt" type="text" maxlength="300" placeholder="Ex.: momentos engraçados e histórias pessoais">

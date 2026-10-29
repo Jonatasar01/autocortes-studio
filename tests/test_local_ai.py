@@ -39,8 +39,8 @@ class FakeOllama:
 
     def __call__(self, *, system, prompt, schema, model, timeout=None):
         self.calls.append({'system': system, 'prompt': prompt, 'schema': schema, 'model': model})
-        if schema is curation.PROPOSE_SCHEMA:
-            if self.fail_first and sum(c['schema'] is curation.PROPOSE_SCHEMA for c in self.calls) == 1:
+        if 'clips' in schema['properties']:
+            if self.fail_first and sum('clips' in c['schema']['properties'] for c in self.calls) == 1:
                 raise AppError('O Ollama devolveu JSON inválido.', 502, 'ollama_bad_response')
             return self.propose or {'clips': [
                 {'start': 0, 'end': 3, 'title': 'O erro no preço do café', 'hook_text': 'Você erra o preço do café?',
@@ -202,6 +202,40 @@ class CurationProviderTests(unittest.TestCase):
             with self.assertRaises(Cancelled):
                 curation.curate('ollama', self.transcript, 25, 12, 3, [], cancel_event=stop)
 
+    def test_fast_mode_asks_only_what_is_used(self):
+        fake = FakeOllama()
+        with mock.patch.object(ollama_local, 'status', return_value=READY), \
+                mock.patch.object(ollama_local, 'generate', side_effect=fake):
+            clips, status = curation.curate('ollama', self.transcript, 25, 12, 3, [], mode='rapido')
+        self.assertEqual(status['mode'], 'rapido')
+        self.assertIn('Modo rápido', status['message'])
+        propose = [c for c in fake.calls if 'clips' in c['schema']['properties']]
+        judge = [c for c in fake.calls if 'results' in c['schema']['properties']]
+        self.assertTrue(all(c['schema'] is curation.PROPOSE_SCHEMA_FAST for c in propose))
+        self.assertTrue(all(c['schema'] is curation.JUDGE_SCHEMA_FAST for c in judge))
+        self.assertNotIn('hashtags', propose[0]['system'])
+        self.assertNotIn('comentário', judge[0]['system'])
+        self.assertIn('NÃO CONFIÁVEL', propose[0]['system'])     # a proteção continua no texto enxuto
+        self.assertEqual(clips[0]['title'], 'O erro no preço do café')
+        self.assertTrue(any(r.startswith('Gancho 8.0/10') for r in clips[0]['reasons']))
+        # Automático: no máximo 24 trechos vão ao juiz no modo rápido (60 no completo).
+        self.assertEqual(curation._limits('ollama', 'rapido')['judge_max'], curation.AUTO_JUDGE_MAX_FAST)
+        self.assertEqual(curation._limits('ollama', 'completo')['judge_max'], curation.AUTO_JUDGE_MAX)
+
+    def test_progress_says_where_it_is_and_how_long_is_left(self):
+        seen = []
+        transcript = fake_transcript(700, PHRASES * 40)
+        with mock.patch.object(ollama_local, 'status', return_value=READY), \
+                mock.patch.object(ollama_local, 'generate', side_effect=FakeOllama()), \
+                mock.patch.object(curation.time, 'monotonic', side_effect=(i * 30.0 for i in range(10_000))):
+            curation.curate('ollama', transcript, 700, 30, 3, [], mode='rapido',
+                            on_progress=lambda f, m='': seen.append((f, m)))
+        reading = [m for _, m in seen if 'lendo o vídeo, bloco' in m]
+        self.assertTrue(reading[0].startswith('Curadoria com IA: lendo o vídeo, bloco 1 de '))
+        self.assertIn('min restantes', reading[0])
+        self.assertTrue(any('avaliando trechos' in m for _, m in seen))
+        self.assertEqual([f for f, _ in seen], sorted(f for f, _ in seen))   # só avança
+
     def test_cloud_providers_keep_their_chunking(self):
         self.assertEqual(curation._limits('openai')['chunk'], curation.CHUNK_SECONDS)
         self.assertFalse(curation._limits('anthropic')['tolerant'])
@@ -228,6 +262,11 @@ class ConsentTests(unittest.TestCase):
                 settings.update({'curation': {'provider': provider, 'consent': False}})
             self.assertEqual(err.exception.code, 'consent_required')
         self.assertTrue(settings.update({'curation': {'provider': 'openai', 'consent': True}})['curation']['consent'])
+        self.assertEqual(settings.load()['curation']['local_mode'], 'rapido')        # padrão
+        self.assertEqual(settings.update({'curation': {'local_mode': 'completo'}})['curation']['local_mode'],
+                         'completo')
+        with self.assertRaises(AppError):
+            settings.update({'curation': {'local_mode': 'turbo'}})
 
     def test_old_settings_file_still_loads(self):
         (config.DATA_DIR / 'settings.json').write_text(json.dumps({'curation': {'provider': 'heuristica'}}),
