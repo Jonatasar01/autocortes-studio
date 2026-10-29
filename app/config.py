@@ -80,7 +80,7 @@ LOCAL_CURATION_CHUNK_SECONDS = _int('AUTOCORTES_LOCAL_CURATION_CHUNK_SECONDS', 3
 LOCAL_CURATION_OVERLAP_SECONDS = _int('AUTOCORTES_LOCAL_CURATION_OVERLAP_SECONDS', 30, 0, 300)
 LOCAL_CURATION_JUDGE_BATCH = _int('AUTOCORTES_LOCAL_CURATION_JUDGE_BATCH', 4, 1, 16)
 
-# Curadoria com o Gemini (nuvem, opt-in; chave só pela variável de ambiente GEMINI_API_KEY)
+# Curadoria com o Gemini (nuvem, opt-in; chave colada na tela ou na variável de ambiente GEMINI_API_KEY)
 CLOUD_TIMEOUT = _int('AUTOCORTES_CLOUD_TIMEOUT', 120, 10, 600)
 
 # Automação: pastas definidas só por variável de ambiente (a interface não grava em caminhos arbitrários)

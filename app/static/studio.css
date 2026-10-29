@@ -549,6 +549,9 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .selectionbody { display: grid; gap: 8px; }
 .selectionbody p { margin: 0; }
 .selectionbody .hint.warn { color: var(--danger); }
+.keyrow { display: grid; gap: 6px; }
+.keyinput { display: flex; gap: 8px; }
+.keyinput input { flex: 1; min-width: 0; }
 #openSelection, #reanalyze { margin-top: 10px; }
 #reanalyze { margin-top: 6px; }
 .dialog footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border-soft); }

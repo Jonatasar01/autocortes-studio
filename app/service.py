@@ -16,8 +16,8 @@ import unicodedata
 from pathlib import Path
 from typing import Iterable
 
-from . import (autopilot, config, curation, direction, downloads, filters, media, pipeline, publish, reframe, rights, settings,
-               storage, subtitles, transcription, watcher)
+from . import (autopilot, config, curation, direction, downloads, filters, media, pipeline, publish, reframe, rights,
+               secrets_store, settings, storage, subtitles, transcription, watcher)
 from .errors import AppError
 from .jobs import Handler, JobManager
 
@@ -907,6 +907,12 @@ def get_settings() -> dict:
 def update_settings(changes: dict) -> dict:
     settings.update(changes)
     return settings.public()
+
+
+def set_api_key(name: str, key: str) -> dict:
+    """Salva (ou, vazia, remove) a chave colada na tela; devolve o status da curadoria, nunca a chave."""
+    secrets_store.put(name, key)
+    return curation.status()[name]
 
 
 def autopilot_resume(project_id: str, acknowledge: bool) -> dict:

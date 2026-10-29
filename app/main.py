@@ -562,6 +562,21 @@ def update_settings(changes: dict):
     return service.update_settings(changes)
 
 
+class ApiKey(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    key: str = Field(max_length=200)
+
+
+@app.put('/api/settings/keys/{name}')
+def set_api_key(name: Literal['gemini'], body: ApiKey):
+    return service.set_api_key(name, body.key)
+
+
+@app.delete('/api/settings/keys/{name}')
+def delete_api_key(name: Literal['gemini']):
+    return service.set_api_key(name, '')
+
+
 @app.get('/api/projects/{project_id}/clips/{clip_id}/download')
 def download_clip(project_id: str, clip_id: int, format: Optional[str] = None):
     path, name = service.export_path(project_id, clip_id, format, 'mp4')

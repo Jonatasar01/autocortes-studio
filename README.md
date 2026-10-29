@@ -172,8 +172,10 @@ soltando vídeos em `entrada/`. Os resultados aparecem em `saida/` e em **Projet
 - **Gancho:** frase curta no topo durante os 3 primeiros segundos.
 - **Curadoria:** em **Seleção de cortes e IA**, escolha Ollama/Qwen (local, sem chave) ou Google Gemini (nuvem, exige chave e consentimento para enviar o texto da transcrição). Ambos propõem trechos e avaliam coerência e relevância. Falhas mantêm a seleção heurística. Títulos sem respaldo no trecho são descartados.
 
+A chave do Gemini pode ser colada na própria tela (campo **Chave da API do Gemini**, que aparece ao escolher o Gemini). Ela fica em `data/secrets.json`, fora do git e de `settings.json`, e a API nunca a devolve: a tela mostra só os quatro últimos caracteres. Sem chave salva, vale a variável de ambiente:
+
 ```powershell
-$env:GEMINI_API_KEY="sua-chave" # somente se escolher Gemini; nunca salve a chave no repositório
+$env:GEMINI_API_KEY="sua-chave" # alternativa à tela; nunca salve a chave no repositório
 ```
 
 Não há validação com uma chave Gemini real nesta entrega. O contrato REST foi conferido na [documentação oficial](https://ai.google.dev/api/generate-content) e testado com respostas simuladas. Não são enviados áudio ou vídeo. O Ollama precisa estar aberto no mesmo computador em `127.0.0.1:11434`, com `qwen3:4b` ou a reserva `qwen3:1.7b` instalada.

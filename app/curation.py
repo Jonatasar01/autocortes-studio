@@ -11,8 +11,8 @@ Arquitetura semelhante à observada no Opus Clip:
 
 Garantias (mesma linha do restante do app):
 - O Ollama roda em 127.0.0.1 (nada sai do computador), sem chave e sem consentimento. O Gemini só com
-  consentimento registrado: envia apenas texto da transcrição (nunca áudio ou vídeo) e a chave vem só da variável
-  GEMINI_API_KEY.
+  consentimento registrado: envia apenas texto da transcrição (nunca áudio ou vídeo). A chave vem da tela
+  (data/secrets.json) ou, sem chave salva, da variável GEMINI_API_KEY.
 - Pedido enxuto: o modelo devolve só número das frases, título e gancho na proposta e só as notas no juiz (sem
   resumo, hashtags ou comentários, que só custavam tempo). Uma resposta inválida num bloco é pulada.
 - A transcrição é tratada como conteúdo não confiável (proteção contra prompt injection).
@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from typing import Callable
 
-from . import config, selection
+from . import config, secrets_store, selection
 from .errors import AppError, Cancelled, sanitize
 
 log = logging.getLogger('autocortes.curation')
@@ -104,7 +104,7 @@ JUDGE_SYSTEM = (
 def key_for(provider: str) -> str:
     if provider != 'gemini':
         return ''
-    return (os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY') or '').strip()
+    return (secrets_store.get('gemini') or os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY') or '').strip()
 
 
 def requires_external_consent(provider: str) -> bool:
@@ -135,6 +135,10 @@ def status() -> dict:
                'local': p in LOCAL_PROVIDERS} for p in PROVIDERS}
     from . import ollama_local
     out['ollama']['message'] = ollama_local.status()['message']
+    # De onde vem a chave do Gemini (a chave em si nunca sai do servidor).
+    saved = secrets_store.hint('gemini')
+    out['gemini']['key_source'] = 'saved' if saved else ('env' if key_for('gemini') else None)
+    out['gemini']['key_hint'] = saved
     return out
 
 
@@ -195,7 +199,7 @@ def ask(provider: str, system: str, user: str, schema: dict, name: str, max_toke
         raise AppError('Provedor de curadoria inválido.', 400, 'bad_settings')
     key = key_for(provider)
     if not key:
-        raise AppError('Gemini indisponível: defina GEMINI_API_KEY no Windows e reinicie o aplicativo.', 400,
+        raise AppError('Gemini indisponível: cole a chave em Seleção de cortes e IA.', 400,
                        'curation_not_configured')
     payload = {'systemInstruction': {'parts': [{'text': system}]},
                'contents': [{'role': 'user', 'parts': [{'text': user}]}],

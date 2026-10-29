@@ -605,6 +605,14 @@
     <label class="field" for="curationProvider">Curadoria</label>
     <select id="curationProvider"></select>
     <p id="curationKeyNote" class="hint" hidden></p>
+    <div id="curationKeyRow" class="keyrow" hidden>
+      <label class="field" for="curationKey">Chave da API do Gemini</label>
+      <div class="keyinput">
+        <input id="curationKey" type="password" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Cole a chave (começa com AIza)">
+        <button id="curationKeyRemove" class="btn ghost danger" type="button" hidden>Remover chave</button>
+      </div>
+      <p class="hint">Gere a chave em aistudio.google.com/apikey. Ela fica guardada só neste computador e não é mostrada de novo; é salva junto com o botão Salvar.</p>
+    </div>
     <label class="switch" id="curationConsentRow" hidden><input id="curationConsent" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Autorizo enviar o texto das transcrições ao Google</strong><small>Só o texto vai ao Gemini, nunca o vídeo ou o áudio. No plano gratuito o Google pode usar o texto para melhorar os produtos dele; no pago, há cobrança por uso.</small></span></label>
     <label class="switch"><input id="curationAllClips" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Sem limite de cortes</strong><small>Gera todos os trechos aprovados, sem o teto de 4 por hora. Numa live longa podem vir mais de 100 cortes; com a IA local, a análise também fica mais longa.</small></span></label>
     <label class="field" for="curationPrompt">Foco (opcional)</label>

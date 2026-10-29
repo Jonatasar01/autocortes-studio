@@ -1670,17 +1670,40 @@ function syncCuration() {
   const info = JSON.parse($('curationProvider').dataset.providers || '{}')[id] || {};
   // Ollama: nada sai do computador, então não há consentimento nem chave; mostra o status do modelo.
   $('curationConsentRow').hidden = !!info.local;
+  $('curationKeyRow').hidden = id !== 'gemini';
+  $('curationKeyRemove').hidden = info.key_source !== 'saved';
   const fallback = ' Enquanto isso, a seleção usa a heurística local.';
+  const source = info.key_source === 'saved' ? 'Chave salva (termina em …' + info.key_hint + ')'
+    : 'Chave da variável GEMINI_API_KEY';
   $('curationKeyNote').textContent = id === 'ollama'
     ? '100% local: a transcrição não sai deste computador. ' + (info.message || '') + (info.configured ? '' : fallback)
-    : info.configured ? 'Chave encontrada. Modelo: ' + (info.model || '—') + '.'
-      : 'Chave não encontrada: defina GEMINI_API_KEY no Windows e reinicie o AutoCortes.' + fallback;
+    : info.configured ? source + '. Modelo: ' + (info.model || '—') + '.'
+      : 'Sem chave: cole a chave do Gemini abaixo.' + fallback;
   $('curationKeyNote').classList.toggle('warn', !info.configured);
+  $('curationKeyNote').hidden = false;
 }
+
+// Atualiza o status do Gemini na lista depois de salvar ou remover a chave.
+function applyKeyStatus(info) {
+  const select = $('curationProvider');
+  const providers = JSON.parse(select.dataset.providers || '{}');
+  providers.gemini = {...providers.gemini, ...info};
+  select.dataset.providers = JSON.stringify(providers);
+  const option = [...select.options].find((o) => o.value === 'gemini');
+  if (option) option.textContent = info.label + (info.configured ? '' : ' — sem chave');
+  $('curationKey').value = '';
+  syncCuration();
+}
+$('curationKeyRemove').onclick = async () => {
+  try { applyKeyStatus(await api('/api/settings/keys/gemini', 'DELETE')); toast('Chave do Gemini removida.'); }
+  catch (e) { toast(e.message, true); }
+};
 $('curationProvider').addEventListener('change', syncCuration);
 
 async function saveCuration() {
   const provider = $('curationProvider').value;
+  const key = $('curationKey').value.trim();
+  if (key) applyKeyStatus(await api('/api/settings/keys/gemini', 'PUT', {key}));
   await api('/api/settings', 'PUT', {curation: {
     provider, consent: provider === 'gemini' && $('curationConsent').checked,
     prompt: $('curationPrompt').value.trim(),

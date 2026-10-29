@@ -25,8 +25,8 @@ class Cancelled(Exception):
 def sanitize(text: object, limit: int = 600) -> str:
     """Remove caminhos locais e possíveis segredos de mensagens técnicas."""
     value = str(text or '')
-    for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY'):
-        secret = os.getenv(name, '')
+    from . import secrets_store   # aqui dentro: secrets_store importa este módulo
+    for secret in [os.getenv(name, '') for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY')] + [secrets_store.get('gemini')]:
         if secret:
             value = value.replace(secret, '***')
     for path in {str(config.DATA_DIR), str(config.ROOT)}:
