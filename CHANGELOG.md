@@ -13,6 +13,10 @@
 - `app/ollama_local.py`: cliente único (127.0.0.1 fixo, sem proxy, erros limpos, status em cache) usado pela
   curadoria e pelo refinador; tela mostra "100% local", o status e o modelo instalado.
 - Testes em `tests/test_local_ai.py` (Ollama simulado) e teste real opcional com `AUTOCORTES_TEST_REAL_OLLAMA=1`.
+- **Medido com o Ollama 0.40.12 e o `qwen3:4b` reais** (GTX 1650, modelo 66% na placa / 34% no processador), numa
+  janela de 1 h da live de referência com 5 cortes aprovados: heurística 3 de 5 (4 cortes, 11 s); Qwen 4 de 5
+  (12 cortes, 1224 s); Qwen + heurística **5 de 5** (14 cortes). Custo: ~20 min por hora de vídeo. Amostra pequena
+  (5 cortes de um só vídeo): indica ganho, não prova.
 
 ### Player: pular 10 s e 30 s
 - Botões **-30**, **-10**, **+10** e **+30** ao lado do voltar/avançar 1 s; atalhos **J** / **L** (10 s) e

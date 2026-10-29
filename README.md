@@ -226,8 +226,12 @@ pip install -r requirements-ai.txt
     `AUTOCORTES_LOCAL_CURATION_CHUNK_SECONDS` (300), `AUTOCORTES_LOCAL_CURATION_OVERLAP_SECONDS` (30),
     `AUTOCORTES_LOCAL_CURATION_JUDGE_BATCH` (4). Para garantir que o Ollama não use recursos de nuvem dele:
     `OLLAMA_NO_CLOUD=1` no ambiente do Ollama.
-  - Sem GPU, cada bloco leva de segundos a minutos: numa live longa a curadoria local pode levar bastante tempo
-    (a análise mostra o progresso e pode ser cancelada). Com pouca memória, use também `WHISPER_MODEL=base`.
+  - **Medido** (GTX 1650 4 GB + 16 GB de RAM; o `qwen3:4b` ocupa 3,5 GB e roda 66% na placa e 34% no processador),
+    numa janela de 1 h da live de referência com 5 cortes aprovados: heurística achou 3 de 5 (4 cortes, 11 s); o
+    Qwen achou 4 de 5 (12 cortes, ~45 s por bloco de 5 min e ~54 s por lote do juiz: **~20 min por hora de
+    vídeo**); juntos, como o app faz, **5 de 5** (14 cortes). Numa live de 8 h isso dá cerca de 2,5–3 h a mais na
+    análise; sem placa de vídeo, mais. A análise mostra o progresso e pode ser cancelada. Com pouca memória, use
+    também `WHISPER_MODEL=base` e o `qwen3:1.7b` (mais rápido, qualidade não medida).
   - O refinador antigo do ranking (`OLLAMA_ENABLED=1`) continua disponível e usa o mesmo modelo; ele só roda
     quando a curadoria escolhida não é o Ollama. O app só conversa com `127.0.0.1:11434`, sem proxy.
   - Teste opcional com o Ollama de verdade: `AUTOCORTES_TEST_REAL_OLLAMA=1 python -m pytest tests/test_local_ai.py`.
