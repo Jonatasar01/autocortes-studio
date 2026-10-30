@@ -2440,6 +2440,7 @@ for (const b of document.querySelectorAll('[data-format]')) {
       item.classList.toggle('active', item === b);
       item.setAttribute('aria-pressed', String(item === b));
     }
+    window.dispatchEvent(new Event('formatchange'));   // a tela pequena da posição da legenda segue o formato
   };
 }
 
@@ -2791,16 +2792,19 @@ $('refineSubtitles').addEventListener('change', () => store.set('refineSubtitles
 // Aparência da legenda (fonte, tamanho, cores, fundo): lembrada entre sessões e enviada na exportação.
 // O padrão é a legenda de sempre; a amostra usa a mesma fonte e as mesmas cores do vídeo exportado.
 const LOOK_DEFAULT = {font: 'Arial', size: 'm', color: '#ffffff', highlight: '#04f827', outline: '#000000',
-  background: 'contorno', case: 'auto'};
+  background: 'contorno', case: 'auto', position: 'auto', y: 0.5};
 const LOOK_INPUTS = {font: 'subFont', size: 'subSize', color: 'subColor', highlight: 'subHighlight',
-  outline: 'subOutline', background: 'subBackground', case: 'subCase'};
+  outline: 'subOutline', background: 'subBackground', case: 'subCase', position: 'subPosition', y: 'subY'};
 const HEAVY_FONTS = ['Impact', 'Arial Black', 'Montserrat ExtraBold', 'Montserrat Black', 'Anton', 'Bebas Neue'];   // já são pesadas: o vídeo não aplica negrito nelas
 function subtitleLook() {
   const look = {};
   for (const [key, id] of Object.entries(LOOK_INPUTS)) look[key] = $(id).value;
+  look.y = Number(look.y) / 100;   // a tela usa porcentagem; o vídeo, fração da altura
   return look;
 }
-const lookIsDefault = (look) => Object.keys(LOOK_DEFAULT).every((k) => String(look[k]).toLowerCase() === LOOK_DEFAULT[k].toLowerCase());
+// A altura só conta na posição "Escolher a altura" (e aí a posição já difere do padrão).
+const lookIsDefault = (look) => Object.keys(LOOK_DEFAULT).every((k) => k === 'y' ||
+  String(look[k]).toLowerCase() === LOOK_DEFAULT[k].toLowerCase());
 function rgba(hex, alpha) {
   const n = parseInt(hex.slice(1), 16);
   return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + alpha + ')';
@@ -2823,10 +2827,35 @@ function renderLook() {
   $('subOutlineField').hidden = bare;
   $('subOutlineLabel').textContent = box ? 'Caixa' : 'Contorno';
   $('subLookReset').hidden = lookIsDefault(look);
+  renderPosition(look);
+}
+// Tela pequena no formato de saída com a faixa da legenda (aproximada; a Prévia mostra o resultado exato).
+function renderPosition(look) {
+  const media = state.project?.media, fmt = state.format;
+  const ratio = fmt === '9:16' ? 9 / 16 : fmt === '16:9' ? 16 / 9 : fmt === '1:1' ? 1
+    : (media?.width && media?.height ? media.width / media.height : 16 / 9);
+  const portrait = ratio < 1 / 1.1, hook = $('hook').checked;
+  const w = ratio < 1 ? 128 * ratio : 150, h = ratio < 1 ? 128 : 150 / ratio;
+  const screen = $('posScreen'), bar = $('posBar');
+  screen.style.width = w.toFixed(1) + 'px';
+  screen.style.height = $('subY').style.height = h.toFixed(1) + 'px';
+  screen.classList.toggle('portrait', portrait);
+  const at = {auto: portrait ? 0.68 : 0.82, top: portrait ? (hook ? 0.3 : 0.19) : (hook ? 0.45 : 0.14),
+    center: 0.5, bottom: portrait ? 0.78 : 0.86,
+    custom: Math.min(0.92, Math.max(0.08, look.y))}[look.position] ?? 0.68;   // o vídeo não deixa a legenda sair da tela
+  bar.style.top = (at * 100).toFixed(1) + '%';
+  bar.style.height = (portrait ? 7 : 13) + '%';
+  bar.style.background = look.color;
+  bar.style.boxShadow = '0 0 0 1.5px ' + look.outline;
+  bar.classList.toggle('auto', look.position === 'auto');
 }
 function setLook(look) {
   for (const [key, id] of Object.entries(LOOK_INPUTS)) {
     const value = look?.[key], el = $(id);
+    if (key === 'y') {   // fração da altura (0–1) guardada; o controle usa porcentagem
+      el.value = Number.isFinite(value) ? Math.round(value * 100) : 50;
+      continue;
+    }
     const valid = el.tagName === 'SELECT' ? [...el.options].some((o) => o.value === value)
       : /^#[0-9a-f]{6}$/i.test(value || '');
     el.value = valid ? value : LOOK_DEFAULT[key];
@@ -2834,6 +2863,23 @@ function setLook(look) {
   renderLook();
 }
 try { setLook(JSON.parse(store.get('subtitleLook') || 'null')); } catch { setLook(null); }
+// Mexer na altura (controle ou tela pequena) escolhe a posição "Escolher a altura".
+$('subY').addEventListener('input', () => { $('subPosition').value = 'custom'; });
+function pickHeight(e) {
+  const r = $('posScreen').getBoundingClientRect();
+  $('subY').value = Math.round(((e.clientY - r.top) / r.height) * 100);
+  $('subY').dispatchEvent(new Event('input'));
+}
+$('posScreen').addEventListener('pointerdown', (e) => {
+  if ($('lookBox').disabled) return;
+  $('posScreen').setPointerCapture(e.pointerId);
+  pickHeight(e);
+});
+$('posScreen').addEventListener('pointermove', (e) => {
+  if ($('posScreen').hasPointerCapture(e.pointerId)) pickHeight(e);
+});
+$('hook').addEventListener('change', renderLook);
+window.addEventListener('formatchange', renderLook);
 for (const id of Object.values(LOOK_INPUTS)) {
   $(id).addEventListener('input', () => { renderLook(); store.set('subtitleLook', JSON.stringify(subtitleLook())); });
 }

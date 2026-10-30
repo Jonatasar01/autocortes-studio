@@ -468,6 +468,18 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .colorfield input[type=color] { width: 100%; max-width: 72px; height: 34px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); cursor: pointer; }
 .colorfield input[type=color]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 #subLookReset { margin-top: 10px; }
+/* Posição da legenda: tela pequena no formato de saída; arrastar nela escolhe a altura. */
+.posrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; margin-top: 12px; }
+.posscreen { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: 6px;
+  background: linear-gradient(160deg, #5b6b7d, #2c3440); cursor: ns-resize; touch-action: none; }
+.posapp { position: absolute; left: 0; right: 0; bottom: 0; height: 17%; background: rgba(0, 0, 0, 0.45); }
+.posscreen:not(.portrait) .posapp { display: none; }
+.posbar { position: absolute; left: 14%; right: 14%; height: 9%; min-height: 6px; transform: translateY(-50%);
+  border-radius: 2px; transition: top 120ms ease; }
+.posbar.auto { opacity: 0.6; background: transparent !important; border: 1.5px dashed #fff; box-shadow: none !important; }
+.posrange { writing-mode: vertical-lr; width: 22px; margin: 0; }
+.lookbox:disabled .posscreen { cursor: default; }
+@media (prefers-reduced-motion: reduce) { .posbar { transition: none; } }
 .coverbox { display: grid; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .coverbox .planbtns { margin-top: 0; flex-wrap: wrap; }
 /* Aproximação no player do que a exportação faz (lá a área é apagada e preenchida pela borda). */

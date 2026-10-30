@@ -366,6 +366,20 @@
                   <label class="colorfield" id="subHighlightField" for="subHighlight"><input id="subHighlight" type="color" value="#04f827"><span>Palavra falada</span></label>
                   <label class="colorfield" id="subOutlineField" for="subOutline"><input id="subOutline" type="color" value="#000000"><span id="subOutlineLabel">Contorno</span></label>
                 </div>
+                <div class="posrow">
+                  <label class="field" for="subPosition">Posição na tela
+                    <select id="subPosition">
+                      <option value="auto">Automática (desvia do rosto)</option>
+                      <option value="top">Em cima</option>
+                      <option value="center">No centro</option>
+                      <option value="bottom">Embaixo</option>
+                      <option value="custom">Escolher a altura</option>
+                    </select>
+                  </label>
+                  <div id="posScreen" class="posscreen" aria-hidden="true"><span class="posapp"></span><span id="posBar" class="posbar"></span></div>
+                  <input id="subY" class="posrange" type="range" min="0" max="100" step="1" value="50" aria-label="Altura da legenda na tela, de 0 (topo) a 100 (base)">
+                </div>
+                <p class="hint">Arraste na tela pequena para escolher a altura. A faixa escura é onde ficam os botões do app.</p>
                 <button id="subLookReset" class="btn ghost" type="button" hidden>Voltar ao padrão</button>
               </fieldset>
               <fieldset id="reactBox" class="lookbox">

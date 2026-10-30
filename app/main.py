@@ -390,6 +390,8 @@ class SubtitleLook(BaseModel):
     outline: str = Field(default='#000000', pattern=_HEX_COLOR)     # contorno, ou a caixa atrás do texto
     background: Literal['contorno', 'caixa', 'nenhum'] = 'contorno'
     case: Literal['auto', 'upper', 'normal'] = 'auto'
+    position: Literal['auto', 'top', 'center', 'bottom', 'custom'] = 'auto'   # onde a legenda fica na tela
+    y: float = Field(default=0.5, ge=0.0, le=1.0)   # "custom": altura do meio da legenda (0 = topo, 1 = base)
 
 
 class Reactions(BaseModel):

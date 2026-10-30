@@ -167,8 +167,11 @@ SUBTITLE_FONTS = {
     'Poppins': ('Poppins-Bold.ttf', True),
 }
 SIZE_SCALE = {'p': 0.85, 'm': 1.0, 'g': 1.18}
+# Onde a legenda fica: "auto" é a posição de sempre (desvia do rosto e das bordas do vídeo); "custom" usa ``y``,
+# a altura do meio da legenda (0 = topo, 1 = base da tela).
+POSITIONS = ('auto', 'top', 'center', 'bottom', 'custom')
 LOOK_DEFAULT = {'font': 'Arial', 'size': 'm', 'color': '#FFFFFF', 'highlight': '#04F827', 'outline': '#000000',
-                'background': 'contorno', 'case': 'auto'}
+                'background': 'contorno', 'case': 'auto', 'position': 'auto', 'y': 0.5}
 _HEX = re.compile(r'^#[0-9A-Fa-f]{6}$')
 
 
@@ -187,6 +190,13 @@ def clean_look(look: dict | None) -> dict:
         out['background'] = look['background']
     if look.get('case') in ('auto', 'upper', 'normal'):
         out['case'] = look['case']
+    if look.get('position') in POSITIONS:
+        out['position'] = look['position']
+    if out['position'] == 'custom':   # a altura só vale na posição escolhida à mão
+        try:
+            out['y'] = round(min(1.0, max(0.0, float(look.get('y')))), 3)
+        except (TypeError, ValueError):
+            out['position'] = 'auto'
     return out
 
 
@@ -270,11 +280,14 @@ def _layout_text(text: str, *, available: float, size: int, outline: float, shad
     return '\\N'.join(' '.join(words[i] for i in row) for row in layout.rows), layout.size
 
 
+HOOK_TOP = 0.11   # distância do gancho ao topo da tela
+
+
 def _hook_style(width: int, height: int, font_name: str) -> str:
     size = round(width * 0.052)
     return (f'Style: Hook,{font_name},{size},&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,'
             f'-1,0,0,0,100,100,0,0,3,{max(8, round(size * 0.25))},0,8,{round(width * 0.07)},'
-            f'{round(width * 0.07)},{round(height * 0.11)},1')
+            f'{round(width * 0.07)},{round(height * HOOK_TOP)},1')
 
 
 HOOK_MAX_CHARS = 90
@@ -301,13 +314,28 @@ def _hook_event(hook_text: str | None, clip_len: float | None, width: int, heigh
     if not text:
         return []
     end = HOOK_SECONDS if clip_len is None else min(HOOK_SECONDS, max(0.5, clip_len))
+    body, fitted, _ = _hook_layout(text, width, font_name, report)
+    fs = f'\\fs{fitted}' if fitted != round(width * 0.052) else ''
+    # \q2: as quebras já foram medidas; o libass não deve quebrar de novo.
+    return [f'Dialogue: 1,{_ass_time(0)},{_ass_time(end)},Hook,,0,0,0,,{{\\q2{fs}\\fad(150,250)}}{body}']
+
+
+def _hook_layout(text: str, width: int, font_name: str, report: dict | None = None) -> tuple[str, int, int]:
+    """Quebras medidas do gancho, o tamanho que cabe e a margem da caixa."""
     size = round(width * 0.052)
     pad = max(8, round(size * 0.25))   # caixa opaca (BorderStyle 3): o contorno vira a margem da caixa
     body, fitted = _layout_text(text, available=width - 2 * round(width * 0.07), size=size, outline=pad,
                                 shadow=0, max_rows=3, family=font_name, report=report)
-    fs = f'\\fs{fitted}' if fitted != size else ''
-    # \q2: as quebras já foram medidas; o libass não deve quebrar de novo.
-    return [f'Dialogue: 1,{_ass_time(0)},{_ass_time(end)},Hook,,0,0,0,,{{\\q2{fs}\\fad(150,250)}}{body}']
+    return body, fitted, pad
+
+
+def _hook_bottom(hook_text: str | None, width: int, height: int, font_name: str) -> int | None:
+    """Base da caixa do gancho em pixels (``None`` sem gancho): a legenda "em cima" fica abaixo dela."""
+    text = _hook_text(hook_text or '')
+    if not text:
+        return None
+    body, fitted, pad = _hook_layout(text, width, font_name)
+    return round(height * HOOK_TOP) + (body.count('\\N') + 1) * fitted + 2 * pad
 
 
 UI_BOTTOM_PORTRAIT = 0.17   # base da tela vertical coberta por botões e legenda do Shorts/Reels/TikTok
@@ -363,6 +391,43 @@ def placement(width: int, height: int, size: int, default_margin: int,
     return 2, round(height - bottom + gap)  # dentro do vídeo, acima da borda
 
 
+def chosen_placement(look: dict, width: int, height: int, size: int,
+                     hook_text: str | None = None) -> tuple[int, int, tuple[int, int] | None] | None:
+    """Posição escolhida na aba Legendas: ``(Alignment, MarginV, ponto do \\pos)``; ``None`` no automático.
+
+    Em cima: abaixo da barra do app e da caixa do gancho. Embaixo: logo acima dos botões do app. No centro e na
+    altura escolhida, o meio da legenda fica no ponto (``\\an5``) e a legenda cresce para cima e para baixo; o
+    ponto é limitado para duas linhas (com a animação de entrada) sempre caberem na tela.
+    """
+    where = look.get('position', 'auto')
+    if where == 'auto':
+        return None
+    portrait = height > width * 1.1
+    gap = round(height * BAND_GAP)
+    if where == 'top':
+        top = round(height * TOP_SAFE) if portrait else style_for(width, height)['margin_v']
+        hook = _hook_bottom(hook_text, width, height, look['font'])
+        return 8, max(top, hook + gap) if hook else top, None
+    if where == 'bottom':
+        return 2, style_for(width, height)['margin_v'], None
+    half = round(size * 1.25)               # meio bloco no pior caso: duas linhas
+    y = height / 2 if where == 'center' else look['y'] * height
+    return 5, 0, (round(width / 2), round(min(max(y, half + gap), height - half - gap)))
+
+
+def _position(look: dict, width: int, height: int, size: int, default_margin: int,
+              video_band: tuple[int, int] | None, avoid: tuple | None,
+              hook_text: str | None) -> tuple[int, int, str]:
+    """``(Alignment, MarginV, tag \\pos)``: a posição escolhida ou, no automático, a que desvia do rosto e das bordas."""
+    chosen = chosen_placement(look, width, height, size, hook_text)
+    if chosen:
+        align, margin_v, point = chosen
+        return align, margin_v, f'\\pos({point[0]},{point[1]})' if point else ''
+    align, margin_v = placement(width, height, size, default_margin, video_band, avoid,
+                                TOP_SAFE_HOOK if hook_text else TOP_SAFE)
+    return align, margin_v, ''
+
+
 def to_ass(cues: list[dict], width: int, height: int, font_name: str = 'Arial', *,
            hook_text: str | None = None, clip_len: float | None = None, report: dict | None = None,
            video_band: tuple[int, int] | None = None, look: dict | None = None,
@@ -372,8 +437,7 @@ def to_ass(cues: list[dict], width: int, height: int, font_name: str = 'Arial', 
     st = style_for(width, height)
     st['font'] = round(st['font'] * SIZE_SCALE[look['size']])
     pad = _look_padding(look, st['font'], st['outline'])
-    align, margin_v = placement(width, height, st['font'], st['margin_v'], video_band, avoid,
-                                TOP_SAFE_HOOK if hook_text else TOP_SAFE)
+    align, margin_v, at = _position(look, width, height, st['font'], st['margin_v'], video_band, avoid, hook_text)
     header = [
         '[Script Info]', 'ScriptType: v4.00+', f'PlayResX: {width}', f'PlayResY: {height}',
         # Quebras decididas pela medição (\\N + \\q2 por evento); WrapStyle 0 é só a rede de segurança.
@@ -395,7 +459,7 @@ def to_ass(cues: list[dict], width: int, height: int, font_name: str = 'Arial', 
                                   shadow=st['shadow'], max_rows=2, family=font_name, report=report)
         fs = f'\\fs{size}' if size != st['font'] else ''
         lines.append(f"Dialogue: 0,{_ass_time(c['start'])},{_ass_time(c['end'])},Default,,0,0,0,,"
-                     f"{{\\q2{fs}}}{body}")
+                     f"{{\\q2{fs}{at}}}{body}")
     return '\n'.join(header + lines) + '\n'
 
 
@@ -450,8 +514,8 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
     size = round(width * (0.078 if portrait else 0.05) * SIZE_SCALE[look['size']])
     outline = max(3, round(size * 0.09))
     pad = _look_padding(look, size, outline)
-    align, margin_v = placement(width, height, size, round(height * (0.27 if portrait else 0.12)), video_band,
-                                avoid, TOP_SAFE_HOOK if hook_text else TOP_SAFE)
+    align, margin_v, at = _position(look, width, height, size, round(height * (0.27 if portrait else 0.12)),
+                                    video_band, avoid, hook_text)
     header = [
         '[Script Info]', 'ScriptType: v4.00+', f'PlayResX: {width}', f'PlayResY: {height}',
         'WrapStyle: 0', 'ScaledBorderAndShadow: yes', 'YCbCr Matrix: TV.709', '',
@@ -488,7 +552,7 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
             if peak:   # sozinho, na cor de destaque, entra grande e treme
                 body = '\\N'.join(' '.join(texts[j] for j in row) for row in layout.rows)
                 events.append(f"Dialogue: 0,{_ass_time(a)},{_ass_time(b)},Dyn,,0,0,0,,"
-                              f"{{\\q2{fs}\\c{highlight}&{PEAK_ANIM}}}{body}")
+                              f"{{\\q2{fs}{at}\\c{highlight}&{PEAK_ANIM}}}{body}")
                 continue
             # Frase nova (i == 0) entra com o pop. Cada pedaço leva a própria animação: o \r depois de uma
             # palavra destacada volta ao estilo e desfaria a animação do resto da frase.
@@ -510,7 +574,7 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
             reset = '{\\r' + fs + (POP_ANIM if first else '') + '}'
             body = '\\N'.join(rows).replace('{\\r}', reset)
             pop = POP_ANIM if first else ''
-            events.append(f"Dialogue: 0,{_ass_time(a)},{_ass_time(b)},Dyn,,0,0,0,,{{\\q2{fs}{pop}}}{body}")
+            events.append(f"Dialogue: 0,{_ass_time(a)},{_ass_time(b)},Dyn,,0,0,0,,{{\\q2{fs}{at}{pop}}}{body}")
     return '\n'.join(header + events) + '\n'
 
 

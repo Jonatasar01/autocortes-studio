@@ -86,13 +86,69 @@ class SubtitleLookTests(unittest.TestCase):
         self.assertEqual([subtitles.POP_ANIM in e for e in events], [True, False, False, True])
 
 
+class SubtitlePositionTests(unittest.TestCase):
+    W, H = 1080, 1920
+    HOOK = 'Olha o que aconteceu na live de ontem'
+
+    def place(self, look, hook=None):
+        dyn = subtitles.to_ass_dynamic(LINES, self.W, self.H, look=look, hook_text=hook)
+        st = style_line(dyn, 'Dyn')
+        first = next(l for l in dyn.splitlines() if l.startswith('Dialogue: 0,'))
+        return (st[18], st[21]), first   # Alignment, MarginV
+
+    def test_top_center_and_bottom(self):
+        self.assertEqual(self.place({'position': 'top'})[0], ('8', str(round(self.H * subtitles.TOP_SAFE))))
+        # Com gancho, "em cima" fica abaixo da caixa dele.
+        below_hook = subtitles._hook_bottom(self.HOOK, self.W, self.H, 'Arial') + round(self.H * subtitles.BAND_GAP)
+        self.assertEqual(self.place({'position': 'top'}, self.HOOK)[0], ('8', str(below_hook)))
+        self.assertEqual(self.place({'position': 'bottom'})[0], ('2', str(round(self.H * 0.17))))
+        (align, _), first = self.place({'position': 'center'})
+        self.assertEqual(align, '5')
+        self.assertIn('\\pos(540,960)', first)
+
+    def test_chosen_height_and_screen_limits(self):
+        self.assertIn('\\pos(540,576)', self.place({'position': 'custom', 'y': 0.3})[1])
+        half, gap = round(84 * 1.25), round(self.H * subtitles.BAND_GAP)   # duas linhas sempre cabem
+        self.assertIn(f'\\pos(540,{half + gap})', self.place({'position': 'custom', 'y': 0.0})[1])
+        self.assertIn(f'\\pos(540,{self.H - half - gap})', self.place({'position': 'custom', 'y': 1.0})[1])
+        classic = subtitles.to_ass(CUES, self.W, self.H, look={'position': 'custom', 'y': 0.3})
+        self.assertIn('\\pos(540,576)', classic)
+
+    def test_automatic_is_the_usual_placement(self):
+        self.assertEqual(subtitles.to_ass_dynamic(LINES, self.W, self.H, look={'position': 'auto', 'y': 0.2}),
+                         subtitles.to_ass_dynamic(LINES, self.W, self.H))
+        self.assertEqual(subtitles.clean_look({'position': 'top', 'y': 0.9})['y'], 0.5)   # só vale no "custom"
+        self.assertEqual(subtitles.clean_look({'position': 'custom', 'y': 'x'})['position'], 'auto')
+        self.assertEqual(subtitles.clean_look({'position': 'left'})['position'], 'auto')
+
+    @unittest.skipUnless(HAS_FFMPEG, 'FFmpeg ausente')
+    def test_libass_draws_the_subtitle_at_the_chosen_height(self):
+        import subprocess
+        import tempfile
+        from pathlib import Path
+        w, h = 540, 960
+        with tempfile.TemporaryDirectory() as tmp:
+            # 0,3 s: primeira frase, com a palavra destacada e o \r depois dela (o \pos tem que continuar valendo).
+            Path(tmp, 'l.ass').write_text(subtitles.to_ass_dynamic(LINES, w, h, look={'position': 'custom', 'y': 0.3}),
+                                          encoding='utf-8')
+            out = subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', f'color=c=black:s={w}x{h}:d=1',
+                                  '-vf', 'ass=l.ass', '-ss', '0.3', '-frames:v', '1', '-f', 'rawvideo',
+                                  '-pix_fmt', 'gray', '-'], cwd=tmp, capture_output=True, check=True).stdout
+        rows = [r for r in range(h) if max(out[r * w:(r + 1) * w]) > 128]
+        self.assertTrue(rows)
+        self.assertAlmostEqual((rows[0] + rows[-1]) / 2, 0.3 * h, delta=0.03 * h)
+
+
 class SubtitleLookApiTests(unittest.TestCase):
     def test_export_options_validate_the_look(self):
         from pydantic import ValidationError
         from app.main import ExportOptions
         ok = ExportOptions(subtitle_look={'font': 'Verdana', 'color': '#00ff88'}).model_dump()['subtitle_look']
         self.assertEqual((ok['font'], ok['color'], ok['size']), ('Verdana', '#00ff88', 'm'))
-        for bad in ({'font': 'Papyrus'}, {'color': 'blue'}, {'outline': '#0000'}, {'extra': 1}):
+        placed = ExportOptions(subtitle_look={'position': 'custom', 'y': 0.3}).subtitle_look
+        self.assertEqual((placed.position, placed.y), ('custom', 0.3))
+        for bad in ({'font': 'Papyrus'}, {'color': 'blue'}, {'outline': '#0000'}, {'extra': 1},
+                    {'position': 'left'}, {'y': 1.5}):
             with self.subTest(bad=bad), self.assertRaises(ValidationError):
                 ExportOptions(subtitle_look=bad)
         self.assertIsNone(ExportOptions().subtitle_look)
