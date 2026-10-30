@@ -1167,6 +1167,11 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
         if ass_text:
             (work / 'legenda.ass').write_text(ass_text, encoding='utf-8')
             subtitles_file = 'legenda.ass'
+            fonts = Path(__file__).resolve().parent / 'fonts'
+            if fonts.is_dir():
+                # Fontes incluídas no app (Montserrat, Anton...): caminho relativo, sem escapar "C:" no filtro.
+                shutil.copytree(fonts, work / 'fonts', ignore=shutil.ignore_patterns('*.txt'))
+                subtitles_file += ':fontsdir=fonts'
         render = 'render.mp4'
 
         used = {'encoder': choose_encoder()}

@@ -2794,7 +2794,7 @@ const LOOK_DEFAULT = {font: 'Arial', size: 'm', color: '#ffffff', highlight: '#0
   background: 'contorno', case: 'auto'};
 const LOOK_INPUTS = {font: 'subFont', size: 'subSize', color: 'subColor', highlight: 'subHighlight',
   outline: 'subOutline', background: 'subBackground', case: 'subCase'};
-const HEAVY_FONTS = ['Impact', 'Arial Black'];   // já são pesadas: o vídeo não aplica negrito nelas
+const HEAVY_FONTS = ['Impact', 'Arial Black', 'Montserrat ExtraBold', 'Montserrat Black', 'Anton', 'Bebas Neue'];   // já são pesadas: o vídeo não aplica negrito nelas
 function subtitleLook() {
   const look = {};
   for (const [key, id] of Object.entries(LOOK_INPUTS)) look[key] = $(id).value;
@@ -2840,31 +2840,16 @@ for (const id of Object.values(LOOK_INPUTS)) {
 $('subLookReset').onclick = () => { setLook(null); store.set('subtitleLook', JSON.stringify(subtitleLook())); };
 $('subtitleStyle').addEventListener('change', renderLook);
 
-// Reações na legenda animada (picos, som, vitória/dinheiro, vícios): lembradas entre sessões.
-const RX_INPUTS = {peaks: 'rxPeaks', wins: 'rxWins', fillers: 'rxFillers'};
+// Momentos de pico na legenda animada: lembrado entre sessões.
 function reactionOptions() {
-  if (!$('subtitles').checked || $('subtitleStyle').value !== 'dinamica') return null;
-  const rx = {sound: $('rxPeaks').checked ? $('rxSound').value : 'none'};
-  for (const [key, id] of Object.entries(RX_INPUTS)) rx[key] = $(id).checked;
-  return rx.peaks || rx.wins || rx.fillers ? rx : null;
+  if (!$('subtitles').checked || $('subtitleStyle').value !== 'dinamica' || !$('rxPeaks').checked) return null;
+  return {peaks: true};
 }
 function syncReactions() {
   $('reactBox').disabled = !$('subtitles').checked || $('subtitleStyle').value !== 'dinamica';
-  $('rxSound').disabled = $('reactBox').disabled || !$('rxPeaks').checked;
 }
-try {
-  const saved = JSON.parse(store.get('reactions') || '{}') || {};
-  for (const [key, id] of Object.entries(RX_INPUTS)) $(id).checked = saved[key] === true;
-  if ([...$('rxSound').options].some((o) => o.value === saved.sound)) $('rxSound').value = saved.sound;
-} catch { /* preferência ilegível: tudo desligado */ }
-for (const id of [...Object.values(RX_INPUTS), 'rxSound']) {
-  $(id).addEventListener('change', () => {
-    const rx = {sound: $('rxSound').value};
-    for (const [key, el] of Object.entries(RX_INPUTS)) rx[key] = $(el).checked;
-    store.set('reactions', JSON.stringify(rx));
-    syncReactions();
-  });
-}
+try { $('rxPeaks').checked = (JSON.parse(store.get('reactions') || '{}') || {}).peaks === true; } catch { /* desligado */ }
+$('rxPeaks').addEventListener('change', () => store.set('reactions', JSON.stringify({peaks: $('rxPeaks').checked})));
 $('subtitleStyle').addEventListener('change', syncReactions);
 syncReactions();
 

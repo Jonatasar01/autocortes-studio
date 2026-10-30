@@ -161,6 +161,10 @@ SUBTITLE_FONTS = {
     'Verdana': ('verdanab.ttf', True), 'Trebuchet MS': ('trebucbd.ttf', True), 'Segoe UI': ('segoeuib.ttf', True),
     'Bahnschrift': ('bahnschrift.ttf', True), 'Georgia': ('georgiab.ttf', True),
     'Comic Sans MS': ('comicbd.ttf', True),
+    # Fontes de cortes virais, incluídas no app (app/fonts, licença OFL): o vídeo não depende do Windows.
+    'Montserrat ExtraBold': ('Montserrat-ExtraBold.ttf', False), 'Montserrat Black': ('Montserrat-Black.ttf', False),
+    'Anton': ('Anton-Regular.ttf', False), 'Bebas Neue': ('BebasNeue-Regular.ttf', False),
+    'Poppins': ('Poppins-Bold.ttf', True),
 }
 SIZE_SCALE = {'p': 0.85, 'm': 1.0, 'g': 1.18}
 LOOK_DEFAULT = {'font': 'Arial', 'size': 'm', 'color': '#FFFFFF', 'highlight': '#04F827', 'outline': '#000000',
@@ -222,7 +226,18 @@ LINE_GAP = 0.6
 SAFE_FILL = 0.95
 ACTIVE_SCALE = 1.08     # palavra falada no momento (\fscx108)
 EMPHASIS_SCALE = 1.12   # termo enfatizado pelo plano de edição (\fscx112)
-PEAK_SCALE = 145        # momento de pico (app/reactions.py): sozinho na tela, entra grande e treme
+# Cada frase nova entra pequena, passa do tamanho e assenta. O exagero dura 80 ms e cabe nas margens laterais.
+POP_ANIM = '\\fscx60\\fscy60\\t(0,90,\\fscx115\\fscy115)\\t(90,170,\\fscx100\\fscy100)'
+
+
+def _scale_tags(scale: int, pop: bool) -> str:
+    """Tamanho de uma palavra destacada; com ``pop``, a mesma entrada da frase proporcional a esse tamanho."""
+    if not pop:
+        return f'\\fscx{scale}\\fscy{scale}'
+    small, big = round(scale * 0.6), round(scale * 1.15)
+    return (f'\\fscx{small}\\fscy{small}\\t(0,90,\\fscx{big}\\fscy{big})'
+            f'\\t(90,170,\\fscx{scale}\\fscy{scale})')
+PEAK_SCALE = 145       # momento de pico (app/reactions.py): sozinho na tela, entra grande e treme
 PEAK_OVERSHOOT = 155
 PEAK_ANIM = (f'\\fscx60\\fscy60\\t(0,100,\\fscx{PEAK_OVERSHOOT}\\fscy{PEAK_OVERSHOOT})'
              f'\\t(100,180,\\fscx{PEAK_SCALE}\\fscy{PEAK_SCALE})\\t(180,240,\\frz4)\\t(240,300,\\frz-4)'
@@ -475,22 +490,26 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
                 events.append(f"Dialogue: 0,{_ass_time(a)},{_ass_time(b)},Dyn,,0,0,0,,"
                               f"{{\\q2{fs}\\c{highlight}&{PEAK_ANIM}}}{body}")
                 continue
+            # Frase nova (i == 0) entra com o pop. Cada pedaço leva a própria animação: o \r depois de uma
+            # palavra destacada volta ao estilo e desfaria a animação do resto da frase.
+            first = i == 0
             rows = []
             for row in layout.rows:
                 parts = []
                 for j in row:
                     other, text = line[j], texts[j]
                     if j == i:
-                        parts.append(f'{{\\c{highlight}&\\fscx108\\fscy108}}{text}{{\\r}}')
+                        parts.append(f'{{\\c{highlight}&{_scale_tags(108, first)}}}{text}{{\\r}}')
                     elif other.get('emph'):
                         # Termo enfatizado na fala (plano de edição): âmbar e um pouco maior.
-                        parts.append(f'{{\\c{EMPHASIS}&\\fscx112\\fscy112}}{text}{{\\r}}')
+                        parts.append(f'{{\\c{EMPHASIS}&{_scale_tags(112, first)}}}{text}{{\\r}}')
                     else:
                         parts.append(text)
                 rows.append(' '.join(parts))
             # \r volta ao estilo e apagaria o \fs do evento: reaplica depois de cada palavra destacada.
-            body = '\\N'.join(rows).replace('{\\r}', '{\\r' + fs + '}') if fs else '\\N'.join(rows)
-            pop = '\\fscx92\\fscy92\\t(0,90,\\fscx100\\fscy100)' if i == 0 else ''
+            reset = '{\\r' + fs + (POP_ANIM if first else '') + '}'
+            body = '\\N'.join(rows).replace('{\\r}', reset)
+            pop = POP_ANIM if first else ''
             events.append(f"Dialogue: 0,{_ass_time(a)},{_ass_time(b)},Dyn,,0,0,0,,{{\\q2{fs}{pop}}}{body}")
     return '\n'.join(header + events) + '\n'
 

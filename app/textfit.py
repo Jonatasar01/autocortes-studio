@@ -147,8 +147,12 @@ FAMILY_FILES = {
     'bahnschrift': ('bahnschrift.ttf',),
     'georgia': ('georgiab.ttf', 'Georgia_Bold.ttf', 'Georgia Bold.ttf'),
     'comic sans ms': ('comicbd.ttf', 'Comic_Sans_MS_Bold.ttf', 'Comic Sans MS Bold.ttf'),
+    # Incluídas no app (app/fonts).
+    'montserrat extrabold': ('Montserrat-ExtraBold.ttf',), 'montserrat black': ('Montserrat-Black.ttf',),
+    'anton': ('Anton-Regular.ttf',), 'bebas neue': ('BebasNeue-Regular.ttf',), 'poppins': ('Poppins-Bold.ttf',),
 }
-FONT_DIRS = (Path(os.environ.get('WINDIR', r'C:\Windows')) / 'Fonts',
+APP_FONTS = Path(__file__).resolve().parent / 'fonts'
+FONT_DIRS = (APP_FONTS, Path(os.environ.get('WINDIR', r'C:\Windows')) / 'Fonts',
              Path('/usr/share/fonts/truetype/msttcorefonts'), Path('/Library/Fonts'),
              Path('/System/Library/Fonts/Supplemental'))
 

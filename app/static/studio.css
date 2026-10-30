@@ -456,6 +456,12 @@ body[data-nav=collapsed] .navgroup { height: 1px; margin: 12px 8px; padding: 0; 
 .subsample { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 0.3em; padding: 14px 8px; border-radius: 6px;
   background: linear-gradient(135deg, #5b6b7d, #2c3440); font-size: 22px; font-weight: 700; line-height: 1.25; text-align: center; overflow-wrap: anywhere; }
 .subsample span { padding: 0 2px; border-radius: 3px; }
+/* Fontes incluídas no app: a amostra usa o mesmo arquivo que vai para o vídeo. */
+@font-face { font-family: "Montserrat ExtraBold"; src: url("/fonts/Montserrat-ExtraBold.ttf"); font-display: swap; }
+@font-face { font-family: "Montserrat Black"; src: url("/fonts/Montserrat-Black.ttf"); font-display: swap; }
+@font-face { font-family: "Anton"; src: url("/fonts/Anton-Regular.ttf"); font-display: swap; }
+@font-face { font-family: "Bebas Neue"; src: url("/fonts/BebasNeue-Regular.ttf"); font-display: swap; }
+@font-face { font-family: "Poppins"; src: url("/fonts/Poppins-Bold.ttf"); font-weight: 700; font-display: swap; }
 .colorrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .colorfield { display: grid; justify-items: center; gap: 4px; font-size: 12px; color: var(--text-2); text-align: center; cursor: pointer; }
 .colorfield[hidden] { display: none; }

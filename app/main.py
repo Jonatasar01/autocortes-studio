@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 from starlette.background import BackgroundTask
 
-from . import config, dashboard, filters, service, timeline
+from . import config, dashboard, filters, service, subtitles, textfit, timeline
 from .config import ROOT  # noqa: F401  (compatibilidade)
 from .errors import AppError
 from .security import LocalSecurityMiddleware
@@ -81,6 +81,16 @@ def static(name: str):
         raise AppError('Arquivo não encontrado.', 404, 'not_found')
     # Revalida a cada carga (ETag): depois de uma atualização o navegador não fica com JS/CSS antigos.
     return FileResponse(config.STATIC_DIR / name, headers={'Cache-Control': 'no-cache'})
+
+
+@app.get('/fonts/{name}')
+def font_file(name: str):
+    """Fontes incluídas no app (amostra da legenda na tela usa o mesmo arquivo do vídeo)."""
+    files = {f for f, _ in subtitles.SUBTITLE_FONTS.values()}
+    path = textfit.APP_FONTS / name
+    if name not in files or not path.is_file():
+        raise AppError('Arquivo não encontrado.', 404, 'not_found')
+    return FileResponse(path, media_type='font/ttf', headers={'Cache-Control': 'max-age=86400'})
 
 
 @app.get('/api/health')
@@ -372,7 +382,8 @@ class SubtitleLook(BaseModel):
     """Aparência da legenda (aba Legendas); o padrão é a legenda de sempre."""
     model_config = ConfigDict(extra='forbid')
     font: Literal['Arial', 'Arial Black', 'Impact', 'Verdana', 'Trebuchet MS', 'Segoe UI', 'Bahnschrift',
-                  'Georgia', 'Comic Sans MS'] = 'Arial'
+                  'Georgia', 'Comic Sans MS', 'Montserrat ExtraBold', 'Montserrat Black', 'Anton', 'Bebas Neue',
+                  'Poppins'] = 'Arial'
     size: Literal['p', 'm', 'g'] = 'm'
     color: str = Field(default='#FFFFFF', pattern=_HEX_COLOR)
     highlight: str = Field(default='#04F827', pattern=_HEX_COLOR)   # palavra falada (legenda animada)

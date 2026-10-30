@@ -71,6 +71,20 @@ class SubtitleLookTests(unittest.TestCase):
             with self.subTest(font=font):
                 self.assertIn(font.lower(), textfit.FAMILY_FILES)
 
+    def test_bundled_fonts_ship_with_the_app(self):
+        # Montserrat, Anton, Bebas Neue e Poppins vêm em app/fonts: o vídeo não depende do Windows ter a fonte.
+        from app import textfit
+        for font in ('Montserrat ExtraBold', 'Montserrat Black', 'Anton', 'Bebas Neue', 'Poppins'):
+            with self.subTest(font=font):
+                path = textfit.APP_FONTS / subtitles.SUBTITLE_FONTS[font][0]
+                self.assertEqual(path.read_bytes()[:4], b'\x00\x01\x00\x00')
+                self.assertEqual(textfit.metrics_for_family(font), textfit.load_metrics(str(path)))
+
+    def test_every_new_phrase_pops_in(self):
+        dyn = subtitles.to_ass_dynamic(LINES + [[{'start': 2.0, 'end': 2.5, 'text': 'mano'}]], 1080, 1920)
+        events = [l for l in dyn.splitlines() if l.startswith('Dialogue: 0,')]
+        self.assertEqual([subtitles.POP_ANIM in e for e in events], [True, False, False, True])
+
 
 class SubtitleLookApiTests(unittest.TestCase):
     def test_export_options_validate_the_look(self):
@@ -82,6 +96,7 @@ class SubtitleLookApiTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValidationError):
                 ExportOptions(subtitle_look=bad)
         self.assertIsNone(ExportOptions().subtitle_look)
+        self.assertEqual(ExportOptions(subtitle_look={'font': 'Bebas Neue'}).subtitle_look.font, 'Bebas Neue')
         self.assertTrue(re.fullmatch(r'#[0-9A-F]{6}', subtitles.LOOK_DEFAULT['highlight']))
 
 

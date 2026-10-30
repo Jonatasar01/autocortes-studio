@@ -322,6 +322,11 @@
                   <label class="field" for="subFont">Fonte
                     <select id="subFont">
                       <option value="Arial">Arial (padrão)</option>
+                      <option value="Montserrat ExtraBold">Montserrat Extra Bold (podcasts e cortes)</option>
+                      <option value="Montserrat Black">Montserrat Black (podcasts e cortes)</option>
+                      <option value="Anton">Anton (condensada, impacto)</option>
+                      <option value="Bebas Neue">Bebas Neue (alta e estreita)</option>
+                      <option value="Poppins">Poppins Bold (moderna, arredondada)</option>
                       <option value="Arial Black">Arial Black</option>
                       <option value="Impact">Impact</option>
                       <option value="Verdana">Verdana</option>
@@ -366,15 +371,6 @@
               <fieldset id="reactBox" class="lookbox">
                 <legend>Reações (legenda animada)</legend>
                 <label class="switch"><input id="rxPeaks" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Momentos de pico</strong><small>Quando a voz sobe muito (grito, comemoração) ou há risada, a palavra aparece sozinha, grande e tremendo. Até 3 por corte.</small></span></label>
-                <label class="field" for="rxSound">Som nos picos
-                  <select id="rxSound">
-                    <option value="none">Sem som</option>
-                    <option value="boom">Boom (grave)</option>
-                    <option value="whoosh">Whoosh (passagem)</option>
-                  </select>
-                </label>
-                <label class="switch"><input id="rxWins" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Destacar vitória e dinheiro</strong><small>Palavras como "ganhei", "venceu", "pix" e "mil" ficam maiores e na cor de ênfase.</small></span></label>
-                <label class="switch"><input id="rxFillers" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Tirar vícios da legenda</strong><small>Some "éé", "hum" e "tipo tipo" do texto. O áudio não muda.</small></span></label>
               </fieldset>
               <label class="switch"><input id="refineSubtitles" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Legenda mais precisa</strong><small>Antes de exportar, transcreve o corte de novo com um modelo maior. Acerta mais nomes e gírias e leva alguns segundos a mais. Precisa de placa de vídeo NVIDIA.</small></span></label>
               <button id="editSubtitles" type="button" class="btn ghost block"><svg class="ic"><use href="#i-pencil"/></svg><span>Corrigir texto da legenda</span></button>
