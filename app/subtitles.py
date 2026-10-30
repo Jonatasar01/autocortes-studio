@@ -222,6 +222,11 @@ LINE_GAP = 0.6
 SAFE_FILL = 0.95
 ACTIVE_SCALE = 1.08     # palavra falada no momento (\fscx108)
 EMPHASIS_SCALE = 1.12   # termo enfatizado pelo plano de edição (\fscx112)
+PEAK_SCALE = 145        # momento de pico (app/reactions.py): sozinho na tela, entra grande e treme
+PEAK_OVERSHOOT = 155
+PEAK_ANIM = (f'\\fscx60\\fscy60\\t(0,100,\\fscx{PEAK_OVERSHOOT}\\fscy{PEAK_OVERSHOOT})'
+             f'\\t(100,180,\\fscx{PEAK_SCALE}\\fscy{PEAK_SCALE})\\t(180,240,\\frz4)\\t(240,300,\\frz-4)'
+             '\\t(300,360,\\frz2)\\t(360,420,\\frz0)')
 
 
 def _new_report() -> dict:
@@ -449,9 +454,10 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
     metrics = textfit.metrics_for_family(font_name)
     for line in lines:
         texts = [w['text'] if look['case'] == 'normal' else w['text'].upper() for w in line]
+        peak = len(line) == 1 and line[0].get('peak')
         layout = textfit.plan_rows(texts, safe_width=available * SAFE_FILL, size=size,
                                    min_size=max(12, round(size * 0.72)), outline=pad, shadow=2, max_rows=2,
-                                   active_scale=ACTIVE_SCALE,
+                                   active_scale=PEAK_OVERSHOOT / 100 if peak else ACTIVE_SCALE,
                                    scales=[EMPHASIS_SCALE if w.get('emph') else 1.0 for w in line],
                                    metrics=metrics)
         _record(report, layout, available)
@@ -463,6 +469,11 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
             a = line[0]['start'] if i == 0 else word['start']
             b = line[i + 1]['start'] if i + 1 < len(line) else line_end
             if b - a < 0.02:
+                continue
+            if peak:   # sozinho, na cor de destaque, entra grande e treme
+                body = '\\N'.join(' '.join(texts[j] for j in row) for row in layout.rows)
+                events.append(f"Dialogue: 0,{_ass_time(a)},{_ass_time(b)},Dyn,,0,0,0,,"
+                              f"{{\\q2{fs}\\c{highlight}&{PEAK_ANIM}}}{body}")
                 continue
             rows = []
             for row in layout.rows:

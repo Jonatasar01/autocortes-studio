@@ -14,8 +14,8 @@ import shutil
 import threading
 import time
 
-from . import (audio_events, config, curation, direction, filters, media, publish, reframe, rights, selection, settings,
-               storage, subtitles, transcription)
+from . import (audio_events, config, curation, direction, filters, media, publish, reactions, reframe, rights, selection,
+               settings, storage, subtitles, transcription)
 from .errors import AppError, Cancelled
 from .jobs import JobContext
 
@@ -367,6 +367,10 @@ def run_export(ctx: JobContext) -> dict:
     out_len = sum(b - a for a, b in keep) if keep else end - start
     hook_text = prm.get('hook_text') if prm.get('hook') else None
     sub_report = subtitles._new_report()
+    rx = prm.get('reactions') or {}
+    sfx = None
+    if rx and not (prm.get('subtitles') and prm.get('subtitle_style') == 'dinamica'):
+        warnings.append('Picos, som nos picos e destaques de reação só funcionam com a legenda animada.')
     if prm.get('subtitles'):
         style = subtitles.style_for(width, height)
         if not p.get('transcript'):
@@ -390,11 +394,15 @@ def run_export(ctx: JobContext) -> dict:
                     for line in lines:
                         for w in line:
                             w['emph'] = round(w['start'], 2) in marked
+                lines = _apply_reactions(ctx, folder, p, info, start, end, lines, rx, warnings)
                 if keep:
                     lines = [[{**w, 'start': round(media.remap_time(w['start'], keep), 3),
                                'end': round(media.remap_time(w['end'], keep), 3)} for w in line] for line in lines]
                     lines = [[w for w in line if w['end'] - w['start'] >= 0.02] for line in lines]
                     lines = [line for line in lines if line]
+                times = reactions.peak_times(lines)
+                if times and rx.get('sound', 'none') in reactions.SOUNDS:
+                    sfx = (times, rx['sound'])
                 if lines:
                     ass_text = subtitles.to_ass_dynamic(lines, width, height, hook_text=hook_text, clip_len=out_len,
                                                         report=sub_report, video_band=band,
@@ -426,8 +434,10 @@ def run_export(ctx: JobContext) -> dict:
                                normalize_audio=bool(prm.get('normalize_audio')),
                                on_progress=lambda f, m='': ctx.progress(f),
                                cancel_event=ctx.cancel_event, keep=keep, track=track, post=post, audio_extra=audio_extra, preview=preview,
-                               segments=segments)
+                               segments=segments, sfx=sfx)
     result['warnings'] = warnings + result['warnings']
+    if sfx:
+        result['peak_sound'] = {'sound': sfx[1], 'count': len(sfx[0])}
     # Verificação de qualidade visual registrada na exportação: a legenda cabe e o rosto não foi cortado.
     quality = {'subtitles': sub_report if sub_report['events'] else None,
                'reframe': (track or {}).get('metrics') if track and track.get('ok') else None}
@@ -547,6 +557,33 @@ def _refine_transcript(ctx: JobContext, folder: Path, p: dict, info: dict, start
         q.setdefault('transcript_refined', []).append([round(start, 3), round(end, 3), _refine_tag()])
         updated = q
     return updated
+
+
+def _apply_reactions(ctx: JobContext, folder: Path, p: dict, info: dict, start: float, end: float,
+                     lines: list[list[dict]], rx: dict, warnings: list[str]) -> list[list[dict]]:
+    """Vícios de fala, vitória/dinheiro e picos na legenda animada (``app/reactions.py``)."""
+    if not rx:
+        return lines
+    if rx.get('fillers'):
+        lines = reactions.clean_fillers(lines)
+    wav = None
+    if rx.get('peaks') and info.get('audio_index') is not None:
+        ctx.stage('picos', 'Procurando os momentos de pico')
+        wav = folder / 'cache' / f'.picos-{ctx.id}.wav'
+        wav.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            direction.extract_clip_audio(folder / p['filename'], info, start, end, wav, cancel_event=ctx.cancel_event)
+        except media.FFmpegError:
+            wav = None
+    try:
+        found = reactions.mark(lines, peaks=bool(rx.get('peaks')), wins=bool(rx.get('wins')), wav_path=wav,
+                               duration=end - start)
+    finally:
+        if wav is not None:
+            wav.unlink(missing_ok=True)
+    if rx.get('peaks') and not found:
+        warnings.append('Nenhum momento de pico claro neste corte (grito ou risada); a legenda saiu sem picos.')
+    return reactions.isolate_peaks(lines)
 
 
 def _cached_track(folder: Path, p: dict, info: dict, start: float, end: float, fmt: str, ctx: JobContext, *,

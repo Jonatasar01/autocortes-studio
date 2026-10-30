@@ -381,6 +381,15 @@ class SubtitleLook(BaseModel):
     case: Literal['auto', 'upper', 'normal'] = 'auto'
 
 
+class Reactions(BaseModel):
+    """Reações na legenda animada (app/reactions.py); tudo desligado é a legenda de sempre."""
+    model_config = ConfigDict(extra='forbid')
+    peaks: bool = False                                   # momentos de pico: maior e tremendo
+    sound: Literal['none', 'boom', 'whoosh'] = 'none'     # som nos picos
+    wins: bool = False                                    # vitória e dinheiro em destaque
+    fillers: bool = False                                 # tira "éé", "hã" e "tipo tipo" da legenda
+
+
 class ExportOptions(BaseModel):
     model_config = ConfigDict(extra='forbid')
     format: Optional[Literal['9:16', '16:9', '1:1', 'original']] = None
@@ -389,6 +398,7 @@ class ExportOptions(BaseModel):
     subtitles: bool = True
     subtitle_style: Literal['classica', 'dinamica'] = 'classica'
     subtitle_look: Optional[SubtitleLook] = None
+    reactions: Optional[Reactions] = None
     refine_subtitles: bool = True   # legenda precisa: retranscreve o corte com o modelo maior (GPU)
     hook: bool = False
     normalize_audio: bool = False

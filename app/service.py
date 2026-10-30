@@ -16,8 +16,8 @@ import unicodedata
 from pathlib import Path
 from typing import Iterable
 
-from . import (autopilot, config, curation, direction, downloads, filters, media, pipeline, publish, reframe, rights,
-               secrets_store, settings, storage, subtitles, transcription, watcher)
+from . import (autopilot, config, curation, direction, downloads, filters, media, pipeline, publish, reactions, reframe,
+               rights, secrets_store, settings, storage, subtitles, transcription, watcher)
 from .errors import AppError
 from .jobs import Handler, JobManager
 
@@ -866,6 +866,11 @@ def request_export(project_id: str, clip_id: int, options: dict, *, preview: boo
         look = subtitles.clean_look(options.get('subtitle_look'))
         if look != subtitles.LOOK_DEFAULT:   # fonte, cores e fundo escolhidos na aba Legendas
             params['subtitle_look'] = look
+        rx = options.get('reactions') or {}
+        rx = {'peaks': bool(rx.get('peaks')), 'wins': bool(rx.get('wins')), 'fillers': bool(rx.get('fillers')),
+              'sound': rx.get('sound') if rx.get('peaks') and rx.get('sound') in reactions.SOUNDS else 'none'}
+        if rx['peaks'] or rx['wins'] or rx['fillers']:   # picos, som, vitória/dinheiro e vícios de fala
+            params['reactions'] = rx
         if p.get('caption_cover'):
             params['caption_cover'] = list(p['caption_cover'])   # legenda antiga gravada no vídeo, apagada
         if clip.get('focus_rect') and framing in ('streamer', 'split', 'mix'):

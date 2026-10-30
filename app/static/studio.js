@@ -2708,6 +2708,7 @@ function exportOptions(format, rights) {
     format, framing: $('framing').value, subtitles: $('subtitles').checked,
     subtitle_style: $('subtitleStyle').value, refine_subtitles: $('refineSubtitles').checked,
     subtitle_look: lookIsDefault(subtitleLook()) ? null : subtitleLook(),
+    reactions: reactionOptions(),
     normalize_audio: $('normalize').checked, hook: $('hook').checked, acknowledge_rights: rights,
     edit_plan: exportPlanName(), filter: state.filter === 'nenhum' ? null : state.filter,
     keep_framing: true,   // o enquadramento escolhido vale mesmo com plano de edição
@@ -2838,6 +2839,35 @@ for (const id of Object.values(LOOK_INPUTS)) {
 }
 $('subLookReset').onclick = () => { setLook(null); store.set('subtitleLook', JSON.stringify(subtitleLook())); };
 $('subtitleStyle').addEventListener('change', renderLook);
+
+// Reações na legenda animada (picos, som, vitória/dinheiro, vícios): lembradas entre sessões.
+const RX_INPUTS = {peaks: 'rxPeaks', wins: 'rxWins', fillers: 'rxFillers'};
+function reactionOptions() {
+  if (!$('subtitles').checked || $('subtitleStyle').value !== 'dinamica') return null;
+  const rx = {sound: $('rxPeaks').checked ? $('rxSound').value : 'none'};
+  for (const [key, id] of Object.entries(RX_INPUTS)) rx[key] = $(id).checked;
+  return rx.peaks || rx.wins || rx.fillers ? rx : null;
+}
+function syncReactions() {
+  $('reactBox').disabled = !$('subtitles').checked || $('subtitleStyle').value !== 'dinamica';
+  $('rxSound').disabled = $('reactBox').disabled || !$('rxPeaks').checked;
+}
+try {
+  const saved = JSON.parse(store.get('reactions') || '{}') || {};
+  for (const [key, id] of Object.entries(RX_INPUTS)) $(id).checked = saved[key] === true;
+  if ([...$('rxSound').options].some((o) => o.value === saved.sound)) $('rxSound').value = saved.sound;
+} catch { /* preferência ilegível: tudo desligado */ }
+for (const id of [...Object.values(RX_INPUTS), 'rxSound']) {
+  $(id).addEventListener('change', () => {
+    const rx = {sound: $('rxSound').value};
+    for (const [key, el] of Object.entries(RX_INPUTS)) rx[key] = $(el).checked;
+    store.set('reactions', JSON.stringify(rx));
+    syncReactions();
+  });
+}
+$('subtitleStyle').addEventListener('change', syncReactions);
+syncReactions();
+
 function syncSubtitleStyle() {
   const plan = current()?.edit_plans?.[exportPlanName()];
   const planned = Boolean(plan);
@@ -2862,6 +2892,7 @@ function syncSubtitleStyle() {
   $('refineSubtitles').disabled = !$('subtitles').checked;
   $('lookBox').disabled = !$('subtitles').checked;
   renderLook();   // o plano pode ter trocado o estilo (a cor da palavra falada só vale na animada)
+  syncReactions();
 }
 $('subtitles').addEventListener('change', syncSubtitleStyle);
 

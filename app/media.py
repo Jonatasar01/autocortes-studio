@@ -1020,7 +1020,9 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
                       keep: list[tuple[float, float]] | None = None,
                       track: dict | None = None, post: str = '',
                       audio_extra: str = '', preview: bool = False,
-                      segments: list[dict] | None = None, encoder: str = 'x264') -> tuple[list[str], tuple[int, int]]:
+                      segments: list[dict] | None = None, encoder: str = 'x264',
+                      sfx: tuple[list[float], str] | None = None) -> tuple[list[str], tuple[int, int]]:
+    """``sfx`` = (instantes na saída, som) dos picos (``app/reactions.py``)."""
     graph, size = build_filtergraph(media, fmt, framing, subtitles_file, keep, track, post, segments)
     if preview:
         # Prévia: o mesmo grafo (layout, legenda, efeitos) e só no fim reduz à metade para codificar rápido.
@@ -1038,10 +1040,17 @@ def build_export_args(source: Path, media: dict, start: float, duration: float, 
             audio_filter = f"aselect='{_select_expr(keep)}',asetpts=N/SR/TB," + audio_filter
         if audio_extra:
             audio_filter += ',' + audio_extra
-        if normalize_audio:
-            audio_filter += ',loudnorm=I=-14:TP=-1.5:LRA=11'
-        args += ['-map', f"0:{media['audio_index']}", '-af', audio_filter,
-                 '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2']
+        loudnorm = ',loudnorm=I=-14:TP=-1.5:LRA=11' if normalize_audio else ''
+        if sfx and sfx[0]:
+            # Som nos picos: o áudio vai para o mesmo grafo, misturado antes da normalização.
+            from . import reactions
+            i = args.index('-filter_complex') + 1
+            args[i] += (f";[0:{media['audio_index']}]{audio_filter}[amain];" +
+                        reactions.sound_graph(sfx[0], sfx[1], 'amain', 'aout', loudnorm))
+            args += ['-map', '[aout]']
+        else:
+            args += ['-map', f"0:{media['audio_index']}", '-af', audio_filter + loudnorm]
+        args += ['-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2']
     else:
         args += ['-an']
     args += [*video_codec_args(encoder, preview, output_fps(media) or media.get('fps')), '-pix_fmt', 'yuv420p',
@@ -1129,7 +1138,7 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
                 normalize_audio: bool = False, on_progress: ProgressFn | None = None,
                 cancel_event: threading.Event | None = None, keep: list[tuple[float, float]] | None = None,
                 track: dict | None = None, post: str = '', audio_extra: str = '', preview: bool = False,
-                segments: list[dict] | None = None) -> dict:
+                segments: list[dict] | None = None, sfx: tuple[list[float], str] | None = None) -> dict:
     """Renderiza em pasta temporária, valida e só então publica com renomeação atômica.
 
     ``preview``: mesma montagem em meia resolução e codificação rápida, para conferir antes de exportar.
@@ -1169,7 +1178,7 @@ def export_clip(source: Path, media: dict, out_dir: Path, base_name: str, start:
             def render_with(encoder: str):
                 args, size = build_export_args(source, media, start, duration, fmt, framing, subs,
                                                normalize_audio, render, keep, track, post, audio_extra, preview,
-                                               segments, encoder)
+                                               segments, encoder, sfx)
                 run_ffmpeg(args, duration=out_duration, cwd=work, cancel_event=cancel_event,
                            on_progress=lambda p, m: progress(p * 0.85, 'Renderizando'))
                 return size
