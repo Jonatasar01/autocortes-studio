@@ -2536,8 +2536,8 @@ $('profileSel').onchange = () => {
   if (key) { applyProfile(key); toast('Perfil "' + findProfile(key).name + '" aplicado.'); }
   else { if (state.project) store.set('profile.' + state.project.id, ''); syncProfileButtons(); }
 };
-const FRAMING_NAMES = {fit: 'quadro inteiro', blur: 'fundo desfocado', track: 'seguir rosto', streamer: 'só o streamer',
-  split: 'webcam + jogo', mix: 'por trecho'};
+const FRAMING_NAMES = {fit: 'quadro inteiro', blur: 'fundo desfocado', track: 'seguir rosto',
+  track_blur: 'seguir rosto com fundo desfocado', streamer: 'só o streamer', split: 'webcam + jogo', mix: 'por trecho'};
 $('profileSave').onclick = () => {
   const o = currentOptions();
   $('profileSummary').textContent = [o.format, FRAMING_NAMES[o.framing] || o.framing,

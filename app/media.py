@@ -33,7 +33,11 @@ ALLOWED_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'}
 FORMATS = ('9:16', '16:9', '1:1', 'original')
 # track = seguir rosto (recorta as laterais); streamer = só a janela da webcam, com fundo desfocado;
 # split = tela dividida (webcam em cima, jogo embaixo); mix = por trecho
-FRAMINGS = ('fit', 'blur', 'track', 'streamer', 'split', 'mix')
+FRAMINGS = ('fit', 'blur', 'track', 'track_blur', 'streamer', 'split', 'mix')
+# Seguir rosto com fundo desfocado (tela vertical): janela quadrada que segue o rosto, perto do topo, sobre o
+# vídeo desfocado; a legenda fica no fundo desfocado logo abaixo dela.
+FRAMED_WINDOW = 0.8   # lado da janela em fração da altura do vídeo (o rosto aparece 25% maior que no quadro todo)
+FRAMED_TOP = 0.13     # topo da janela em fração da altura da tela
 SEGMENT_FRAMINGS = ('fit', 'blur', 'track', 'streamer', 'split')  # o que cada trecho do modo "por trecho" pode usar
 FORMAT_SLUG = {'9:16': '9x16', '16:9': '16x9', '1:1': '1x1', 'original': 'orig'}
 
@@ -581,6 +585,8 @@ def content_band(fmt: str, framing: str, media: dict, size: tuple[int, int],
 
     ``None`` quando o vídeo ocupa a tela inteira (formato original, ou seguir rosto, que recorta).
     """
+    if framing == 'track_blur' and fmt != 'original' and size[1] > size[0] * 1.1:
+        return framed_top(*size), framed_top(*size) + size[0]
     if fmt == 'original' or framing not in ('blur', 'fit', 'streamer', 'split'):
         return None
     W, H = size
@@ -754,26 +760,48 @@ def _blur_branch(inp: str, W: int, H: int, out: str) -> str:
             f'[bg][fg]overlay=(W-w)/2:(H-h)/2{out}')
 
 
-def _track_graph(src: str, pre: str, subs: str, W: int, H: int, track: dict) -> str:
+def _track_graph(src: str, pre: str, subs: str, W: int, H: int, track: dict, framed: bool = False) -> str:
     """Recorte que segue o rosto (expressão de tempo no crop) e fundo desfocado nas cenas sem rosto."""
-    return _follow_branch(src, W, H, track, '[mix]') + f';[mix]{pre}setsar=1{subs}[vout]'
+    return _follow_branch(src, W, H, track, '[mix]', framed=framed) + f';[mix]{pre}setsar=1{subs}[vout]'
 
 
-def _follow_branch(inp: str, W: int, H: int, track: dict, out: str, tag: str = '') -> str:
+def framed_top(W: int, H: int) -> int:
+    return _even(H * FRAMED_TOP)
+
+
+def _framed_follow(inp: str, W: int, H: int, track: dict, out: str, tag: str = '') -> str:
+    """Janela quadrada que segue o rosto (na horizontal, como o seguir rosto; na vertical, fixa no centro da
+    cabeça) sobre o próprio vídeo desfocado, com o topo em ``framed_top``."""
+    from . import reframe
+    band = track.get('face_band')
+    cy = (band[0] + band[2]) / 2 if band else 0.5
+    x = f"clip(({reframe.crop_x_expression(track['shots'])})*iw-ow/2,0,iw-ow)"
+    side = f"'2*trunc(min(iw,ih*{FRAMED_WINDOW})/2)'"
+    bw, bh = _even(W / 4), _even(H / 4)
+    return (f'{inp}split=2[fbs{tag}][ffs{tag}];'
+            f'[fbs{tag}]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},'
+            f'boxblur=8:2,eq=brightness=-0.06,scale={W}:{H}:flags=bilinear[fbg{tag}];'
+            f"[ffs{tag}]crop=w={side}:h={side}:x='{x}':y='clip({cy:.4f}*ih-oh/2,0,ih-oh)',"
+            f'scale={W}:{W}:flags=bicubic[ffg{tag}];'
+            f'[fbg{tag}][ffg{tag}]overlay=0:{framed_top(W, H)},setsar=1{out}')
+
+
+def _follow_branch(inp: str, W: int, H: int, track: dict, out: str, tag: str = '', framed: bool = False) -> str:
     """Seguir rosto + as cenas sem rosto (quadro inteiro com fundo desfocado) + as cenas com a janela dos
     streamers (``pip``: a janela recortada e ampliada, com fundo desfocado). ``tag`` diferencia os rótulos
-    quando o ramo aparece mais de uma vez no grafo."""
+    quando o ramo aparece mais de uma vez no grafo. ``framed``: o rosto numa janela sobre fundo desfocado."""
     from . import reframe
-    crop = _track_crop(W, H, track)
     fit = reframe.fit_enable_expression(track['shots'])
     pip_rect = track.get('pip')
     pip = reframe.pip_enable_expression(track['shots']) if pip_rect else None
     if not fit and not pip:
-        return f'{inp}{crop}{out}'
+        return _framed_follow(inp, W, H, track, out, tag) if framed else f'{inp}{_track_crop(W, H, track)}{out}'
     layers = [('fit', fit), ('pip', pip)]
     layers = [(k, e) for k, e in layers if e]
     labels = ''.join(f'[{k}s{tag}]' for k, _ in layers)
-    parts = [f'{inp}split={len(layers) + 1}[ts{tag}]{labels}', f'[ts{tag}]{crop}[trk{tag}]']
+    follow = (_framed_follow(f'[ts{tag}]', W, H, track, f'[trk{tag}]', tag) if framed
+              else f'[ts{tag}]{_track_crop(W, H, track)}[trk{tag}]')
+    parts = [f'{inp}split={len(layers) + 1}[ts{tag}]{labels}', follow]
     current = f'[trk{tag}]'
     for i, (kind, enable) in enumerate(layers):
         source = f'[{kind}s{tag}]' + (_facecam_crop(pip_rect) if kind == 'pip' else '')
@@ -929,9 +957,11 @@ def build_filtergraph(media: dict, fmt: str, framing: str, subtitles_file: str |
         graph = _split_branch(f'{src}{pre}', W, H, facecam, split_top, f',setsar=1{subs}[vout]', split_left)
     elif framing == 'streamer' and facecam:
         graph = _streamer_graph(src, pre, subs, W, H, facecam)
+    elif framing == 'track_blur' and track and track.get('ok'):   # janela no topo só faz sentido na vertical
+        graph = _track_graph(src, pre, subs, W, H, track, framed=H > W * 1.1)
     elif framing in ('track', 'streamer', 'split') and track and track.get('ok'):  # sem webcam: segue o rosto
         graph = _track_graph(src, pre, subs, W, H, track)
-    elif framing in ('blur', 'track', 'streamer', 'split', 'mix'):  # sem plano/trechos válidos: fundo desfocado
+    elif framing in ('blur', 'track', 'track_blur', 'streamer', 'split', 'mix'):  # sem plano válido: fundo desfocado
         graph = _blur_branch(f'{src}{pre}', W, H, f',setsar=1{subs}[vout]')
     else:  # fit: enquadramento original preservado com barras
         graph = (f'{src}{pre}scale={W}:{H}:force_original_aspect_ratio=decrease:flags=bicubic,'

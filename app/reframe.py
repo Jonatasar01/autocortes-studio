@@ -41,7 +41,30 @@ SMOOTHING = 0.18             # fração da distância percorrida a cada amostra
 SIMPLIFY_TOLERANCE = 0.004   # erro máximo (fração da largura) ao simplificar o caminho da câmera
 MAX_POINTS_PER_SHOT = 40
 MIN_SHOT_SECONDS = 0.6
-PLAN_VERSION = 8   # muda quando o algoritmo do plano muda (invalida os planos em cache)
+PLAN_VERSION = 9   # muda quando o algoritmo do plano muda (invalida os planos em cache)
+HEAD_ABOVE_FACE = 0.45   # cabelo/fone acima da caixa do rosto (fração da altura da caixa)
+CHIN_BELOW_FACE = 0.08   # folga abaixo do queixo
+
+
+def face_band(boxes: list, media: dict, box: dict | None) -> list[float] | None:
+    """Faixa vertical ``[topo da cabeça, topo do rosto, queixo]`` (fração da altura visível) de quem é seguido.
+
+    No seguir rosto o recorte usa a altura inteira, então a fração vale igual na tela de saída: a legenda usa
+    a faixa para não ficar em cima do rosto (olhos e boca, entre o topo do rosto e o queixo; cabelo e fone, acima
+    disso, podem ficar cobertos se não houver outro lugar). Percentis 10/90 ignoram uma detecção solta.
+    """
+    if len(boxes) < 3:
+        return None
+    H = media['height']
+
+    def fy(v: float) -> float:   # fração do quadro inteiro → fração da área sem faixas pretas
+        return min(1.0, max(0.0, (v * H - box['y']) / box['h'])) if box else min(1.0, max(0.0, v))
+
+    low, high = int(len(boxes) * 0.1), min(len(boxes) - 1, int(len(boxes) * 0.9))
+    heads = sorted(fy(b[1] - b[3] * HEAD_ABOVE_FACE) for b in boxes)
+    faces = sorted(fy(b[1]) for b in boxes)
+    chins = sorted(fy(b[1] + b[3] * (1 + CHIN_BELOW_FACE)) for b in boxes)
+    return [round(heads[low], 4), round(faces[low], 4), round(chins[high], 4)]
 YUNET_MODEL = 'face_detection_yunet_2023mar.onnx'
 YUNET_SCORE = 0.7            # confiança mínima do YuNet
 MIN_TRACK_HITS = 3           # um rosto precisa aparecer em 3 amostras (0,6 s); falsos positivos piscam
@@ -639,6 +662,7 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
 
     shots: list[dict] = []
     visibility: list[float] = []
+    followed: list = []   # caixas do rosto seguido nos trechos recortados (para a legenda desviar dele)
     unsafe_shots = 0
 
     def add(a: float, b: float, layout: str, points: list) -> None:
@@ -682,6 +706,7 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
             if points and points[0][0] > sa:
                 points.insert(0, (sa, points[0][1]))
             add(sa, sb, 'fill', points)
+            followed += [tg[2] for tg in sub if len(tg) > 2 and tg[2]]
     if not any(s['layout'] == 'fill' for s in shots):
         if unsafe_shots:
             return {'ok': False, 'shots': [], 'message': 'Os rostos deste trecho não cabem inteiros no recorte '
@@ -711,6 +736,7 @@ def plan(source: Path, media: dict, start: float, end: float, out_size: tuple[in
                'other_scene_seconds': round(other_seconds, 2) if main_mask else None,
                'pip_seconds': round(pip_seconds, 2) if main_mask else None}
     return {'ok': True, 'shots': shots, 'crop_frac': round(crop_frac, 4), 'message': message, 'metrics': metrics,
+            'face_band': face_band(followed, media, box),
             'facecam': _visible_rect(facecam, media, box), 'main_set_only': bool(main_mask),
             'pip': (_visible_rect(pip_inner(pip, samples[0]['gray'].shape[::-1]), media, box)
                     if pip_seconds else None)}

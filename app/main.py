@@ -385,7 +385,7 @@ class ExportOptions(BaseModel):
     model_config = ConfigDict(extra='forbid')
     format: Optional[Literal['9:16', '16:9', '1:1', 'original']] = None
     portrait: bool = True  # compatibilidade: usado quando "format" não é enviado
-    framing: Literal['fit', 'blur', 'track', 'streamer', 'split', 'mix'] = 'fit'   # mix = por trecho
+    framing: Literal['fit', 'blur', 'track', 'track_blur', 'streamer', 'split', 'mix'] = 'fit'   # mix = por trecho
     subtitles: bool = True
     subtitle_style: Literal['classica', 'dinamica'] = 'classica'
     subtitle_look: Optional[SubtitleLook] = None

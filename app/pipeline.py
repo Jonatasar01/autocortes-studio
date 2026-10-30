@@ -329,7 +329,7 @@ def run_export(ctx: JobContext) -> dict:
     if manual and 'track' not in used:
         track = {'ok': False, 'shots': [], 'facecam': manual, 'manual': True, 'message': ''}
         warnings.append('"Só o streamer" usou a área desenhada à mão neste corte.')
-    elif prm['framing'] in ('track', 'streamer', 'split') or kinds & {'track', 'streamer', 'split'}:
+    elif prm['framing'] in ('track', 'track_blur', 'streamer', 'split') or kinds & {'track', 'streamer', 'split'}:
         # Antes da legenda: no "só o streamer" ela se posiciona pela altura da janela da webcam.
         ctx.stage('enquadramento', 'Analisando rostos para seguir quem fala')
         track = _cached_track(folder, p, info, start, end, prm['format'], ctx,
@@ -359,6 +359,11 @@ def run_export(ctx: JobContext) -> dict:
     else:
         band_framing = prm['framing']
     band = media.content_band(prm['format'], band_framing, info, (width, height), (track or {}).get('facecam'))
+    # Seguir rosto (o recorte ocupa a tela inteira): a legenda desvia da cabeça de quem é seguido.
+    avoid = None
+    if (band is None and not segments and prm['framing'] in ('track', 'streamer', 'split') and track
+            and track.get('ok') and track.get('face_band') and not track.get('facecam')):
+        avoid = tuple(round(v * height) for v in track['face_band'])   # cabeça, topo do rosto, queixo
     out_len = sum(b - a for a, b in keep) if keep else end - start
     hook_text = prm.get('hook_text') if prm.get('hook') else None
     sub_report = subtitles._new_report()
@@ -393,16 +398,17 @@ def run_export(ctx: JobContext) -> dict:
                 if lines:
                     ass_text = subtitles.to_ass_dynamic(lines, width, height, hook_text=hook_text, clip_len=out_len,
                                                         report=sub_report, video_band=band,
-                                                        look=prm.get('subtitle_look'))
+                                                        look=prm.get('subtitle_look'), avoid=avoid)
                 else:
                     warnings.append('Legenda dinâmica indisponível (a transcrição não tem o tempo de cada palavra); '
                                     'usada a legenda clássica.')
             if ass_text is None:
                 ass_text = subtitles.to_ass(cues, width, height, hook_text=hook_text, clip_len=out_len,
-                                            report=sub_report, video_band=band, look=prm.get('subtitle_look'))
+                                            report=sub_report, video_band=band, look=prm.get('subtitle_look'),
+                                            avoid=avoid)
     if ass_text is None and hook_text:
         ass_text = subtitles.to_ass([], width, height, hook_text=hook_text, clip_len=out_len, report=sub_report,
-                                    video_band=band, look=prm.get('subtitle_look'))
+                                    video_band=band, look=prm.get('subtitle_look'), avoid=avoid)
     post = audio_extra = ''
     look = filters.chain(prm.get('filter'))   # filtro de cor escolhido, antes da cor/zoom do plano
     if plan:

@@ -295,16 +295,44 @@ UI_BOTTOM_OTHER = 0.07
 BAND_GAP = 0.025             # distância entre a borda do vídeo e a legenda
 
 
+TOP_SAFE = 0.15        # barra do app no topo da tela vertical; a legenda não sobe além
+TOP_SAFE_HOOK = 0.25   # com gancho: ele ocupa o topo nos primeiros segundos
+
+
+def _avoid_face(width: int, height: int, size: int, default_margin: int, avoid: tuple,
+                top_safe: float) -> tuple[int, int]:
+    """Desvia do rosto. ``avoid`` = ``(topo da cabeça, topo do rosto, queixo)`` em pixels.
+
+    Ordem: a posição de sempre se ela já não encosta na cabeça; abaixo do queixo se couber acima dos botões;
+    logo acima da cabeça; sobre o cabelo/fone, acima dos olhos; por fim, a posição de sempre.
+    """
+    block = round(2 * size * 1.25)          # pior caso: duas linhas
+    head, face, chin = avoid
+    if height - default_margin <= head or height - default_margin - block >= chin:
+        return 2, default_margin
+    portrait = height > width * 1.1
+    floor = height * (1 - (UI_BOTTOM_PORTRAIT if portrait else UI_BOTTOM_OTHER))
+    gap = round(height * BAND_GAP)
+    if chin + gap + block <= floor:
+        return 8, round(chin + gap)         # abaixo do queixo
+    for limit in (head, face):              # acima da cabeça; senão acima dos olhos, sobre o cabelo
+        if limit - gap - block >= height * top_safe:
+            return 2, round(height - limit + gap)
+    return 2, default_margin
+
+
 def placement(width: int, height: int, size: int, default_margin: int,
-              video_band: tuple[int, int] | None = None) -> tuple[int, int]:
-    """``(Alignment, MarginV)`` do ASS para a legenda não ficar em cima da borda do vídeo.
+              video_band: tuple[int, int] | None = None,
+              avoid: tuple | None = None, top_safe: float = TOP_SAFE) -> tuple[int, int]:
+    """``(Alignment, MarginV)`` do ASS para a legenda não ficar em cima da borda do vídeo nem do rosto.
 
     ``video_band`` = faixa vertical ``(topo, base)`` em pixels onde o vídeo aparece (enquadramento com barras
     ou fundo desfocado). A legenda vai inteira para a área logo abaixo do vídeo, acima da zona dos botões;
     se não couber ali, fica inteira dentro do vídeo, apoiada um pouco acima da borda de baixo.
+    ``avoid`` = cabeça de quem é seguido no seguir rosto (o vídeo ocupa a tela inteira).
     """
     if not video_band or video_band[1] - video_band[0] >= height * 0.9:
-        return 2, default_margin
+        return _avoid_face(width, height, size, default_margin, avoid, top_safe) if avoid else (2, default_margin)
     top, bottom = video_band
     portrait = height > width * 1.1
     floor = height * (1 - (UI_BOTTOM_PORTRAIT if portrait else UI_BOTTOM_OTHER))
@@ -317,13 +345,15 @@ def placement(width: int, height: int, size: int, default_margin: int,
 
 def to_ass(cues: list[dict], width: int, height: int, font_name: str = 'Arial', *,
            hook_text: str | None = None, clip_len: float | None = None, report: dict | None = None,
-           video_band: tuple[int, int] | None = None, look: dict | None = None) -> str:
+           video_band: tuple[int, int] | None = None, look: dict | None = None,
+           avoid: tuple[int, int] | None = None) -> str:
     look = clean_look({'font': font_name, **(look or {})})
     font_name = look['font']
     st = style_for(width, height)
     st['font'] = round(st['font'] * SIZE_SCALE[look['size']])
     pad = _look_padding(look, st['font'], st['outline'])
-    align, margin_v = placement(width, height, st['font'], st['margin_v'], video_band)
+    align, margin_v = placement(width, height, st['font'], st['margin_v'], video_band, avoid,
+                                TOP_SAFE_HOOK if hook_text else TOP_SAFE)
     header = [
         '[Script Info]', 'ScriptType: v4.00+', f'PlayResX: {width}', f'PlayResY: {height}',
         # Quebras decididas pela medição (\\N + \\q2 por evento); WrapStyle 0 é só a rede de segurança.
@@ -385,7 +415,8 @@ def build_word_lines(transcript: list[dict], start: float, end: float,
 def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: str = 'Arial', *,
                    hook_text: str | None = None, clip_len: float | None = None,
                    highlight: str | None = None, report: dict | None = None,
-                   video_band: tuple[int, int] | None = None, look: dict | None = None) -> str:
+                   video_band: tuple[int, int] | None = None, look: dict | None = None,
+                   avoid: tuple[int, int] | None = None) -> str:
     """Legenda em caixa alta, poucas palavras por vez, com a palavra falada destacada.
 
     O layout de cada grupo é medido uma vez, no pior caso (qualquer palavra ampliada a 108%, termos
@@ -399,7 +430,8 @@ def to_ass_dynamic(lines: list[list[dict]], width: int, height: int, font_name: 
     size = round(width * (0.078 if portrait else 0.05) * SIZE_SCALE[look['size']])
     outline = max(3, round(size * 0.09))
     pad = _look_padding(look, size, outline)
-    align, margin_v = placement(width, height, size, round(height * (0.27 if portrait else 0.12)), video_band)
+    align, margin_v = placement(width, height, size, round(height * (0.27 if portrait else 0.12)), video_band,
+                                avoid, TOP_SAFE_HOOK if hook_text else TOP_SAFE)
     header = [
         '[Script Info]', 'ScriptType: v4.00+', f'PlayResX: {width}', f'PlayResY: {height}',
         'WrapStyle: 0', 'ScaledBorderAndShadow: yes', 'YCbCr Matrix: TV.709', '',
