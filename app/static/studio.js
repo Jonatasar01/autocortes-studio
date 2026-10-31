@@ -1794,6 +1794,13 @@ async function openSelection() {
     const vod = state.project?.twitch_vod;
     $('twitchVod').value = vod ? 'https://www.twitch.tv/videos/' + vod : '';
     $('twitchVod').disabled = !state.project;
+    $('projectChannel').value = state.project?.channel || state.project?.community?.video?.channel || '';
+    $('projectChannel').disabled = !state.project;
+    const pref = state.project?.selection?.preference;
+    $('preferenceNote').textContent = pref
+      ? 'Na última escolha: ' + pref.good + ' 👍 e ' + pref.bad + ' 👎 ' + (pref.scope === 'canal' ? 'deste canal' : 'de todos os projetos') + ' ajustaram a nota.'
+      : 'Ainda não há avaliações suficientes: são precisos pelo menos 3 👍 e 3 👎.';
+    $('preferenceNote').hidden = !state.project;
     syncTwitch(health.twitch || {});
     const clips = state.project?.clips || [];
     const exported = clips.filter((c) => Object.keys(c.exports || {}).length).length;
@@ -1870,8 +1877,10 @@ async function saveCuration() {
   if (twitchId) await api('/api/settings/keys/twitch_id', 'PUT', {key: twitchId});
   if (twitchSecret) syncTwitch(await api('/api/settings/keys/twitch_secret', 'PUT', {key: twitchSecret}));
   if (state.project) {
-    const saved = await api('/api/projects/' + state.project.id + '/twitch', 'PUT', {url: $('twitchVod').value.trim()});
+    const saved = await api('/api/projects/' + state.project.id + '/reference', 'PUT',
+      {twitch_url: $('twitchVod').value.trim(), channel: $('projectChannel').value.trim()});
     state.project.twitch_vod = saved.twitch_vod;
+    state.project.channel = saved.channel;
   }
   await api('/api/settings', 'PUT', {curation: {
     provider, consent: provider === 'gemini' && $('curationConsent').checked,

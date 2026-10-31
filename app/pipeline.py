@@ -14,8 +14,8 @@ import shutil
 import threading
 import time
 
-from . import (audio_events, community, config, curation, direction, filters, media, publish, reactions, reframe,
-               rights, selection, settings, storage, subtitles, transcription)
+from . import (audio_events, community, config, curation, direction, filters, media, preference, publish, reactions,
+               reframe, rights, selection, settings, storage, subtitles, transcription)
 from .errors import AppError, Cancelled
 from .jobs import JobContext
 
@@ -242,8 +242,14 @@ def run_analysis(ctx: JobContext) -> dict:
     live_cfg = settings.load()['curation']
     cur_cfg = dict(storage.read_project(pid).get('curation_profile') or live_cfg)
     unlimited = bool(cur_cfg.get('all_clips'))   # "sem limite": todos os aprovados, sem teto por hora
+    try:   # o 👍/👎 dos projetos (deste canal, quando há avaliações suficientes) ajusta a nota dos trechos
+        liked = preference.build(preference.channel_of(storage.read_project(pid)))
+    except Exception:
+        log.warning('Aprendizado com as avaliações indisponível.', exc_info=True)
+        liked = None
     clips, sel = selection.select_clips(transcript, info['duration'], opts['target_seconds'], opts['desired_count'],
-                                        scenes, fallback_reason=fallback, audio=audio_index, unlimited=unlimited)
+                                        scenes, fallback_reason=fallback, audio=audio_index, unlimited=unlimited,
+                                        preference=liked)
     ctx.progress(0.9)
     provider = cur_cfg['provider'] if cur_cfg.get('provider') in curation.PROVIDERS else 'heuristica'
     remote = curation.requires_external_consent(provider)

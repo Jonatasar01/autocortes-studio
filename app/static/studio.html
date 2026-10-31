@@ -710,6 +710,11 @@
     <label class="switch"><input id="curationAllClips" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Sem limite de cortes</strong><small>Traz todos os trechos aprovados, sem o máximo de 4 por hora. Numa live longa podem vir mais de 100 cortes, e a IA neste computador leva mais tempo.</small></span></label>
     <label class="field" for="curationPrompt">O que procurar (opcional)</label>
     <input id="curationPrompt" type="text" maxlength="300" placeholder="Ex.: momentos engraçados e histórias pessoais">
+    <span class="eyebrow spaced">Aprender com as suas avaliações</span>
+    <p class="hint">Os cortes que você marca com 👍 e 👎 ajustam a nota dos próximos trechos. Com avaliações suficientes do mesmo canal, valem só as dele.</p>
+    <label class="field" for="projectChannel">Canal deste projeto</label>
+    <input id="projectChannel" type="text" maxlength="60" autocomplete="off" placeholder="Ex.: coringa (vem da Twitch quando houver link)">
+    <p id="preferenceNote" class="hint" hidden></p>
     <span class="eyebrow spaced">Clipes do público na Twitch</span>
     <p class="hint">Os momentos que o público clipou na live entram primeiro na lista, com o título que deram ao clipe. Só o número do vídeo vai à Twitch.</p>
     <label class="field" for="twitchVod">Link da live deste projeto na Twitch (opcional)</label>

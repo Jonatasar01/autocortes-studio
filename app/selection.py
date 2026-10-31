@@ -704,6 +704,21 @@ def _with_audio(audio, start: float, end: float, score: float, breakdown: dict,
     return round(max(0.0, min(100.0, score + adj)), 1), breakdown, reasons + extra + warnings
 
 
+def _with_preference(model: dict, length: float, score: float, breakdown: dict,
+                     reasons: list[str]) -> tuple[float, dict, list[str]]:
+    """Soma o ajuste do 👍/👎 (``app/preference.py``) à nota, com o motivo quando ele pesa."""
+    from . import preference
+    adj = preference.adjust(model, breakdown, length)
+    if not adj:
+        return score, breakdown, reasons
+    breakdown = dict(breakdown, preferencia=adj)
+    if adj >= 3:
+        reasons = reasons + ['Parecido com cortes que você aprovou']
+    elif adj <= -3:
+        reasons = reasons + ['Parecido com cortes que você rejeitou']
+    return round(max(0.0, min(100.0, score + adj)), 1), breakdown, reasons
+
+
 def auto_limit(duration: float) -> int:
     """Quantos cortes o modo automático sugere, no máximo, para um vídeo desta duração."""
     return max(AUTO_MIN_CLIPS, round(AUTO_CLIPS_PER_HOUR * duration / 3600))
@@ -753,11 +768,13 @@ def temporal_candidates(duration: float, target: float, desired: int, scenes: li
 
 def select_clips(segments: list[dict], duration: float, target: int, desired_count: int,
                  scenes: list[float] | None = None, fallback_reason: str | None = None,
-                 audio=None, unlimited: bool = False) -> tuple[list[dict], dict]:
+                 audio=None, unlimited: bool = False, preference: dict | None = None) -> tuple[list[dict], dict]:
     """``audio``: ``audio_events.AudioIndex`` do vídeo (opcional). Reforça trechos com conteúdo que terminam com
     reação sonora e marca alertas técnicos (áudio estourado, silêncio longo); sozinho não escolhe cortes.
 
-    ``unlimited`` (automático): sem o teto de N por hora; entram todos os trechos acima da nota mínima."""
+    ``unlimited`` (automático): sem o teto de N por hora; entram todos os trechos acima da nota mínima.
+
+    ``preference``: modelo de ``app/preference.py`` (o 👍/👎 do usuário); aproxima a nota dos cortes aprovados."""
     target = max(10, min(90, int(target)))
     auto = int(desired_count) == AUTO
     v2 = config.SELECTION_ENGINE != 'v1'
@@ -791,6 +808,8 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
                 if audio is not None:
                     score, breakdown, reasons = _with_audio(audio, units[i]['start'], units[j]['end'],
                                                             score, breakdown, reasons)
+                if preference is not None:
+                    score, breakdown, reasons = _with_preference(preference, length, score, breakdown, reasons)
                 scored.append((score, i, j, breakdown, reasons))
     if not scored:  # frases muito longas ou vídeo muito curto: usa o vídeo/fala inteiro em blocos
         reason = 'Frases longas demais para formar cortes do tamanho pedido'
@@ -851,6 +870,9 @@ def select_clips(segments: list[dict], duration: float, target: int, desired_cou
         clip['description'] = text[:600] + ('…' if len(text) > 600 else '')
     info = {'mode': 'transcricao', 'reason': None, 'candidates_evaluated': len(scored),
             'engine': 'v2' if v2 else 'v1', 'limit': None if unlimited else desired}
+    if preference is not None:
+        from . import preference as pref
+        info['preference'] = pref.summary(preference)
     if auto:
         info.update(count_mode='todos' if unlimited else 'automatico', min_score=floor,
                     per_hour=None if unlimited else AUTO_CLIPS_PER_HOUR)

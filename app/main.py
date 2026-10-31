@@ -245,14 +245,15 @@ def reanalyze(project_id: str):
     return service.reanalyze(project_id)
 
 
-class TwitchVod(BaseModel):
+class Reference(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    url: str = Field(default='', max_length=300)
+    twitch_url: Optional[str] = Field(default=None, max_length=300)
+    channel: Optional[str] = Field(default=None, max_length=60)
 
 
-@app.put('/api/projects/{project_id}/twitch')
-def set_twitch_vod(project_id: str, body: TwitchVod):
-    return service.set_twitch_vod(project_id, body.url)
+@app.put('/api/projects/{project_id}/reference')
+def set_reference(project_id: str, body: Reference):
+    return service.set_reference(project_id, body.twitch_url, body.channel)
 
 
 @app.post('/api/projects/{project_id}/reselect')

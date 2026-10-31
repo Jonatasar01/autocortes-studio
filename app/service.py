@@ -946,14 +946,18 @@ def set_api_key(name: str, key: str) -> dict:
     return curation.status()[name]
 
 
-def set_twitch_vod(project_id: str, url: str) -> dict:
-    """Guarda (ou, vazio, remove) o link da live na Twitch; vale na próxima escolha dos cortes."""
-    vod = community.parse_vod(url)
+def set_reference(project_id: str, twitch_url: str | None = None, channel: str | None = None) -> dict:
+    """Referências do projeto para a próxima escolha dos cortes: o link da live na Twitch (vazio remove) e o canal,
+    que separa o aprendizado com o 👍/👎 por streamer. ``None`` mantém o valor atual."""
+    vod = community.parse_vod(twitch_url) if twitch_url is not None else None
     with storage.edit_project(project_id) as p:
-        p['twitch_vod'] = vod
-        if not vod:
-            p.pop('community', None)
-    return {'twitch_vod': vod}
+        if twitch_url is not None:
+            p['twitch_vod'] = vod
+            if not vod:
+                p.pop('community', None)
+        if channel is not None:
+            p['channel'] = _clean_text(channel, 60) or None
+        return {'twitch_vod': p.get('twitch_vod'), 'channel': p.get('channel')}
 
 
 def autopilot_resume(project_id: str, acknowledge: bool) -> dict:

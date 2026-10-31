@@ -199,8 +199,8 @@ class CommunityAnalysisTests(ServiceBase):
     def test_reselect_puts_the_twitch_moment_first(self):
         res = self.create(make_video(self.tmp / 'live.mp4', size='640x360', duration=40, fps=25))
         pid = res['id']
-        self.assertEqual(service.set_twitch_vod(pid, 'https://www.twitch.tv/videos/2277000111'),
-                         {'twitch_vod': '2277000111'})
+        self.assertEqual(service.set_reference(pid, 'https://www.twitch.tv/videos/2277000111'),
+                         {'twitch_vod': '2277000111', 'channel': None})
         video = dict(VIDEO, duration=40.0)
         with mock.patch.object(community, 'fetch_clips', lambda vid: (video, [clip('Z', 77, 12.0, 10.0, 'lance')])), \
                 mock.patch.object(community, 'aligner_available', lambda: False):
@@ -221,13 +221,13 @@ class CommunityAnalysisTests(ServiceBase):
         p = storage.read_project(pid)
         self.assertEqual(p['community']['state'], 'failed')
         self.assertTrue(p['clips'])
-        service.set_twitch_vod(pid, '')
+        service.set_reference(pid, '')
         self.assertNotIn('community', storage.read_project(pid))
 
     def test_bad_link(self):
         res = self.create(make_video(self.tmp / 'live2.mp4', size='320x240', duration=12, fps=25))
         with self.assertRaises(AppError):
-            service.set_twitch_vod(res['id'], 'https://clips.twitch.tv/Abc')
+            service.set_reference(res['id'], 'https://clips.twitch.tv/Abc')
 
 
 if __name__ == '__main__':
