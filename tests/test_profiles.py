@@ -12,6 +12,7 @@ from app.errors import AppError
 PROFILE = {'name': 'Shorts do canal', 'format': '9:16', 'framing': 'split', 'subtitles': True,
            'subtitle_style': 'dinamica', 'refine_subtitles': False, 'normalize_audio': True, 'hook': True,
            'filter': 'vivido'}
+SAVED = {**PROFILE, 'subtitle_look': None, 'channel': None}
 
 
 class ProfileTests(unittest.TestCase):
@@ -35,8 +36,8 @@ class ProfileTests(unittest.TestCase):
 
     def test_save_replace_and_delete(self):
         s = settings.update({'export_profiles': [PROFILE]})
-        self.assertEqual(s['export_profiles'], [PROFILE])
-        self.assertEqual(settings.load()['export_profiles'], [PROFILE])   # gravado em disco
+        self.assertEqual(s['export_profiles'], [SAVED])
+        self.assertEqual(settings.load()['export_profiles'], [SAVED])   # gravado em disco
         # Espaços extras no nome e filtro "nenhum" são normalizados; campos desconhecidos somem.
         s = settings.update({'export_profiles': [{**PROFILE, 'name': '  Shorts   do canal ', 'filter': 'nenhum',
                                                   'extra': 1}]})
@@ -44,6 +45,17 @@ class ProfileTests(unittest.TestCase):
         self.assertIsNone(s['export_profiles'][0]['filter'])
         self.assertNotIn('extra', s['export_profiles'][0])
         self.assertEqual(settings.update({'export_profiles': []})['export_profiles'], [])
+
+    def test_visual_template_keeps_the_subtitle_look_and_channel(self):
+        look = {'font': 'Anton', 'color': '#ffe000', 'position': 'custom', 'y': 0.3}
+        saved = settings.update({'export_profiles': [{**PROFILE, 'subtitle_look': look, 'channel': '  Coringa  '}]})
+        p = saved['export_profiles'][0]
+        self.assertEqual((p['subtitle_look']['font'], p['subtitle_look']['color'], p['subtitle_look']['y']),
+                         ('Anton', '#FFE000', 0.3))
+        self.assertEqual(p['channel'], 'Coringa')
+        # Aparência inválida volta ao padrão em vez de travar o perfil.
+        bad = settings.update({'export_profiles': [{**PROFILE, 'subtitle_look': {'font': 'Papyrus'}}]})
+        self.assertEqual(bad['export_profiles'][0]['subtitle_look']['font'], 'Arial')
 
     def test_invalid_profiles(self):
         for bad in ([{**PROFILE, 'format': '4:3'}], [{**PROFILE, 'framing': 'zoom'}], [{**PROFILE, 'name': ' '}],

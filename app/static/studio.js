@@ -820,6 +820,8 @@ $('batchGo').onclick = async () => {
   const rights = !!p.rights?.requires_acknowledgement;
   if (rights && !$('batchRights').checked) return toast('Confirme os direitos autorais para exportar.', true);
   store.set('batch.presets', JSON.stringify(presets));
+  // Aviso do sistema quando o lote terminar (pedido agora, no clique: o navegador só pergunta com um gesto).
+  if (window.Notification?.permission === 'default') Notification.requestPermission().catch(() => {});
   $('batchGo').disabled = true;
   try {
     const opts = exportOptions(formats[0], rights);
@@ -856,6 +858,12 @@ function finishBatch(batch) {
   if (state.batch.announced) return;
   state.batch.announced = true;
   setStatus('Lote concluído', batch.failed ? 'error' : 'ok');
+  if (document.hidden && window.Notification?.permission === 'granted') {
+    try {
+      new Notification('AutoCortes: lote concluído', {body: batch.done + ' de ' + batch.total + ' arquivos prontos' +
+        (batch.failed ? ', ' + batch.failed + ' com erro.' : '.'), tag: 'autocortes-lote'});
+    } catch { /* sem aviso do sistema: o aviso na tela continua */ }
+  }
   toast('Lote concluído: ' + batch.done + ' de ' + batch.total + ' arquivos prontos' +
     (batch.failed ? '; ' + batch.failed + ' com erro (veja em Exportações).' : '. Use "Abrir pasta" para ver os arquivos.'),
     !!batch.failed);
@@ -903,6 +911,7 @@ async function openSettings() {
   $('prefSubtitle').value = $('subtitleStyle').value;
   $('prefRefine').checked = $('refineSubtitles').checked;
   $('settingsDialog').showModal();
+  syncYoutubeSettings();
   try {
     const [cfg, d] = await Promise.all([api('/api/settings'), state.dashboard ? state.dashboard : api('/api/dashboard')]);
     $('prefGpuExport').checked = (cfg.export?.encoder || 'auto') === 'auto';
@@ -914,6 +923,7 @@ async function openSettings() {
 $('settingsSave').onclick = async () => {
   try {
     await api('/api/settings', 'PUT', {export: {encoder: $('prefGpuExport').checked ? 'auto' : 'x264'}});
+    await saveYoutubeKeys();
   } catch (e) { toast(e.message, true); }
   store.set('pref.mode', $('prefMode').value);
   store.set('pref.target', String(clamp(Number($('prefTarget').value) || 35, 10, 90)));
@@ -2535,11 +2545,17 @@ function currentOptions() {
   return {format: state.format, framing: $('framing').value, subtitles: $('subtitles').checked,
     subtitle_style: $('subtitleStyle').value, refine_subtitles: $('refineSubtitles').checked,
     normalize_audio: $('normalize').checked, hook: $('hook').checked,
-    filter: state.filter === 'nenhum' ? null : state.filter};
+    filter: state.filter === 'nenhum' ? null : state.filter,
+    subtitle_look: lookIsDefault(subtitleLook()) ? null : subtitleLook()};
 }
 const PROFILE_FIELDS = ['format', 'framing', 'subtitles', 'subtitle_style', 'refine_subtitles', 'normalize_audio',
-  'hook', 'filter'];
-const sameOptions = (p) => { const o = currentOptions(); return PROFILE_FIELDS.every((k) => (p[k] ?? null) === o[k]); };
+  'hook', 'filter', 'subtitle_look'];
+const sameLook = (a, b) => JSON.stringify({...LOOK_DEFAULT, ...(a || {})}).toLowerCase() ===
+  JSON.stringify({...LOOK_DEFAULT, ...(b || {})}).toLowerCase();
+const sameOptions = (p) => {
+  const o = currentOptions();
+  return PROFILE_FIELDS.every((k) => k === 'subtitle_look' ? sameLook(p[k], o[k]) : (p[k] ?? null) === o[k]);
+};
 
 function renderProfiles() {
   const opt = (p) => '<option value="' + escape(profileKey(p)) + '">' + escape(p.name) + '</option>';
@@ -2566,7 +2582,13 @@ async function loadProfiles() {
   applyStoredProfile();
 }
 function applyStoredProfile() {
-  const key = state.project && store.get('profile.' + state.project.id);
+  let key = state.project && store.get('profile.' + state.project.id);
+  // Projeto novo de um canal com modelo de visual próprio: o modelo vale sem precisar escolher.
+  const channel = (state.project?.channel || state.project?.community?.video?.channel || '').trim().toLowerCase();
+  if (state.project && key === null && channel) {
+    const own = state.profiles.saved.find((p) => (p.channel || '').trim().toLowerCase() === channel);
+    if (own) key = profileKey(own);
+  }
   if (key && !applyProfile(key)) $('profileSel').value = '';
   else if (!key) { $('profileSel').value = ''; syncProfileButtons(); }
 }
@@ -2588,6 +2610,10 @@ function applyProfile(key) {
     state.filter = p.filter || 'nenhum';
     store.set('filter', state.filter);
     applyFilter();
+    if (p.subtitle_look !== undefined) {   // perfis antigos não têm aparência: a atual continua
+      setLook(p.subtitle_look || LOOK_DEFAULT);
+      store.set('subtitleLook', JSON.stringify(subtitleLook()));
+    }
   } finally { state.applyingProfile = false; }
   $('profileSel').value = key;
   if (state.project) store.set('profile.' + state.project.id, key);
@@ -2624,6 +2650,7 @@ $('profileSave').onclick = () => {
     o.filter ? 'filtro ' + (state.filters.find((f) => f.id === o.filter)?.label || o.filter) : null,
     o.normalize_audio ? 'volume normalizado' : null, o.hook ? 'gancho' : null].filter(Boolean).join(' · ');
   $('profileName').value = '';
+  $('profileChannel').value = state.project?.channel || state.project?.community?.video?.channel || '';
   $('profileDialog').showModal();
   $('profileName').focus();
 };
@@ -2634,7 +2661,8 @@ $('profileForm').onsubmit = async (e) => {
   const saved = state.profiles.saved.filter((p) => p.name.toLowerCase() !== name.toLowerCase());
   const replacing = saved.length < state.profiles.saved.length;
   try {
-    const s = await api('/api/settings', 'PUT', {export_profiles: [...saved, {name, ...currentOptions()}]});
+    const s = await api('/api/settings', 'PUT', {export_profiles: [...saved,
+      {name, ...currentOptions(), channel: $('profileChannel').value.trim() || null}]});
     state.profiles.saved = s.export_profiles;
     $('profileDialog').close();
     renderProfiles();
@@ -2906,27 +2934,91 @@ function renderLook() {
   $('subOutlineLabel').textContent = box ? 'Caixa' : 'Contorno';
   $('subLookReset').hidden = lookIsDefault(look);
   renderPosition(look);
+  drawSubPreview();
 }
 // Tela pequena no formato de saída com a faixa da legenda (aproximada; a Prévia mostra o resultado exato).
 function renderPosition(look) {
   const media = state.project?.media, fmt = state.format;
   const ratio = fmt === '9:16' ? 9 / 16 : fmt === '16:9' ? 16 / 9 : fmt === '1:1' ? 1
     : (media?.width && media?.height ? media.width / media.height : 16 / 9);
-  const portrait = ratio < 1 / 1.1, hook = $('hook').checked;
+  const portrait = ratio < 1 / 1.1;
   const w = ratio < 1 ? 128 * ratio : 150, h = ratio < 1 ? 128 : 150 / ratio;
   const screen = $('posScreen'), bar = $('posBar');
   screen.style.width = w.toFixed(1) + 'px';
   screen.style.height = $('subY').style.height = h.toFixed(1) + 'px';
   screen.classList.toggle('portrait', portrait);
-  const at = {auto: portrait ? 0.68 : 0.82, top: portrait ? (hook ? 0.3 : 0.19) : (hook ? 0.45 : 0.14),
-    center: 0.5, bottom: portrait ? 0.78 : 0.86,
-    custom: Math.min(0.92, Math.max(0.08, look.y))}[look.position] ?? 0.68;   // o vídeo não deixa a legenda sair da tela
+  const at = lookAt(look, portrait);
   bar.style.top = (at * 100).toFixed(1) + '%';
   bar.style.height = (portrait ? 7 : 13) + '%';
   bar.style.background = look.color;
   bar.style.boxShadow = '0 0 0 1.5px ' + look.outline;
   bar.classList.toggle('auto', look.position === 'auto');
 }
+// Altura (fração da tela) do meio da legenda em cada posição, aproximada do que o vídeo exportado faz.
+function lookAt(look, portrait) {
+  const hook = $('hook').checked;
+  return {auto: portrait ? 0.68 : 0.82, top: portrait ? (hook ? 0.3 : 0.19) : (hook ? 0.45 : 0.14),
+    center: 0.5, bottom: portrait ? 0.78 : 0.86,
+    custom: Math.min(0.92, Math.max(0.08, look.y))}[look.position] ?? 0.68;   // o vídeo não deixa a legenda sair da tela
+}
+
+// Prévia da legenda no player: as linhas do corte (as mesmas da exportação) desenhadas sobre o vídeo original.
+const subPrev = {key: null, lines: [], line: -1};
+async function loadPreviewWords(c) {
+  const key = state.project.id + ':' + c.id + ':' + c.start + ':' + c.end;
+  if (subPrev.key === key) return;
+  Object.assign(subPrev, {key, lines: [], line: -1});
+  try {
+    const d = await api('/api/projects/' + state.project.id + '/words?start=' + c.start + '&end=' + c.end);
+    if (subPrev.key === key) { subPrev.lines = d.lines || []; drawSubPreview(); }
+  } catch { /* sem prévia: a exportação continua igual */ }
+}
+function drawSubPreview() {
+  const el = $('subPreview'), c = current();
+  if (!($('subPreviewOn').checked && $('subtitles').checked && c && state.project)) { el.hidden = true; return; }
+  loadPreviewWords(c);
+  const t = video.currentTime;
+  const k = subPrev.lines.findIndex((l) => t >= l[0].start - 0.05 && t <= l[l.length - 1].end + 0.35);
+  if (k < 0) { el.hidden = true; subPrev.line = -1; return; }
+  const look = subtitleLook(), animated = $('subtitleStyle').value === 'dinamica';
+  const box = $('videoBox').getBoundingClientRect(), vw = video.videoWidth || 16, vh = video.videoHeight || 9;
+  const scale = Math.min(box.width / vw, box.height / vh), w = vw * scale, h = vh * scale, portrait = h > w * 1.1;
+  el.style.left = (box.width - w) / 2 + 'px';
+  el.style.width = w + 'px';
+  el.style.top = (box.height - h) / 2 + lookAt(look, portrait) * h + 'px';
+  el.style.fontFamily = '"' + look.font + '", Arial, sans-serif';
+  el.style.fontSize = w * (portrait ? 0.078 : 0.05) * {p: 0.85, m: 1, g: 1.18}[look.size] + 'px';
+  el.style.fontWeight = HEAVY_FONTS.includes(look.font) ? '400' : '700';
+  el.style.textTransform = look.case === 'upper' || (look.case === 'auto' && animated) ? 'uppercase' : 'none';
+  const box_ = look.background === 'caixa', bare = look.background === 'nenhum';
+  const px = Math.max(1, Math.round(w / 400));
+  const stroke = [-px, 0, px].flatMap((x) => [-px, 0, px].map((y) => x + 'px ' + y + 'px 0 ' + look.outline)).join(',');
+  el.replaceChildren(...subPrev.lines[k].flatMap((word, i) => {
+    const span = document.createElement('span');
+    span.textContent = word.text;
+    span.style.color = animated && t >= word.start && t < word.end ? look.highlight : look.color;
+    span.style.textShadow = box_ || bare ? 'none' : stroke;
+    span.style.background = box_ ? rgba(look.outline, 0.85) : 'transparent';
+    return i ? [document.createTextNode(' '), span] : [span];
+  }));
+  if (k !== subPrev.line) {
+    subPrev.line = k;
+    el.classList.remove('pop');
+    void el.offsetWidth;   // reinicia a animação de entrada da frase
+    if (animated) el.classList.add('pop');
+  }
+  el.hidden = false;
+}
+$('subPreviewOn').checked = store.get('subPreview') === 'on';
+$('subPreviewOn').addEventListener('change', () => { store.set('subPreview', $('subPreviewOn').checked ? 'on' : 'off'); drawSubPreview(); });
+for (const ev of ['timeupdate', 'seeked', 'loadedmetadata']) video.addEventListener(ev, drawSubPreview);
+video.addEventListener('play', () => {
+  const loop = () => { drawSubPreview(); if (!video.paused) requestAnimationFrame(loop); };
+  loop();
+});
+for (const id of ['subtitles', 'subtitleStyle', 'hook']) $(id).addEventListener('change', drawSubPreview);
+window.addEventListener('resize', drawSubPreview);
+
 function setLook(look) {
   for (const [key, id] of Object.entries(LOOK_INPUTS)) {
     const value = look?.[key], el = $(id);
@@ -3159,6 +3251,11 @@ function renderExports() {
           'data-watch="' + c.id + '" data-format="' + escape(format) + '"><svg class="ic"><use href="#i-eye"/></svg></button>' +
           '<a class="iconbtn" title="Baixar MP4" aria-label="Baixar MP4" href="' + downloadUrl(p.id, c.id, format) +
           '"><svg class="ic"><use href="#i-download"/></svg></a>' +
+          (c.exports[format]?.youtube
+            ? '<a class="iconbtn" title="Abrir no YouTube" aria-label="Abrir no YouTube" target="_blank" rel="noopener" href="' +
+              escape(c.exports[format].youtube.url) + '"><svg class="ic"><use href="#i-external"/></svg></a>'
+            : '<button type="button" class="iconbtn" title="Publicar no YouTube" aria-label="Publicar no YouTube" ' +
+              'data-yt="' + c.id + '" data-format="' + escape(format) + '"><svg class="ic"><use href="#i-upload"/></svg></button>') +
           '<button type="button" class="iconbtn danger" title="Excluir esta exportação" aria-label="Excluir esta exportação" ' +
           'data-delexport="' + c.id + '" data-format="' + escape(format) + '"><svg class="ic"><use href="#i-trash"/></svg></button></span>',
       })).join('') + (done.length > 1 ? '<li class="qrow qbulk"><button type="button" class="btn ghost danger" ' +
@@ -3207,7 +3304,8 @@ async function pollExports() {
   p.jobs = [...jobs, ...(p.jobs || []).filter((j) => j.kind === 'analysis')];
   if (finished.length) {
     setStatus('Exportação concluída', 'ok');
-    toast(finished.length === 1 ? clipLabel(finished[0].clip_id) + ' exportado (' + finished[0].format + ').'
+    toast(finished.length === 1 ? clipLabel(finished[0].clip_id) + (finished[0].kind === 'youtube' ? ' publicado no YouTube ('
+      : ' exportado (') + finished[0].format + ').'
       : finished.length + ' cortes exportados.');
     await refresh();
   } else {
@@ -3234,10 +3332,86 @@ $('exportQueue').addEventListener('click', async (e) => {
     openPreview(downloadUrl(state.project.id, c.id, format), c.exports?.[format], {preview: false});
     return;
   }
+  const yt = e.target.closest('[data-yt]');
+  if (yt) { openYoutube(Number(yt.dataset.yt), yt.dataset.format); return; }
   const del = e.target.closest('[data-delexport], [data-delallexports]');
   if (del) deleteExports(del.dataset.delallexports !== undefined ? null
     : [{clip: Number(del.dataset.delexport), format: del.dataset.format}]);
 });
+
+// ------------------------------------------------------------------ publicar no YouTube
+async function openYoutube(clipId, format) {
+  const p = state.project, c = p?.clips.find((x) => x.id === clipId);
+  if (!c) return;
+  try {
+    const st = await api('/api/youtube/status');
+    if (!st.connected) {
+      toast('Conecte a conta do YouTube em Configurações para publicar.', true);
+      return openSettings();
+    }
+  } catch (e) { return toast(e.message, true); }
+  const rec = c.exports[format] || {};
+  $('ytClip').textContent = clipLabel(c.id) + ' · ' + format + (rec.validation?.duration ? ' · ' + fmt(rec.validation.duration) : '');
+  $('ytVideoTitle').value = (rec.title || c.title || '').slice(0, 100);
+  $('ytDescription').value = (c.description || '').slice(0, 300);
+  $('ytPrivacy').value = 'private';
+  $('ytRightsRow').hidden = !p.rights?.requires_acknowledgement;
+  $('ytRights').checked = false;
+  $('ytForm').dataset.clip = c.id;
+  $('ytForm').dataset.format = format;
+  $('ytDialog').showModal();
+}
+$('ytForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const p = state.project, f = $('ytForm').dataset;
+  if (!$('ytRightsRow').hidden && !$('ytRights').checked) return toast('Confirme que leu os alertas de direitos.', true);
+  $('ytSend').disabled = true;
+  try {
+    const job = await api('/api/projects/' + p.id + '/clips/' + f.clip + '/youtube', 'POST', {
+      format: f.format, title: $('ytVideoTitle').value.trim(), description: $('ytDescription').value,
+      privacy: $('ytPrivacy').value, acknowledge_rights: $('ytRights').checked});
+    $('ytDialog').close();
+    p.jobs = [job, ...(p.jobs || []).filter((j) => j.id !== job.id)];
+    renderExports();
+    toast('Enviando para o YouTube… acompanhe em Exportações.');
+  } catch (err) { toast(err.message, true); } finally { $('ytSend').disabled = false; }
+};
+async function syncYoutubeSettings() {
+  try {
+    const st = await api('/api/youtube/status');
+    $('ytStatus').textContent = st.connected
+      ? 'Conta conectada: envie os cortes exportados pelo botão de envio em Exportações.'
+      : st.configured ? 'Cliente OAuth salvo' + (st.key_hint ? ' (ID termina em …' + st.key_hint + ')' : '') + '. Falta conectar a conta.'
+        : 'Para publicar direto no YouTube, cole o ID e a chave do cliente OAuth e conecte a conta.';
+    $('ytDisconnect').hidden = !st.connected;
+    $('ytConnect').textContent = st.connected ? 'Conectar outra conta' : 'Conectar conta do YouTube';
+  } catch { $('ytStatus').textContent = 'Status do YouTube indisponível.'; }
+}
+async function saveYoutubeKeys() {
+  const id = $('ytClientId').value.trim(), secret = $('ytClientSecret').value.trim();
+  if (id) await api('/api/settings/keys/youtube_id', 'PUT', {key: id});
+  if (secret) await api('/api/settings/keys/youtube_secret', 'PUT', {key: secret});
+  $('ytClientId').value = $('ytClientSecret').value = '';
+}
+$('ytConnect').onclick = async () => {
+  try {
+    await saveYoutubeKeys();
+    const {url} = await api('/api/youtube/connect', 'POST');
+    window.open(url, '_blank', 'noopener');
+    toast('Entre na sua conta na página do Google; depois volte aqui.');
+    const until = Date.now() + 5 * 60 * 1000;
+    const poll = async () => {
+      const st = await api('/api/youtube/status').catch(() => null);
+      if (st?.connected) { syncYoutubeSettings(); return toast('YouTube conectado.'); }
+      if (Date.now() < until) setTimeout(poll, 3000);
+    };
+    setTimeout(poll, 3000);
+  } catch (e) { toast(e.message, true); }
+};
+$('ytDisconnect').onclick = async () => {
+  try { await api('/api/youtube', 'DELETE'); syncYoutubeSettings(); toast('YouTube desconectado.'); }
+  catch (e) { toast(e.message, true); }
+};
 
 // Excluir exportações concluídas (uma ou todas do projeto). As cópias na pasta de saída ficam.
 async function deleteExports(items) {

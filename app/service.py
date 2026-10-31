@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Iterable
 
 from . import (autopilot, chat, community, config, curation, direction, downloads, filters, media, pipeline, publish,
-               reactions, reframe, rights, secrets_store, settings, storage, subtitles, transcription, watcher)
+               reactions, reframe, rights, secrets_store, settings, storage, subtitles, transcription, watcher,
+               youtube)
 from .errors import AppError
 from .jobs import Handler, JobManager
 
@@ -59,6 +60,7 @@ def _startup() -> JobManager:
         'filmcraft': Handler(advanced.run, 1),
         'analysis': Handler(pipeline.run_analysis, config.ANALYSIS_WORKERS, _end_analysis),
         'export': Handler(pipeline.run_export, config.EXPORT_WORKERS, _end_export),
+        'youtube': Handler(youtube.run, 1),
     })
     stale = manager.start()
     watcher.start()
@@ -946,7 +948,43 @@ def set_api_key(name: str, key: str) -> dict:
     secrets_store.put(name, key)
     if name.startswith('twitch'):
         return community.status()
+    if name.startswith('youtube'):
+        return youtube.status()
     return curation.status()[name]
+
+
+def publish_youtube(project_id: str, clip_id: int, fmt: str, title: str, description: str, privacy: str,
+                    acknowledge_rights: bool = False) -> dict:
+    """Põe na fila o envio do corte exportado para o YouTube (``app/youtube.py``)."""
+    if privacy not in youtube.PRIVACY:
+        raise AppError('Visibilidade inválida.', 400, 'bad_input')
+    if not youtube.status()['connected']:
+        raise AppError('Conecte a conta do YouTube em Configurações antes de publicar.', 409, 'youtube_not_connected')
+    p = storage.read_project(project_id)
+    clip = _find_clip(p, clip_id)
+    record = (clip.get('exports') or {}).get(fmt)
+    if not record or not record.get('file'):
+        raise AppError('Exporte o corte neste formato antes de publicar.', 409, 'not_exported')
+    if (p.get('rights') or {}).get('requires_acknowledgement') and not acknowledge_rights:
+        raise AppError('Há riscos relevantes de direitos neste projeto. Confirme que está ciente antes de publicar.',
+                       409, 'rights_ack_required')
+    title = _clean_text(title, 100) or _clean_text(record.get('title') or clip.get('title') or 'Corte', 100)
+    params = {'clip_id': clip_id, 'format': fmt, 'title': title, 'description': _clean_text(description, 4900),
+              'tags': publish.hashtags(clip.get('description') or '', fmt), 'privacy': privacy}
+    params['tags'] = [t.lstrip('#') for t in params['tags']]
+    job, _ = _jobs().submit(project_id, 'youtube', params, dedupe_key=f'youtube:{project_id}:{clip_id}:{fmt}')
+    return public_job(job)
+
+
+def word_lines(project_id: str, start: float, end: float) -> dict:
+    """Linhas da legenda animada de um trecho, com o tempo de cada palavra no vídeo inteiro: a prévia no player
+    mostra a legenda sem exportar (as mesmas linhas que a exportação usa, antes do plano de edição)."""
+    if not (0 <= start < end) or end - start > config.MAX_CLIP_SECONDS:
+        raise AppError('Trecho inválido para a prévia da legenda.', 400, 'bad_input')
+    p = storage.read_project(project_id)
+    lines = subtitles.build_word_lines(p.get('transcript') or [], start, end)
+    return {'lines': [[{**w, 'start': round(w['start'] + start, 3), 'end': round(w['end'] + start, 3)} for w in line]
+                      for line in lines]}
 
 
 def set_chat(project_id: str, raw: bytes, name: str = '') -> dict:
@@ -1280,7 +1318,7 @@ def health() -> dict:
     return {'ok': caps['ffmpeg'] and caps['ffprobe'], 'version': config.VERSION, 'mode': 'local', 'bind': '127.0.0.1',
             'ffmpeg': caps, 'transcription': transcription.available(),
             'whisper_model': config.WHISPER_MODEL if transcription.available() else None,
-            'curation': curation.status(), 'twitch': community.status(),
+            'curation': curation.status(), 'twitch': community.status(), 'youtube': youtube.status(),
             'face_tracking': reframe.available(),
             'automation': {'watch': watcher.status(), 'output_dir': str(config.OUTPUT_DIR),
                            'autopilot_default': settings.load()['autopilot']['enabled']},

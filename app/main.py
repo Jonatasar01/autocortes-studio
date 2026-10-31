@@ -251,6 +251,62 @@ class Reference(BaseModel):
     channel: Optional[str] = Field(default=None, max_length=60)
 
 
+@app.get('/api/youtube/status')
+def youtube_status():
+    from . import youtube
+    return youtube.status()
+
+
+@app.post('/api/youtube/connect')
+def youtube_connect(request: Request):
+    """Endereço da página de login do Google; o navegador abre e o Google volta para /api/youtube/callback."""
+    from . import youtube
+    return {'url': youtube.auth_url(request.headers.get('host', ''))}
+
+
+@app.get('/api/youtube/callback', response_class=HTMLResponse)
+def youtube_callback(state: str = '', code: str = '', error: str = ''):
+    from . import youtube
+    from html import escape
+    try:
+        if error or not code:
+            raise AppError('O login foi cancelado ou recusado no Google.', 400, 'youtube_denied')
+        youtube.finish(state, code)
+        title, text = 'YouTube conectado', 'Pode fechar esta aba e voltar ao AutoCortes.'
+    except AppError as exc:
+        title, text = 'Não foi possível conectar', exc.message
+    return HTMLResponse(f'<!doctype html><meta charset="utf-8"><title>{escape(title)}</title>'
+                        f'<body style="font:16px system-ui;padding:40px;max-width:520px;margin:auto">'
+                        f'<h1 style="font-size:22px">{escape(title)}</h1><p>{escape(text)}</p></body>')
+
+
+@app.delete('/api/youtube')
+def youtube_disconnect():
+    from . import youtube
+    youtube.disconnect()
+    return youtube.status()
+
+
+class YoutubePublish(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    format: str = Field(max_length=10)
+    title: str = Field(default='', max_length=200)
+    description: str = Field(default='', max_length=5000)
+    privacy: Literal['private', 'unlisted', 'public'] = 'private'
+    acknowledge_rights: bool = False
+
+
+@app.post('/api/projects/{project_id}/clips/{clip_id}/youtube')
+def publish_youtube(project_id: str, clip_id: int, body: YoutubePublish):
+    return service.publish_youtube(project_id, clip_id, body.format, body.title, body.description, body.privacy,
+                                   body.acknowledge_rights)
+
+
+@app.get('/api/projects/{project_id}/words')
+def word_lines(project_id: str, start: float, end: float):
+    return service.word_lines(project_id, start, end)
+
+
 @app.put('/api/projects/{project_id}/chat')
 async def set_chat(project_id: str, request: Request):
     """Chat exportado da live como corpo bruto (JSON ou texto do TwitchDownloader); corpo vazio remove."""
@@ -637,12 +693,12 @@ class ApiKey(BaseModel):
 
 
 @app.put('/api/settings/keys/{name}')
-def set_api_key(name: Literal['gemini', 'twitch_id', 'twitch_secret'], body: ApiKey):
+def set_api_key(name: Literal['gemini', 'twitch_id', 'twitch_secret', 'youtube_id', 'youtube_secret'], body: ApiKey):
     return service.set_api_key(name, body.key)
 
 
 @app.delete('/api/settings/keys/{name}')
-def delete_api_key(name: Literal['gemini', 'twitch_id', 'twitch_secret']):
+def delete_api_key(name: Literal['gemini', 'twitch_id', 'twitch_secret', 'youtube_id', 'youtube_secret']):
     return service.set_api_key(name, '')
 
 

@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 
-from . import config, media, rights, storage
+from . import config, media, rights, storage, subtitles
 from .errors import AppError
 
 _lock = threading.RLock()
@@ -62,19 +62,19 @@ def defaults() -> dict:
 BUILTIN_PROFILES = [
     {'id': 'live_jogo', 'name': 'Live de jogo', 'builtin': True, 'format': '9:16', 'framing': 'split',
      'subtitles': True, 'subtitle_style': 'dinamica', 'refine_subtitles': True, 'normalize_audio': True,
-     'hook': True, 'filter': None},
+     'hook': True, 'filter': None, 'subtitle_look': None, 'channel': None},
     {'id': 'irl', 'name': 'IRL / rua', 'builtin': True, 'format': '9:16', 'framing': 'streamer',
      'subtitles': True, 'subtitle_style': 'dinamica', 'refine_subtitles': True, 'normalize_audio': True,
-     'hook': True, 'filter': None},
+     'hook': True, 'filter': None, 'subtitle_look': None, 'channel': None},
     {'id': 'podcast', 'name': 'Podcast / entrevista', 'builtin': True, 'format': '9:16', 'framing': 'track',
      'subtitles': True, 'subtitle_style': 'dinamica', 'refine_subtitles': True, 'normalize_audio': True,
-     'hook': True, 'filter': None},
+     'hook': True, 'filter': None, 'subtitle_look': None, 'channel': None},
     {'id': 'youtube', 'name': 'YouTube horizontal', 'builtin': True, 'format': '16:9', 'framing': 'fit',
      'subtitles': True, 'subtitle_style': 'classica', 'refine_subtitles': True, 'normalize_audio': True,
-     'hook': False, 'filter': None},
+     'hook': False, 'filter': None, 'subtitle_look': None, 'channel': None},
 ]
 PROFILE_FIELDS = ('format', 'framing', 'subtitles', 'subtitle_style', 'refine_subtitles', 'normalize_audio', 'hook',
-                  'filter')
+                  'filter', 'subtitle_look', 'channel')
 MAX_PROFILES = 20
 
 
@@ -100,6 +100,10 @@ def _profiles(raw) -> list[dict]:
                    else None}
         for key in ('subtitles', 'refine_subtitles', 'normalize_audio', 'hook'):
             profile[key] = _bool(item.get(key, False))
+        # Modelo de visual: a aparência da legenda vai junto; com um canal, vale sozinho nos projetos dele.
+        look = item.get('subtitle_look')
+        profile['subtitle_look'] = subtitles.clean_look(look) if isinstance(look, dict) else None
+        profile['channel'] = ' '.join(str(item.get('channel') or '').split())[:60] or None
         out.append(profile)
     return out
 

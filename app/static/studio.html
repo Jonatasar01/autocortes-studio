@@ -207,6 +207,7 @@
         </div>
         <div class="videobox" id="videoBox">
           <video id="video" playsinline preload="metadata"></video>
+          <div id="subPreview" class="subpreview" aria-hidden="true" hidden></div>
           <div id="coverMark" class="covermark" title="Legenda antiga: apagada na exportação" hidden></div>
           <div id="focusLayer" class="focuslayer" hidden>
             <div id="focusArea" class="focusarea" hidden></div>
@@ -380,6 +381,7 @@
                   <input id="subY" class="posrange" type="range" min="0" max="100" step="1" value="50" aria-label="Altura da legenda na tela, de 0 (topo) a 100 (base)">
                 </div>
                 <p class="hint">Arraste na tela pequena para escolher a altura. A faixa escura é onde ficam os botões do app.</p>
+                <label class="switch"><input id="subPreviewOn" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Ver a legenda no player</strong><small>Mostra a legenda sobre o vídeo enquanto ele toca, sem exportar. É aproximada: a Prévia do corte mostra o resultado exato.</small></span></label>
                 <button id="subLookReset" class="btn ghost" type="button" hidden>Voltar ao padrão</button>
               </fieldset>
               <fieldset id="reactBox" class="lookbox">
@@ -680,6 +682,19 @@
     <label class="switch"><input id="prefGpuExport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Exportar pela placa de vídeo</strong><small>Usa a placa NVIDIA, quando houver, para exportar mais rápido com a mesma resolução. Se falhar, usa o processador.</small></span></label>
     <span class="eyebrow spaced">Escolha dos cortes</span>
     <button id="settingsSelection" type="button" class="btn ghost block">Escolha dos cortes com IA</button>
+    <span class="eyebrow spaced">YouTube</span>
+    <p id="ytStatus" class="hint"></p>
+    <div class="keyrow">
+      <label class="field" for="ytClientId">ID do cliente OAuth</label>
+      <input id="ytClientId" type="password" maxlength="200" autocomplete="off" spellcheck="false" placeholder="….apps.googleusercontent.com">
+      <label class="field" for="ytClientSecret">Chave secreta do cliente</label>
+      <input id="ytClientSecret" type="password" maxlength="200" autocomplete="off" spellcheck="false" placeholder="GOCSPX-…">
+      <p class="hint">No Google Cloud: ative a YouTube Data API v3, configure a tela de consentimento (com o seu e-mail como usuário de teste) e crie um cliente OAuth do tipo "App para computador". Ficam guardados só neste computador.</p>
+    </div>
+    <div class="keyinput">
+      <button id="ytConnect" class="btn ghost" type="button">Conectar conta do YouTube</button>
+      <button id="ytDisconnect" class="btn ghost danger" type="button" hidden>Desconectar</button>
+    </div>
     <span class="eyebrow spaced">Pastas</span>
     <dl id="settingsPaths" class="paths"></dl>
     <span class="eyebrow spaced">Recursos deste computador</span>
@@ -830,6 +845,27 @@
   </form>
 </dialog>
 
+<dialog id="ytDialog" class="dialog" aria-labelledby="ytTitle">
+  <header><h2 id="ytTitle">Publicar no YouTube</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <form id="ytForm">
+    <div class="dialogbody selectionbody">
+      <p id="ytClip" class="hint"></p>
+      <label class="field" for="ytVideoTitle">Título</label>
+      <input id="ytVideoTitle" maxlength="100" required autocomplete="off">
+      <label class="field" for="ytDescription">Descrição</label>
+      <textarea id="ytDescription" rows="5" maxlength="4900"></textarea>
+      <label class="field" for="ytPrivacy">Visibilidade</label>
+      <select id="ytPrivacy"><option value="private">Privado</option><option value="unlisted">Não listado</option><option value="public">Público</option></select>
+      <p class="hint">Enquanto o seu projeto no Google Cloud não for verificado pelo Google, todo envio pela API fica privado; depois de subir, mude a visibilidade no YouTube Studio.</p>
+      <label class="switch" id="ytRightsRow" hidden><input id="ytRights" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Li os alertas de direitos deste projeto</strong><small>Publicar com pendências pode gerar reivindicação ou remoção do vídeo.</small></span></label>
+    </div>
+    <footer>
+      <button class="btn ghost" type="button" data-close>Cancelar</button>
+      <button id="ytSend" class="btn primary" type="submit">Enviar para o YouTube</button>
+    </footer>
+  </form>
+</dialog>
+
 <dialog id="profileDialog" class="dialog narrow" aria-labelledby="profileDialogTitle">
   <form id="profileForm" method="dialog">
     <header><h2 id="profileDialogTitle">Salvar perfil de exportação</h2></header>
@@ -837,6 +873,8 @@
       <p id="profileSummary" class="hint"></p>
       <label class="field" for="profileName">Nome do perfil</label>
       <input id="profileName" maxlength="40" autocomplete="off" required placeholder="Ex.: Shorts do canal">
+      <label class="field" for="profileChannel">Usar sozinho nos projetos do canal (opcional)</label>
+      <input id="profileChannel" maxlength="60" autocomplete="off" placeholder="Ex.: coringa">
     </div>
     <footer>
       <button class="btn ghost" type="button" data-close>Cancelar</button>

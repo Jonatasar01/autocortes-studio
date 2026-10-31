@@ -15,7 +15,7 @@ from . import config
 from .errors import AppError
 
 _lock = threading.Lock()
-NAMES = ('gemini', 'twitch_id', 'twitch_secret')
+NAMES = ('gemini', 'twitch_id', 'twitch_secret', 'youtube_id', 'youtube_secret', 'youtube_refresh')
 
 
 def _path():

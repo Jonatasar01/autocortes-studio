@@ -83,5 +83,22 @@ class PreferenceAnalysisTests(ServiceBase):
         spy.assert_called_once_with('Coringa')
 
 
+@unittest.skipUnless(HAS_FFMPEG, 'FFmpeg ausente')
+class WordLinesTests(ServiceBase):
+    def test_subtitle_preview_lines_use_video_time(self):
+        res = self.create(make_video(self.tmp / 'words.mp4', size='320x240', duration=12, fps=25))
+        pid = res['id']
+        with storage.edit_project(pid) as p:
+            p['transcript'] = [{'start': 4.0, 'end': 6.0, 'text': 'olha isso mano',
+                                'words': [{'word': 'olha', 'start': 4.0, 'end': 4.4},
+                                          {'word': 'isso', 'start': 4.5, 'end': 5.0},
+                                          {'word': 'mano', 'start': 5.1, 'end': 5.8}]}]
+        lines = service.word_lines(pid, 3.0, 9.0)['lines']
+        self.assertEqual([(w['text'], w['start']) for w in lines[0]], [('olha', 4.0), ('isso', 4.5), ('mano', 5.1)])
+        from app.errors import AppError
+        with self.assertRaises(AppError):
+            service.word_lines(pid, 5.0, 2.0)
+
+
 if __name__ == '__main__':
     unittest.main()
