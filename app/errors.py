@@ -26,7 +26,8 @@ def sanitize(text: object, limit: int = 600) -> str:
     """Remove caminhos locais e possíveis segredos de mensagens técnicas."""
     value = str(text or '')
     from . import secrets_store   # aqui dentro: secrets_store importa este módulo
-    for secret in [os.getenv(name, '') for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY')] + [secrets_store.get('gemini')]:
+    for secret in [os.getenv(name, '') for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY', 'TWITCH_CLIENT_SECRET')] + \
+            [secrets_store.get('gemini'), secrets_store.get('twitch_secret')]:
         if secret:
             value = value.replace(secret, '***')
     for path in {str(config.DATA_DIR), str(config.ROOT)}:

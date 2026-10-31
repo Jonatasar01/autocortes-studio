@@ -14,8 +14,8 @@ import shutil
 import threading
 import time
 
-from . import (audio_events, config, curation, direction, filters, media, publish, reactions, reframe, rights, selection,
-               settings, storage, subtitles, transcription)
+from . import (audio_events, community, config, curation, direction, filters, media, publish, reactions, reframe,
+               rights, selection, settings, storage, subtitles, transcription)
 from .errors import AppError, Cancelled
 from .jobs import JobContext
 
@@ -78,6 +78,53 @@ def _audio_layer(ctx: JobContext, folder: Path, info: dict, transcript: list[dic
         p['audio_analysis'] = {'state': 'ok', 'version': audio_events.VERSION, 'events': counts,
                                'seconds': round(time.time() - started, 1)}
     return result['index']
+
+
+def _community_layer(ctx: JobContext, folder: Path, source: Path, info: dict, transcript: list[dict],
+                     scenes: list[float], target: int, clips: list[dict]) -> list[dict]:
+    """Clipes do público na Twitch (``app/community.py``) na frente da lista, quando o projeto tem o link da live.
+
+    Opcional e nunca fatal: sem credenciais, sem internet ou sem nenhum clipe encaixado, os cortes ficam como estão.
+    """
+    p = storage.read_project(ctx.project_id)
+    vod = p.get('twitch_vod')
+    if not vod:
+        return clips
+    ctx.stage('clipes_publico', 'Buscando os clipes que o público fez na Twitch')
+    old = p.get('community') or {}
+    previous = {c['id']: c for c in old.get('clips') or []} if old.get('video_id') == vod else {}
+    try:
+        video, found = community.fetch_clips(vod)
+        track = None
+        if info.get('audio_index') is not None and community.aligner_available():
+            ctx.stage('clipes_publico', 'Encaixando os clipes do público no vídeo pelo áudio')
+            track = audio_events.energy_track(source, info, folder / 'cache', cancel_event=ctx.cancel_event)
+        aligned = community.align(found, video, info['duration'], track, previous=previous,
+                                  cancel_event=ctx.cancel_event)
+    except Cancelled:
+        raise
+    except (AppError, media.FFmpegError) as exc:
+        message = exc.message if isinstance(exc, AppError) else 'falha ao ler o áudio do vídeo'
+        with storage.edit_project(ctx.project_id) as p:
+            p['community'] = {**old, 'state': 'failed', 'video_id': vod,
+                              'message': f'Clipes da Twitch não usados: {message}'}
+        ctx.warn(f'Clipes da Twitch não usados: {message}')
+        return clips
+    found_moments = community.moments(aligned)
+    matched = sum(1 for c in aligned if c['start'] is not None)
+    if not found:
+        message = 'Nenhum clipe do público nesta live.'
+    elif not matched:
+        message = (f'{len(found)} clipe(s) na Twitch, mas nenhum foi encontrado neste vídeo'
+                   + ('' if community.aligner_available() else ' (instale o yt-dlp para encaixar pelo áudio)') + '.')
+    else:
+        message = f'{matched} de {len(found)} clipe(s) encontrados no vídeo, em {len(found_moments)} momento(s).'
+    with storage.edit_project(ctx.project_id) as p:
+        p['community'] = {'state': 'ok', 'video_id': vod, 'video': video, 'found': len(found), 'matched': matched,
+                          'moments': len(found_moments), 'message': message, 'clips': aligned}
+    if not found_moments:
+        return clips
+    return community.apply(clips, found_moments, transcript, info['duration'], scenes, target)
 
 
 def run_analysis(ctx: JobContext) -> dict:
@@ -247,6 +294,7 @@ def run_analysis(ctx: JobContext) -> dict:
         ctx.stage('ia_local', 'Refinando com IA local (se disponível)')
         ranker = selection.refine_with_ollama(clips, cancel_event=ctx.cancel_event, on_progress=ctx.span(0.9, 0.99))
 
+    clips = _community_layer(ctx, folder, source, info, transcript, scenes, opts['target_seconds'], clips)
     valid = [c for c in clips if 0 <= c['start'] < c['end'] <= info['duration'] + 0.05 and c['end'] - c['start'] >= 1]
     if not valid:
         raise AppError('Nenhum corte válido pôde ser gerado para este vídeo.', 422, 'no_clips')

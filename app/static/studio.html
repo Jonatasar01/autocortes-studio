@@ -710,6 +710,21 @@
     <label class="switch"><input id="curationAllClips" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Sem limite de cortes</strong><small>Traz todos os trechos aprovados, sem o máximo de 4 por hora. Numa live longa podem vir mais de 100 cortes, e a IA neste computador leva mais tempo.</small></span></label>
     <label class="field" for="curationPrompt">O que procurar (opcional)</label>
     <input id="curationPrompt" type="text" maxlength="300" placeholder="Ex.: momentos engraçados e histórias pessoais">
+    <span class="eyebrow spaced">Clipes do público na Twitch</span>
+    <p class="hint">Os momentos que o público clipou na live entram primeiro na lista, com o título que deram ao clipe. Só o número do vídeo vai à Twitch.</p>
+    <label class="field" for="twitchVod">Link da live deste projeto na Twitch (opcional)</label>
+    <input id="twitchVod" type="url" maxlength="300" autocomplete="off" spellcheck="false" placeholder="https://www.twitch.tv/videos/…">
+    <p id="twitchNote" class="hint" hidden></p>
+    <div class="keyrow">
+      <label class="field" for="twitchId">Client ID da Twitch</label>
+      <input id="twitchId" type="password" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Cole o Client ID">
+      <label class="field" for="twitchSecret">Client Secret da Twitch</label>
+      <div class="keyinput">
+        <input id="twitchSecret" type="password" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Cole o Client Secret">
+        <button id="twitchKeyRemove" class="btn ghost danger" type="button" hidden>Remover</button>
+      </div>
+      <p class="hint">Crie um aplicativo grátis em dev.twitch.tv/console (em URL de redirecionamento, use http://localhost). As duas ficam guardadas só neste computador e são salvas junto com o botão Salvar.</p>
+    </div>
     <p id="reselectNote" class="hint"></p>
   </div>
   <footer>

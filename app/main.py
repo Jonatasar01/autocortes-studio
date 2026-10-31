@@ -245,6 +245,16 @@ def reanalyze(project_id: str):
     return service.reanalyze(project_id)
 
 
+class TwitchVod(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    url: str = Field(default='', max_length=300)
+
+
+@app.put('/api/projects/{project_id}/twitch')
+def set_twitch_vod(project_id: str, body: TwitchVod):
+    return service.set_twitch_vod(project_id, body.url)
+
+
 @app.post('/api/projects/{project_id}/reselect')
 def reselect(project_id: str):
     return service.reselect(project_id)
@@ -614,12 +624,12 @@ class ApiKey(BaseModel):
 
 
 @app.put('/api/settings/keys/{name}')
-def set_api_key(name: Literal['gemini'], body: ApiKey):
+def set_api_key(name: Literal['gemini', 'twitch_id', 'twitch_secret'], body: ApiKey):
     return service.set_api_key(name, body.key)
 
 
 @app.delete('/api/settings/keys/{name}')
-def delete_api_key(name: Literal['gemini']):
+def delete_api_key(name: Literal['gemini', 'twitch_id', 'twitch_secret']):
     return service.set_api_key(name, '')
 
 

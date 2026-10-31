@@ -141,7 +141,7 @@ function setLoading(text, progress = null, steps = '') {
 
 // Andamento da análise: etapa atual, porcentagem, tempo restante estimado e quanto levou cada etapa.
 const STAGE_NAMES = {validando: 'Validação', extraindo_audio: 'Áudio', transcrevendo: 'Transcrição',
-  cenas: 'Cenas', audio_eventos: 'Reações no áudio', selecionando: 'Seleção', ia_local: 'IA neste computador', curadoria_ia: 'Escolha com IA', fila: 'Fila'};
+  cenas: 'Cenas', audio_eventos: 'Reações no áudio', selecionando: 'Seleção', ia_local: 'IA neste computador', curadoria_ia: 'Escolha com IA', clipes_publico: 'Clipes da Twitch', fila: 'Fila'};
 // Faixa da barra geral ocupada pelas etapas com progresso real (as outras são rápidas ou sem medida).
 const STAGE_SPANS = {extraindo_audio: [0.08, 0.14], transcrevendo: [0.14, 0.74], cenas: [0.75, 0.88]};
 const fmtDur = (s) => {
@@ -674,9 +674,10 @@ function renderFeedback(c) {
   $('whyEvidence').innerHTML = (evidence.length ? evidence.map((e) => '<li><b>' + escape(e.tipo) + '</b> · ' +
     escape(e.detalhe || '') + ' <small>(' + escape(e.origem) + ')</small></li>') : (c.reasons || []).map((r) =>
     '<li>' + escape(r) + '</li>')).join('') + ((c.sources || []).length ? '<li><small>Origem: ' +
-    escape(c.sources.join(' + ')) + '</small></li>' : '');
+    escape(c.sources.map((o) => SOURCE_LABELS[o] || o).join(' + ')) + '</small></li>' : '');
   $('whyWarnings').innerHTML = warnings.map((w) => '<li>' + escape(w) + '</li>').join('');
 }
+const SOURCE_LABELS = {ia: 'IA', heuristica: 'heurística', publico: 'clipes do público na Twitch'};
 async function sendFeedback(verdict) {
   const c = current();
   if (!c || !state.project) return;
@@ -1473,6 +1474,7 @@ function clipBadges(c) {
   if (c.feedback?.verdict === 'rejeitado') out.push('👎 Rejeitado');
   out.push(c.selection_mode === 'manual' ? 'Manual' : 'Automático');
   if (c.score != null) out.push('Nota ' + Math.round(c.score));
+  if (c.community) out.push('Clipado ' + c.community.count + '× · ' + c.community.views.toLocaleString('pt-BR') + ' views');
   const exported = Object.keys(c.exports || {});
   if (exported.length) out.push('Exportado ' + exported.join(', '));
   return out;
@@ -1789,6 +1791,10 @@ async function openSelection() {
     $('curationAllClips').checked = !!cur.all_clips;
     $('curationPrompt').value = cur.prompt || '';
     syncCuration();
+    const vod = state.project?.twitch_vod;
+    $('twitchVod').value = vod ? 'https://www.twitch.tv/videos/' + vod : '';
+    $('twitchVod').disabled = !state.project;
+    syncTwitch(health.twitch || {});
     const clips = state.project?.clips || [];
     const exported = clips.filter((c) => Object.keys(c.exports || {}).length).length;
     $('reselectNote').textContent = 'Escolher de novo usa a transcrição salva, sem transcrever outra vez' + (clips.length
@@ -1833,10 +1839,40 @@ $('curationKeyRemove').onclick = async () => {
 };
 $('curationProvider').addEventListener('change', syncCuration);
 
+function syncTwitch(info) {
+  $('twitchId').value = '';
+  $('twitchSecret').value = '';
+  $('twitchKeyRemove').hidden = info.key_source !== 'saved';
+  const last = state.project?.community;
+  const parts = [info.configured
+    ? (info.key_source === 'saved' ? 'Credenciais salvas (Client ID termina em …' + info.key_hint + ').'
+      : 'Credenciais das variáveis TWITCH_CLIENT_ID e TWITCH_CLIENT_SECRET.')
+    : 'Sem credenciais: cole o Client ID e o Client Secret abaixo.'];
+  if (!info.aligner) parts.push('Sem o yt-dlp, o app usa o ponto que a Twitch informa, e só quando este vídeo é a live inteira.');
+  if (last?.message && state.project?.twitch_vod) parts.push('Última busca: ' + last.message);
+  $('twitchNote').textContent = parts.join(' ');
+  $('twitchNote').classList.toggle('warn', !info.configured || last?.state === 'failed');
+  $('twitchNote').hidden = false;
+}
+$('twitchKeyRemove').onclick = async () => {
+  try {
+    await api('/api/settings/keys/twitch_id', 'DELETE');
+    syncTwitch(await api('/api/settings/keys/twitch_secret', 'DELETE'));
+    toast('Credenciais da Twitch removidas.');
+  } catch (e) { toast(e.message, true); }
+};
+
 async function saveCuration() {
   const provider = $('curationProvider').value;
   const key = $('curationKey').value.trim();
   if (key) applyKeyStatus(await api('/api/settings/keys/gemini', 'PUT', {key}));
+  const twitchId = $('twitchId').value.trim(), twitchSecret = $('twitchSecret').value.trim();
+  if (twitchId) await api('/api/settings/keys/twitch_id', 'PUT', {key: twitchId});
+  if (twitchSecret) syncTwitch(await api('/api/settings/keys/twitch_secret', 'PUT', {key: twitchSecret}));
+  if (state.project) {
+    const saved = await api('/api/projects/' + state.project.id + '/twitch', 'PUT', {url: $('twitchVod').value.trim()});
+    state.project.twitch_vod = saved.twitch_vod;
+  }
   await api('/api/settings', 'PUT', {curation: {
     provider, consent: provider === 'gemini' && $('curationConsent').checked,
     prompt: $('curationPrompt').value.trim(),

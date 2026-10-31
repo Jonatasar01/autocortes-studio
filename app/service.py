@@ -16,8 +16,8 @@ import unicodedata
 from pathlib import Path
 from typing import Iterable
 
-from . import (autopilot, config, curation, direction, downloads, filters, media, pipeline, publish, reactions, reframe,
-               rights, secrets_store, settings, storage, subtitles, transcription, watcher)
+from . import (autopilot, community, config, curation, direction, downloads, filters, media, pipeline, publish,
+               reactions, reframe, rights, secrets_store, settings, storage, subtitles, transcription, watcher)
 from .errors import AppError
 from .jobs import Handler, JobManager
 
@@ -350,6 +350,8 @@ def get_project(project_id: str, *, include_transcript: bool = False) -> dict:
     p.pop('filename', None)
     segments = p.get('transcript') or []
     p['transcript_segments'] = len(segments)
+    if p.get('community'):   # a lista de clipes da Twitch (até mil) fica no servidor; a tela só mostra o resumo
+        p['community'] = {k: v for k, v in p['community'].items() if k != 'clips'}
     if not include_transcript:
         p.pop('transcript', None)
     jobs = _jobs().for_project(project_id, limit=60)
@@ -939,7 +941,19 @@ def update_settings(changes: dict) -> dict:
 def set_api_key(name: str, key: str) -> dict:
     """Salva (ou, vazia, remove) a chave colada na tela; devolve o status da curadoria, nunca a chave."""
     secrets_store.put(name, key)
+    if name.startswith('twitch'):
+        return community.status()
     return curation.status()[name]
+
+
+def set_twitch_vod(project_id: str, url: str) -> dict:
+    """Guarda (ou, vazio, remove) o link da live na Twitch; vale na próxima escolha dos cortes."""
+    vod = community.parse_vod(url)
+    with storage.edit_project(project_id) as p:
+        p['twitch_vod'] = vod
+        if not vod:
+            p.pop('community', None)
+    return {'twitch_vod': vod}
 
 
 def autopilot_resume(project_id: str, acknowledge: bool) -> dict:
@@ -1241,7 +1255,7 @@ def health() -> dict:
     return {'ok': caps['ffmpeg'] and caps['ffprobe'], 'version': config.VERSION, 'mode': 'local', 'bind': '127.0.0.1',
             'ffmpeg': caps, 'transcription': transcription.available(),
             'whisper_model': config.WHISPER_MODEL if transcription.available() else None,
-            'curation': curation.status(),
+            'curation': curation.status(), 'twitch': community.status(),
             'face_tracking': reframe.available(),
             'automation': {'watch': watcher.status(), 'output_dir': str(config.OUTPUT_DIR),
                            'autopilot_default': settings.load()['autopilot']['enabled']},
