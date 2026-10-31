@@ -269,6 +269,19 @@ Branch: `feature/motor-fase2` (a partir de `feature/motor-analise`).
 Reproduzir: `python scripts/avaliar_selecao.py 7c572ac2990d413ba8a509ea296f362e 4a8838bed3274c46bfc0f9e76425cbbe`
 (com `AUTOCORTES_SELECTION_ENGINE=v2` para o v2).
 
+### Nova medição (31/10/2026): cortes exportados ou aprovados nas lives do usuário
+
+Referência: os 13 cortes que o usuário exportou ou marcou com 👍 em 5 lives (3,5 h a 11 h), modo automático.
+
+| Motor | Recuperados (de 13) | Duração média | Duplicados |
+|---|---|---|---|
+| v1 | 4 | 34–46 s | 0 |
+| v2 | 6 | 53–59 s | 0 |
+
+Somada à referência de 18 cortes acima, o v1 recupera 13 de 31 e o v2 cerca de 12, com o v1 melhor no topo da
+lista (R@30 0,50 × 0,28–0,33). **O v1 continua o padrão.** O aprendizado com o 👍/👎 (`app/preference.py`) passa a
+ajustar a nota dos dois motores conforme as avaliações se acumulam.
+
 ### Conclusão
 - O ganho comprovado é de **quantidade e organização**: 5 vezes menos cortes para revisar, sem perder os bons do
   topo, e a curadoria por IA deixa de apagar a heurística.
