@@ -14,8 +14,8 @@ import shutil
 import threading
 import time
 
-from . import (audio_events, community, config, curation, direction, filters, media, preference, publish, reactions,
-               reframe, rights, selection, settings, storage, subtitles, transcription)
+from . import (audio_events, chat, community, config, curation, direction, filters, media, preference, publish,
+               reactions, reframe, rights, selection, settings, storage, subtitles, transcription)
 from .errors import AppError, Cancelled
 from .jobs import JobContext
 
@@ -80,16 +80,16 @@ def _audio_layer(ctx: JobContext, folder: Path, info: dict, transcript: list[dic
     return result['index']
 
 
-def _community_layer(ctx: JobContext, folder: Path, source: Path, info: dict, transcript: list[dict],
-                     scenes: list[float], target: int, clips: list[dict]) -> list[dict]:
-    """Clipes do público na Twitch (``app/community.py``) na frente da lista, quando o projeto tem o link da live.
+def _twitch_moments(ctx: JobContext, folder: Path, source: Path, info: dict) -> tuple[list[dict], float | None]:
+    """Momentos clipados pelo público na Twitch (``app/community.py``) e o deslocamento entre a live e o vídeo do
+    projeto (segundos a somar a um tempo da live), quando os clipes encaixados pelo áudio permitem medir.
 
-    Opcional e nunca fatal: sem credenciais, sem internet ou sem nenhum clipe encaixado, os cortes ficam como estão.
+    Opcional e nunca fatal: sem credenciais, sem internet ou sem nenhum clipe encaixado, nada muda nos cortes.
     """
     p = storage.read_project(ctx.project_id)
     vod = p.get('twitch_vod')
     if not vod:
-        return clips
+        return [], None
     ctx.stage('clipes_publico', 'Buscando os clipes que o público fez na Twitch')
     old = p.get('community') or {}
     previous = {c['id']: c for c in old.get('clips') or []} if old.get('video_id') == vod else {}
@@ -109,7 +109,7 @@ def _community_layer(ctx: JobContext, folder: Path, source: Path, info: dict, tr
             p['community'] = {**old, 'state': 'failed', 'video_id': vod,
                               'message': f'Clipes da Twitch não usados: {message}'}
         ctx.warn(f'Clipes da Twitch não usados: {message}')
-        return clips
+        return [], None
     found_moments = community.moments(aligned)
     matched = sum(1 for c in aligned if c['start'] is not None)
     if not found:
@@ -122,9 +122,52 @@ def _community_layer(ctx: JobContext, folder: Path, source: Path, info: dict, tr
     with storage.edit_project(ctx.project_id) as p:
         p['community'] = {'state': 'ok', 'video_id': vod, 'video': video, 'found': len(found), 'matched': matched,
                           'moments': len(found_moments), 'message': message, 'clips': aligned}
-    if not found_moments:
+    shifts = sorted(c['start'] - c['offset'] for c in aligned if c['method'] == 'audio' and c['offset'] is not None)
+    if shifts:
+        return found_moments, shifts[len(shifts) // 2]
+    full = abs(info['duration'] - video['duration']) <= max(30.0, 0.01 * video['duration'])
+    return found_moments, 0.0 if full else None
+
+
+def _chat_moments(ctx: JobContext, folder: Path, info: dict, shift: float | None) -> list[dict]:
+    """Picos do chat importado (``app/chat.py``) no tempo do vídeo do projeto."""
+    p = storage.read_project(ctx.project_id)
+    if not p.get('chat') or not (folder / chat.FILE).is_file():
+        return []
+    ctx.stage('chat', 'Procurando picos no chat da live')
+    try:
+        messages = chat.expand(json.loads((folder / chat.FILE).read_text(encoding='utf-8')))
+    except (OSError, ValueError):
+        ctx.warn('Arquivo do chat ilegível; importe o chat de novo.')
+        return []
+    last = messages[-1][0] if messages else 0.0
+    if shift is None:   # sem clipes encaixados: o chat só vale se couber no vídeo (vídeo = live inteira)
+        shift = 0.0 if last <= info['duration'] + 60 else None
+    found = []
+    if shift is not None:
+        for m in chat.peaks(messages):
+            start, end = m['start'] + shift, m['end'] + shift
+            if end > 0 and start < info['duration']:
+                found.append({**m, 'kind': 'chat', 'start': round(max(0.0, start), 2),
+                              'end': round(min(info['duration'], end), 2)})
+        message = f'{len(found)} pico(s) no chat ({len(messages)} mensagens).'
+    else:
+        message = ('O chat é de uma live mais longa que este vídeo; informe o link da live na Twitch para o app '
+                   'encontrar onde o vídeo começa.')
+        ctx.warn(message)
+    with storage.edit_project(ctx.project_id) as p:
+        p['chat'] = {**(p.get('chat') or {}), 'peaks': len(found), 'message': message}
+    return found
+
+
+def _reference_layer(ctx: JobContext, folder: Path, source: Path, info: dict, transcript: list[dict],
+                     scenes: list[float], target: int, clips: list[dict]) -> list[dict]:
+    """Momentos clipados pelo público e picos do chat na frente da lista (``community.apply``)."""
+    clip_moments, shift = _twitch_moments(ctx, folder, source, info)
+    chat_moments = _chat_moments(ctx, folder, info, shift)
+    if not (clip_moments or chat_moments):
         return clips
-    return community.apply(clips, found_moments, transcript, info['duration'], scenes, target)
+    return community.apply(clips, clip_moments + chat_moments, transcript, info['duration'], scenes, target)
 
 
 def run_analysis(ctx: JobContext) -> dict:
@@ -300,7 +343,7 @@ def run_analysis(ctx: JobContext) -> dict:
         ctx.stage('ia_local', 'Refinando com IA local (se disponível)')
         ranker = selection.refine_with_ollama(clips, cancel_event=ctx.cancel_event, on_progress=ctx.span(0.9, 0.99))
 
-    clips = _community_layer(ctx, folder, source, info, transcript, scenes, opts['target_seconds'], clips)
+    clips = _reference_layer(ctx, folder, source, info, transcript, scenes, opts['target_seconds'], clips)
     valid = [c for c in clips if 0 <= c['start'] < c['end'] <= info['duration'] + 0.05 and c['end'] - c['start'] >= 1]
     if not valid:
         raise AppError('Nenhum corte válido pôde ser gerado para este vídeo.', 422, 'no_clips')

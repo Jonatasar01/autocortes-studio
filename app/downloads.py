@@ -1,4 +1,7 @@
-"""Importação opcional de vídeos públicos YouTube em processo cancelável."""
+"""Importação opcional de vídeos públicos do YouTube e de lives gravadas da Twitch em processo cancelável.
+
+Uma live da Twitch importada já fica com o link no projeto: os clipes do público entram na escolha dos cortes.
+"""
 import importlib.util
 import json
 import os
@@ -15,6 +18,10 @@ from urllib.parse import urlsplit, parse_qs
 from . import config, storage
 from .errors import AppError, sanitize
 
+TIMEOUT = 1800               # YouTube: 30 min
+TWITCH_TIMEOUT = 8 * 3600    # uma live gravada tem horas e vários GB
+TWITCH_RE = re.compile(r'/videos/(\d{5,15})/?')
+
 
 def available():
     return importlib.util.find_spec('yt_dlp') is not None
@@ -28,6 +35,11 @@ def canonical_url(value):
         host = (u.hostname or '').lower()
         if host == 'youtu.be':
             vid = u.path.strip('/')
+        elif host in {'twitch.tv', 'www.twitch.tv', 'm.twitch.tv'}:
+            m = TWITCH_RE.fullmatch(u.path)
+            if not m:
+                raise ValueError()
+            return 'https://www.twitch.tv/videos/' + m.group(1)
         elif host in {'youtube.com', 'www.youtube.com', 'm.youtube.com'}:
             parts = u.path.strip('/').split('/')
             vid = parse_qs(u.query).get('v', [''])[0] if u.path == '/watch' else (
@@ -37,7 +49,8 @@ def canonical_url(value):
         if not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid):
             raise ValueError()
     except (ValueError, AttributeError):
-        raise AppError('Use o link HTTPS de um vídeo público do YouTube ou Shorts, não de uma playlist.',
+        raise AppError('Use o link HTTPS de um vídeo público do YouTube ou Shorts, ou de uma live gravada da Twitch '
+                       '(twitch.tv/videos/…), não de uma playlist, canal ou clipe.',
                        400, 'bad_video_url') from None
     return 'https://www.youtube.com/watch?v=' + vid
 
@@ -46,11 +59,14 @@ def download(url, folder, ctx):
     if not available():
         raise AppError('Importação por link não instalada. Instale o extra links com uv.', 400, 'download_missing')
     url = canonical_url(url)
+    twitch = 'twitch.tv/videos/' in url
+    fmt = 'b[height<=1080]/b' if twitch else 'bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4][height<=1080]'
     args = [sys.executable, '-m', 'yt_dlp', '--ignore-config', '--no-playlist', '--no-cache-dir',
             '--socket-timeout', '20', '--retries', '2', '--fragment-retries', '2', '--no-warnings',
             '--max-filesize', str(config.MAX_UPLOAD_BYTES),
             '--match-filters', f'!is_live & duration <= {config.MAX_SOURCE_SECONDS}',
-            '--format', 'bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4][height<=1080]',
+            '--format', fmt,
+            '--concurrent-fragments', '8' if twitch else '1',
             '--merge-output-format', 'mp4', '--write-info-json', '--no-progress',
             '--output', str(folder/'video.%(ext)s'), '--', url]
     if shutil.which('node'):
@@ -63,8 +79,9 @@ def download(url, folder, ctx):
         try:
             while process.poll() is None:
                 ctx.check_cancel()
-                if time.monotonic()-start > 1800:
-                    raise AppError('Download excedeu 30 minutos. Tente novamente ou envie o arquivo.', 504, 'download_timeout')
+                if time.monotonic()-start > (TWITCH_TIMEOUT if twitch else TIMEOUT):
+                    raise AppError('Download excedeu o tempo limite. Tente novamente ou envie o arquivo.', 504,
+                                   'download_timeout')
                 size = sum(p.stat().st_size for p in folder.iterdir() if p.is_file())
                 if size > config.MAX_UPLOAD_BYTES*2 + 16*1024**2:
                     raise AppError('Download maior que o limite permitido.', 413, 'too_big')
@@ -94,13 +111,17 @@ def download(url, folder, ctx):
         raise AppError('Nenhum vídeo compatível foi recebido dentro do limite.', 422, 'download_empty')
     info_file = folder/'video.info.json'
     info = json.loads(info_file.read_text(encoding='utf-8')) if info_file.is_file() else {}
-    return video, {'url': url, 'title': sanitize(info.get('title') or 'Vídeo importado', 110),
-                   'uploader': sanitize(info.get('uploader') or '', 100), 'imported_at': time.time()}
+    provenance = {'url': url, 'title': sanitize(info.get('title') or 'Vídeo importado', 110),
+                  'uploader': sanitize(info.get('uploader') or '', 100), 'imported_at': time.time()}
+    if twitch:
+        provenance['twitch_vod'] = url.rsplit('/', 1)[1]
+    return video, provenance
 
 
 def run(ctx):
     from . import service
-    ctx.stage('download', 'Importando vídeo público do YouTube')
+    twitch = 'twitch.tv/videos/' in str(ctx.params.get('url'))
+    ctx.stage('download', 'Importando a live gravada da Twitch' if twitch else 'Importando vídeo público do YouTube')
     root = storage.data_dir()/'imports'
     root.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=ctx.id+'-', dir=root) as temp:
@@ -108,7 +129,8 @@ def run(ctx):
         ctx.stage('validando', 'Validando o vídeo baixado e iniciando a análise')
         ctx.progress(0.85)
         with video.open('rb') as source:
-            upload = service.Upload(provenance['title']+'.mp4', ctx.params['form'], video.stat().st_size, origin='youtube')
+            upload = service.Upload(provenance['title']+'.mp4', ctx.params['form'], video.stat().st_size,
+                                    origin='twitch' if twitch else 'youtube')
             upload.automation_snapshot = ctx.params.get('automation_snapshot')
             upload.curation_snapshot = ctx.params.get('curation_snapshot')
             upload.provenance = provenance

@@ -16,7 +16,7 @@ import unicodedata
 from pathlib import Path
 from typing import Iterable
 
-from . import (autopilot, community, config, curation, direction, downloads, filters, media, pipeline, publish,
+from . import (autopilot, chat, community, config, curation, direction, downloads, filters, media, pipeline, publish,
                reactions, reframe, rights, secrets_store, settings, storage, subtitles, transcription, watcher)
 from .errors import AppError
 from .jobs import Handler, JobManager
@@ -224,6 +224,9 @@ class Upload:
                        'clips': [], 'transcript': [], **options,
                        'autopilot': self.automation_snapshot, 'curation_profile': self.curation_snapshot,
                        'provenance': self.provenance}
+            if (self.provenance or {}).get('twitch_vod'):   # live importada da Twitch: clipes do público já valem
+                project.update(twitch_vod=self.provenance['twitch_vod'],
+                               channel=self.provenance.get('uploader') or None)
             if self.editing_mode == 'manual':
                 project.update({
                     'status': 'ready', 'editing_mode': 'manual', 'ready_at': time.time(),
@@ -944,6 +947,24 @@ def set_api_key(name: str, key: str) -> dict:
     if name.startswith('twitch'):
         return community.status()
     return curation.status()[name]
+
+
+def set_chat(project_id: str, raw: bytes, name: str = '') -> dict:
+    """Importa o chat exportado da live (``app/chat.py``); vale na próxima escolha dos cortes. Vazio remove."""
+    folder = storage.project_dir(project_id)
+    if not raw:
+        with storage.edit_project(project_id) as p:
+            p.pop('chat', None)
+        with contextlib.suppress(OSError):
+            (folder / chat.FILE).unlink()
+        return {'chat': None}
+    messages = chat.parse(raw)
+    with storage.edit_project(project_id) as p:
+        storage._write_atomic(folder / chat.FILE, json.dumps(chat.compact(messages)))
+        p['chat'] = {'messages': len(messages), 'name': _clean_text(name, 120), 'imported_at': time.time(),
+                     'peaks': None, 'message': f'{len(messages)} mensagens importadas; os picos entram na próxima '
+                     'escolha dos cortes.'}
+        return {'chat': p['chat']}
 
 
 def set_reference(project_id: str, twitch_url: str | None = None, channel: str | None = None) -> dict:

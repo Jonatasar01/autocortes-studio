@@ -316,6 +316,10 @@ def _views(n: int) -> str:
 
 
 def _evidence(m: dict) -> tuple[dict, str]:
+    if m.get('kind') == 'chat':
+        detail = f"pico no chat: {m['messages']} mensagens, {str(m['ratio']).replace('.', ',')}× o normal"
+        return {'tipo': 'pico no chat', 'inicio': m['start'], 'fim': m['end'], 'valor': m['messages'],
+                'confianca': 'media', 'origem': 'chat', 'detalhe': detail}, detail
     detail = (f"{m['count']} clipe(s) do público na Twitch, {_views(m['views'])} visualizações"
               + ('' if m['method'] == 'audio' else ' (ponto informado pela Twitch)'))
     return {'tipo': 'clipe do público', 'inicio': m['start'], 'fim': m['end'], 'valor': m['views'],
@@ -324,9 +328,9 @@ def _evidence(m: dict) -> tuple[dict, str]:
 
 def apply(clips: list[dict], found: list[dict], segments: list[dict], duration: float,
           scenes: list[float] | None, target: int) -> list[dict]:
-    """Põe os momentos clipados pelo público na frente da lista de cortes.
+    """Põe os momentos clipados pelo público (e os picos do chat, ``kind`` "chat") na frente da lista de cortes.
 
-    Um corte que já contém o momento ganha a origem "publico" e a evidência; um momento que nenhum corte cobre
+    Um corte que já contém o momento ganha a origem ("publico" ou "chat") e a evidência; um momento que nenhum corte cobre
     vira um corte novo, do começo da frase em que o clipe começa até o fim da frase em que ele termina. Os
     demais cortes seguem depois, na ordem em que estavam; nenhum sai da lista.
     """
@@ -335,13 +339,15 @@ def apply(clips: list[dict], found: list[dict], segments: list[dict], duration: 
     for m in found:
         length = max(0.1, m['end'] - m['start'])
         evidence, detail = _evidence(m)
-        info = {k: m[k] for k in ('views', 'count', 'title', 'method')}
+        chat = m.get('kind') == 'chat'
+        field, source = ('chat_peak', 'chat') if chat else ('community', 'publico')
+        info = {k: m[k] for k in (('messages', 'ratio') if chat else ('views', 'count', 'title', 'method'))}
         twin = next((c for c in backed + rest
                      if max(0.0, min(c['end'], m['end']) - max(c['start'], m['start'])) / length >= COVER), None)
         if twin is not None:
-            if twin.get('community'):
-                continue   # dois momentos no mesmo corte: vale o mais visto, já aplicado
-            twin.update(community=info, sources=sorted(set(twin.get('sources') or []) | {'publico'}),
+            if twin.get(field):
+                continue   # dois momentos no mesmo corte: vale o mais forte, já aplicado
+            twin.update({field: info}, sources=sorted(set(twin.get('sources') or []) | {source}),
                         evidence=(twin.get('evidence') or []) + [evidence],
                         reasons=[detail[:1].upper() + detail[1:]] + list(twin.get('reasons') or []))
             if twin in rest:
@@ -360,9 +366,10 @@ def apply(clips: list[dict], found: list[dict], segments: list[dict], duration: 
         score = selection.score_clip(segments, start, end, scenes or []) if inside else None
         backed.append({'start': round(start, 2), 'end': round(end, 2), 'score': score, 'score_breakdown': None,
                        'confidence': evidence['confianca'], 'evidence': [evidence], 'warnings': [],
-                       'sources': ['publico'], 'reasons': [detail[:1].upper() + detail[1:]],
-                       'selection_mode': 'publico', 'community': info,
-                       'title': m['title'] or selection._title_from_text(text) or 'Momento clipado pelo público',
+                       'sources': [source], 'reasons': [detail[:1].upper() + detail[1:]],
+                       'selection_mode': source, field: info,
+                       'title': (m.get('title') or selection._title_from_text(text)
+                                 or ('Pico no chat' if chat else 'Momento clipado pelo público')),
                        'description': text[:600] + ('…' if len(text) > 600 else '')})
     merged = backed + rest
     for idx, clip in enumerate(merged, 1):

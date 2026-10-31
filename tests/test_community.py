@@ -224,6 +224,18 @@ class CommunityAnalysisTests(ServiceBase):
         service.set_reference(pid, '')
         self.assertNotIn('community', storage.read_project(pid))
 
+    def test_imported_twitch_live_keeps_the_link_and_channel(self):
+        from tests.test_service import OWNED
+        video = make_video(self.tmp / 'importada.mp4', size='320x240', duration=8, fps=25)
+        upload = service.Upload('Live.mp4', dict(OWNED), video.stat().st_size, origin='twitch')
+        upload.provenance = {'url': 'https://www.twitch.tv/videos/2277000111', 'title': 'Live', 'uploader': 'Coringa',
+                             'twitch_vod': '2277000111'}
+        upload.write(video.read_bytes())
+        res = upload.finish()
+        service.manager.wait(res['job']['id'], 180)
+        p = storage.read_project(res['id'])
+        self.assertEqual((p['twitch_vod'], p['channel'], p['origin']), ('2277000111', 'Coringa', 'twitch'))
+
     def test_bad_link(self):
         res = self.create(make_video(self.tmp / 'live2.mp4', size='320x240', duration=12, fps=25))
         with self.assertRaises(AppError):

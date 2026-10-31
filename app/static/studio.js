@@ -141,7 +141,7 @@ function setLoading(text, progress = null, steps = '') {
 
 // Andamento da análise: etapa atual, porcentagem, tempo restante estimado e quanto levou cada etapa.
 const STAGE_NAMES = {validando: 'Validação', extraindo_audio: 'Áudio', transcrevendo: 'Transcrição',
-  cenas: 'Cenas', audio_eventos: 'Reações no áudio', selecionando: 'Seleção', ia_local: 'IA neste computador', curadoria_ia: 'Escolha com IA', clipes_publico: 'Clipes da Twitch', fila: 'Fila'};
+  cenas: 'Cenas', audio_eventos: 'Reações no áudio', selecionando: 'Seleção', ia_local: 'IA neste computador', curadoria_ia: 'Escolha com IA', clipes_publico: 'Clipes da Twitch', chat: 'Chat da live', fila: 'Fila'};
 // Faixa da barra geral ocupada pelas etapas com progresso real (as outras são rápidas ou sem medida).
 const STAGE_SPANS = {extraindo_audio: [0.08, 0.14], transcrevendo: [0.14, 0.74], cenas: [0.75, 0.88]};
 const fmtDur = (s) => {
@@ -677,7 +677,7 @@ function renderFeedback(c) {
     escape(c.sources.map((o) => SOURCE_LABELS[o] || o).join(' + ')) + '</small></li>' : '');
   $('whyWarnings').innerHTML = warnings.map((w) => '<li>' + escape(w) + '</li>').join('');
 }
-const SOURCE_LABELS = {ia: 'IA', heuristica: 'heurística', publico: 'clipes do público na Twitch'};
+const SOURCE_LABELS = {ia: 'IA', heuristica: 'heurística', publico: 'clipes do público na Twitch', chat: 'pico no chat'};
 async function sendFeedback(verdict) {
   const c = current();
   if (!c || !state.project) return;
@@ -1474,6 +1474,7 @@ function clipBadges(c) {
   if (c.feedback?.verdict === 'rejeitado') out.push('👎 Rejeitado');
   out.push(c.selection_mode === 'manual' ? 'Manual' : 'Automático');
   if (c.score != null) out.push('Nota ' + Math.round(c.score));
+  if (c.chat_peak) out.push('Pico no chat');
   if (c.community) out.push('Clipado ' + c.community.count + '× · ' + c.community.views.toLocaleString('pt-BR') + ' views');
   const exported = Object.keys(c.exports || {});
   if (exported.length) out.push('Exportado ' + exported.join(', '));
@@ -1802,6 +1803,7 @@ async function openSelection() {
       : 'Ainda não há avaliações suficientes: são precisos pelo menos 3 👍 e 3 👎.';
     $('preferenceNote').hidden = !state.project;
     syncTwitch(health.twitch || {});
+    syncChat();
     const clips = state.project?.clips || [];
     const exported = clips.filter((c) => Object.keys(c.exports || {}).length).length;
     $('reselectNote').textContent = 'Escolher de novo usa a transcrição salva, sem transcrever outra vez' + (clips.length
@@ -1861,6 +1863,37 @@ function syncTwitch(info) {
   $('twitchNote').classList.toggle('warn', !info.configured || last?.state === 'failed');
   $('twitchNote').hidden = false;
 }
+function syncChat() {
+  const c = state.project?.chat;
+  $('chatFile').value = '';
+  $('chatFile').disabled = !state.project;
+  $('chatRemove').hidden = !c;
+  if (c) $('chatNote').textContent = 'Chat importado' + (c.name ? ' (' + c.name + ')' : '') + ': ' + c.message;
+}
+$('chatFile').addEventListener('change', async () => {
+  const f = $('chatFile').files[0], p = state.project;
+  if (!f || !p) return;
+  try {
+    const r = await fetch('/api/projects/' + p.id + '/chat', {method: 'PUT', body: f,
+      headers: {...authHeaders(), ...CSRF, 'X-Filename': encodeURIComponent(f.name)}});
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw Error(data.message || 'Não foi possível importar o chat.');
+    p.chat = data.chat;
+    toast('Chat importado: ' + data.chat.messages.toLocaleString('pt-BR') + ' mensagens.');
+  } catch (e) { toast(e.message, true); }
+  syncChat();
+});
+$('chatRemove').onclick = async () => {
+  const p = state.project;
+  if (!p) return;
+  try {
+    const r = await fetch('/api/projects/' + p.id + '/chat', {method: 'PUT', headers: {...authHeaders(), ...CSRF}});
+    if (!r.ok) throw Error('Não foi possível remover o chat.');
+    p.chat = null;
+    syncChat();
+    toast('Chat removido do projeto.');
+  } catch (e) { toast(e.message, true); }
+};
 $('twitchKeyRemove').onclick = async () => {
   try {
     await api('/api/settings/keys/twitch_id', 'DELETE');

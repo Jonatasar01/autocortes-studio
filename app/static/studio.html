@@ -583,7 +583,7 @@
             </div>
             <div id="urlWrap" hidden>
               <label class="field" for="videoUrl">Link do vídeo (público e com permissão de uso)</label>
-              <input id="videoUrl" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…">
+              <input id="videoUrl" type="url" inputmode="url" placeholder="Link do YouTube ou da live gravada na Twitch (twitch.tv/videos/…)">
             </div>
 
             <div id="fileInfo" class="fileinfo" hidden aria-live="polite"></div>
@@ -730,6 +730,13 @@
       </div>
       <p class="hint">Crie um aplicativo grátis em dev.twitch.tv/console (em URL de redirecionamento, use http://localhost). As duas ficam guardadas só neste computador e são salvas junto com o botão Salvar.</p>
     </div>
+    <span class="eyebrow spaced">Picos no chat da live</span>
+    <label class="field" for="chatFile">Arquivo do chat (opcional)</label>
+    <div class="keyinput">
+      <input id="chatFile" type="file" accept=".json,.txt,application/json,text/plain">
+      <button id="chatRemove" class="btn ghost danger" type="button" hidden>Remover chat</button>
+    </div>
+    <p id="chatNote" class="hint">Exporte o chat da live com o TwitchDownloader (JSON ou texto com o tempo da live) e escolha o arquivo. Rajadas de mensagens e de risadas viram cortes. Só os horários das mensagens ficam guardados, nunca o texto.</p>
     <p id="reselectNote" class="hint"></p>
   </div>
   <footer>

@@ -16,6 +16,15 @@ class AutomationHubTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(AppError):
                 downloads.canonical_url(url)
 
+    def test_twitch_vod_urls(self):
+        for url in ['https://www.twitch.tv/videos/2277000111', 'https://m.twitch.tv/videos/2277000111/?t=1h',
+                    'https://twitch.tv/videos/2277000111']:
+            self.assertEqual(downloads.canonical_url(url), 'https://www.twitch.tv/videos/2277000111')
+        for url in ['https://www.twitch.tv/coringa', 'https://clips.twitch.tv/AbcDef', 'http://www.twitch.tv/videos/2277000111',
+                    'https://www.twitch.tv/videos/abc', 'https://twitch.tv.evil.example/videos/2277000111']:
+            with self.subTest(url=url), self.assertRaises(AppError):
+                downloads.canonical_url(url)
+
     def test_preset_preserves_consent_and_rights(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(config, 'DATA_DIR', Path(tmp)):
             original = settings.load()

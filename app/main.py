@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 from starlette.background import BackgroundTask
 
-from . import config, dashboard, filters, service, subtitles, textfit, timeline
+from . import chat, config, dashboard, filters, service, subtitles, textfit, timeline
 from .config import ROOT  # noqa: F401  (compatibilidade)
 from .errors import AppError
 from .security import LocalSecurityMiddleware
@@ -249,6 +249,18 @@ class Reference(BaseModel):
     model_config = ConfigDict(extra='forbid')
     twitch_url: Optional[str] = Field(default=None, max_length=300)
     channel: Optional[str] = Field(default=None, max_length=60)
+
+
+@app.put('/api/projects/{project_id}/chat')
+async def set_chat(project_id: str, request: Request):
+    """Chat exportado da live como corpo bruto (JSON ou texto do TwitchDownloader); corpo vazio remove."""
+    buffer = bytearray()
+    async for chunk in request.stream():
+        buffer += chunk
+        if len(buffer) > chat.MAX_BYTES:
+            raise AppError('Arquivo do chat grande demais (máximo de 300 MB).', 413, 'chat_too_big')
+    name = unquote(request.headers.get('x-filename', ''))
+    return await run_in_threadpool(service.set_chat, project_id, bytes(buffer), name)
 
 
 @app.put('/api/projects/{project_id}/reference')
