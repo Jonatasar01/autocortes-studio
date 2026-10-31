@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from app import config, service, storage
+from app import config, project_files, service, storage
 from app.errors import AppError
 from tests.helpers import HAS_FFMPEG, make_video
 from tests.test_service import ServiceBase
@@ -48,7 +48,7 @@ class FlowTests(ServiceBase):
 
     def test_open_folder_only_opens_app_folders(self):
         res = self.create(self.video)
-        with mock.patch.object(service, '_reveal') as reveal:
+        with mock.patch.object(project_files, '_reveal') as reveal:   # a abertura de pastas fica em app/project_files.py
             out = service.open_folder(res['id'])
             general = service.open_folder(None)
         opened = [Path(c.args[0]) for c in reveal.call_args_list]

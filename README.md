@@ -468,8 +468,13 @@ e os avisos; "Exportar em alta qualidade" gera o arquivo final com as mesmas op�
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                      # ou: python -m unittest discover -s tests -t .
+pytest                      # suíte completa (~5 min); ou: python -m unittest discover -s tests -t .
+pytest -m "not lento"       # grupo rápido do dia a dia (~25 s): sem criar projetos nem renderizar vídeo
+node tests/test_studio_followup.cjs   # regressões da interface (junta os studio*.js na ordem do studio.html)
 ```
+
+A interface fica em `app/static/studio.js` mais as partes `studio-<assunto>.js` (biblioteca, configurações, projeto,
+editor, exportação, YouTube e início), scripts comuns carregados em ordem pelo `studio.html`.
 
 Os testes geram vídeos sintéticos com FFmpeg (diversos contêineres, vertical, 4K, sem áudio, VFR, rotacionado,
 corrompido) e exercitam exportação, validação, fila, cancelamento, recuperação e segurança.

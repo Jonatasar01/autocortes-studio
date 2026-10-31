@@ -216,6 +216,31 @@ def upload(path: Path, title: str, description: str, tags: list[str], privacy: s
                 on_progress(sent / max(1, size))
 
 
+def request_publish(project_id: str, clip_id: int, fmt: str, title: str, description: str, privacy: str,
+                    acknowledge_rights: bool = False) -> dict:
+    """Põe na fila o envio do corte exportado para o YouTube (``app/youtube.py``)."""
+    if privacy not in PRIVACY:
+        raise AppError('Visibilidade inválida.', 400, 'bad_input')
+    if not status()['connected']:
+        raise AppError('Conecte a conta do YouTube em Configurações antes de publicar.', 409, 'youtube_not_connected')
+    from . import publish, service
+    p = storage.read_project(project_id)
+    clip = service._find_clip(p, clip_id)
+    record = (clip.get('exports') or {}).get(fmt)
+    if not record or not record.get('file'):
+        raise AppError('Exporte o corte neste formato antes de publicar.', 409, 'not_exported')
+    if (p.get('rights') or {}).get('requires_acknowledgement') and not acknowledge_rights:
+        raise AppError('Há riscos relevantes de direitos neste projeto. Confirme que está ciente antes de publicar.',
+                       409, 'rights_ack_required')
+    title = service._clean_text(title, 100) or service._clean_text(record.get('title') or clip.get('title') or 'Corte',
+                                                                    100)
+    params = {'clip_id': clip_id, 'format': fmt, 'title': title, 'description': service._clean_text(description, 4900),
+              'tags': publish.hashtags(clip.get('description') or '', fmt), 'privacy': privacy}
+    params['tags'] = [t.lstrip('#') for t in params['tags']]
+    job, _ = service._jobs().submit(project_id, 'youtube', params, dedupe_key=f'youtube:{project_id}:{clip_id}:{fmt}')
+    return service.public_job(job)
+
+
 def run(ctx) -> dict:
     """Tarefa da fila: publica o corte exportado (``params``: clip_id, format, title, description, tags, privacy)."""
     prm = ctx.params

@@ -6,6 +6,7 @@ isso NÃO está implementado e por isso o bind padrão é local.
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 from typing import Literal, Optional
 from urllib.parse import unquote
@@ -77,7 +78,9 @@ def classic_editor():
 
 @app.get('/static/{name}')
 def static(name: str):
-    if name not in {'favicon.svg', 'studio.css', 'studio.js'}:
+    # studio.js e as partes dele (studio-<assunto>.js), carregadas em ordem pelo studio.html.
+    if not (name in {'favicon.svg', 'studio.css'} or re.fullmatch(r'studio(-[a-z]+)?\.js', name)) or \
+            not (config.STATIC_DIR / name).is_file():
         raise AppError('Arquivo não encontrado.', 404, 'not_found')
     # Revalida a cada carga (ETag): depois de uma atualização o navegador não fica com JS/CSS antigos.
     return FileResponse(config.STATIC_DIR / name, headers={'Cache-Control': 'no-cache'})

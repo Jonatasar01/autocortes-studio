@@ -1,6 +1,8 @@
 // Node-only regressions: exercise the actual Studio functions with minimal DOM controls.
 const assert=require('node:assert/strict'), fs=require('node:fs'), vm=require('node:vm');
-const source=fs.readFileSync('app/static/studio.js','utf8');
+// O Studio é dividido em scripts clássicos carregados em ordem pelo studio.html: junta todos na mesma ordem.
+const source=[...fs.readFileSync('app/static/studio.html','utf8').matchAll(/<script src="\/static\/([\w-]+\.js)"><\/script>/g)]
+  .map(m=>fs.readFileSync('app/static/'+m[1],'utf8')).join('\n');
 const controls={};const $=id=>controls[id]??=( {value:'',checked:false,disabled:false,hidden:false,dispatchEvent(){}} );
 const context=vm.createContext({$,state:{profiles:{},project:{id:'x'}},current:()=>({id:1,edit_plans:{p:{settings:{subtitle_style:'classica',framing:'blur',normalize_audio:false}}}}),
  exportPlanName:()=> 'p',profileTouched:()=>{$('profileSel').value=''},renderLook:()=>{}, syncReactions:()=>{},Boolean,Event:class{}});
