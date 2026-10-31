@@ -26,11 +26,16 @@ from pathlib import Path
 from . import config, secrets_store, storage
 from .errors import AppError, Cancelled, sanitize
 
-SCOPE = 'https://www.googleapis.com/auth/youtube.upload'
+# Envio e leitura (as visualizações dos cortes publicados). Uma conta conectada antes só com o envio continua
+# publicando; para ver os resultados, basta conectar de novo.
+SCOPE = 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly'
 AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 TOKEN_URL = 'https://oauth2.googleapis.com/token'
 REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
 UPLOAD_URL = 'https://www.googleapis.com/upload/youtube/v3/videos'
+THUMB_URL = 'https://www.googleapis.com/upload/youtube/v3/thumbnails/set'
+VIDEOS_URL = 'https://www.googleapis.com/youtube/v3/videos'
+THUMB_MAX = 2 * 1024 * 1024
 CHUNK = 8 * 1024 * 1024
 PRIVACY = ('private', 'unlisted', 'public')
 LOOPBACK = {'127.0.0.1', 'localhost', '[::1]', '::1'}
@@ -176,12 +181,16 @@ def access_token() -> str:
 # --------------------------------------------------------------------------- envio
 
 def upload(path: Path, title: str, description: str, tags: list[str], privacy: str, *,
-           cancel_event: threading.Event | None = None, on_progress=None) -> str:
-    """Envia o vídeo (retomável, pedaços de ``CHUNK``) e devolve o id dele no YouTube."""
+           publish_at: str | None = None, cancel_event: threading.Event | None = None, on_progress=None) -> str:
+    """Envia o vídeo (retomável, pedaços de ``CHUNK``) e devolve o id dele no YouTube.
+
+    ``publish_at`` (ISO 8601, UTC): o vídeo sobe privado e o YouTube publica sozinho nesse horário."""
     size = path.stat().st_size
     meta = {'snippet': {'title': title[:100], 'description': description[:4900], 'tags': tags[:15],
                         'categoryId': '24'},   # Entretenimento
-            'status': {'privacyStatus': privacy, 'selfDeclaredMadeForKids': False}}
+            'status': {'privacyStatus': 'private' if publish_at else privacy, 'selfDeclaredMadeForKids': False}}
+    if publish_at:
+        meta['status']['publishAt'] = publish_at
     req = urllib.request.Request(UPLOAD_URL + '?uploadType=resumable&part=snippet,status',
                                  data=json.dumps(meta).encode('utf-8'), method='POST',
                                  headers={'Authorization': 'Bearer ' + access_token(),
@@ -216,8 +225,58 @@ def upload(path: Path, title: str, description: str, tags: list[str], privacy: s
                 on_progress(sent / max(1, size))
 
 
+def set_thumbnail(video_id: str, image: Path) -> None:
+    """Troca a capa do vídeo no YouTube (o canal precisa ter a verificação por telefone)."""
+    data = image.read_bytes()
+    if len(data) > THUMB_MAX:
+        raise AppError('Capa maior que 2 MB.', 400, 'bad_input')
+    req = urllib.request.Request(THUMB_URL + '?videoId=' + urllib.parse.quote(video_id), data=data, method='POST',
+                                 headers={'Authorization': 'Bearer ' + access_token(), 'Content-Type': 'image/jpeg'})
+    _call(req, 'a capa')
+
+
+def stats(video_ids: list[str]) -> dict[str, dict]:
+    """Visualizações, curtidas e comentários de até 50 vídeos por pedido (1 unidade de cota cada)."""
+    out: dict[str, dict] = {}
+    ids = [v for v in dict.fromkeys(video_ids) if isinstance(v, str) and v]
+    for k in range(0, len(ids), 50):
+        url = VIDEOS_URL + '?' + urllib.parse.urlencode({'part': 'statistics,status', 'id': ','.join(ids[k:k + 50])})
+        try:
+            _, _, data = _call(urllib.request.Request(url, headers={'Authorization': 'Bearer ' + access_token()}),
+                               'a leitura dos resultados')
+        except AppError as exc:
+            if exc.code == 'youtube_http' and 'insufficient' in str((exc.details or {}).get('technical', '')).lower():
+                raise AppError('Para ver os resultados, conecte a conta do YouTube de novo em Configurações '
+                               '(a permissão de leitura é nova).', 409, 'youtube_reconnect') from None
+            raise
+        for item in data.get('items') or []:
+            st = item.get('statistics') or {}
+            out[item.get('id')] = {'views': int(st.get('viewCount') or 0), 'likes': int(st.get('likeCount') or 0),
+                                   'comments': int(st.get('commentCount') or 0),
+                                   'privacy': (item.get('status') or {}).get('privacyStatus')}
+    return out
+
+
+def _publish_time(value: str | None) -> str | None:
+    """Horário de publicação agendada em UTC (``2026-11-02T18:00:00Z``); precisa estar no futuro."""
+    if not value:
+        return None
+    import datetime as dt
+    try:
+        when = dt.datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except ValueError:
+        raise AppError('Data de publicação inválida.', 400, 'bad_input') from None
+    if when.tzinfo is None:
+        raise AppError('Data de publicação sem fuso horário.', 400, 'bad_input')
+    when = when.astimezone(dt.timezone.utc)
+    if when < dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=15):
+        raise AppError('Agende para pelo menos 15 minutos a partir de agora.', 400, 'bad_input')
+    return when.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
 def request_publish(project_id: str, clip_id: int, fmt: str, title: str, description: str, privacy: str,
-                    acknowledge_rights: bool = False) -> dict:
+                    acknowledge_rights: bool = False, publish_at: str | None = None,
+                    thumbnail: bool = False) -> dict:
     """Põe na fila o envio do corte exportado para o YouTube (``app/youtube.py``)."""
     if privacy not in PRIVACY:
         raise AppError('Visibilidade inválida.', 400, 'bad_input')
@@ -237,6 +296,10 @@ def request_publish(project_id: str, clip_id: int, fmt: str, title: str, descrip
     params = {'clip_id': clip_id, 'format': fmt, 'title': title, 'description': service._clean_text(description, 4900),
               'tags': publish.hashtags(clip.get('description') or '', fmt), 'privacy': privacy}
     params['tags'] = [t.lstrip('#') for t in params['tags']]
+    params['publish_at'] = _publish_time(publish_at)
+    if thumbnail:
+        from . import thumbnails
+        params['thumbnail'] = thumbnails.make(project_id, clip_id, fmt).name
     job, _ = service._jobs().submit(project_id, 'youtube', params, dedupe_key=f'youtube:{project_id}:{clip_id}:{fmt}')
     return service.public_job(job)
 
@@ -252,9 +315,20 @@ def run(ctx) -> dict:
         raise AppError('Exporte o corte neste formato antes de publicar.', 409, 'not_exported')
     ctx.stage('youtube', 'Enviando o corte para o YouTube')
     video_id = upload(path, prm['title'], prm['description'], prm.get('tags') or [], prm['privacy'],
-                      cancel_event=ctx.cancel_event, on_progress=lambda f: ctx.progress(0.02 + 0.97 * f))
+                      publish_at=prm.get('publish_at'), cancel_event=ctx.cancel_event,
+                      on_progress=lambda f: ctx.progress(0.02 + 0.95 * f))
     result = {'id': video_id, 'url': 'https://youtu.be/' + video_id, 'privacy': prm['privacy'], 'at': time.time(),
-              'title': prm['title']}
+              'title': prm['title'], 'publish_at': prm.get('publish_at')}
+    thumb = path.parent / prm['thumbnail'] if prm.get('thumbnail') else None
+    if thumb is not None and thumb.is_file() and thumb.parent == path.parent:
+        ctx.stage('youtube', 'Enviando a capa')
+        try:
+            set_thumbnail(video_id, thumb)
+            result['thumbnail'] = True
+        except AppError as exc:   # o vídeo já subiu: a capa é um extra
+            result['thumbnail_warning'] = ('O vídeo subiu, mas a capa não: ' + exc.message +
+                                           ' (o canal precisa ter a verificação por telefone no YouTube).')
+            ctx.warn(result['thumbnail_warning'])
     with storage.edit_project(ctx.project_id) as p:
         clip = next((c for c in p.get('clips') or [] if c['id'] == prm['clip_id']), None)
         rec = ((clip or {}).get('exports') or {}).get(prm['format'])

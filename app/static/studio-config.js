@@ -15,6 +15,7 @@ async function openSettings() {
   $('prefRefine').checked = $('refineSubtitles').checked;
   $('settingsDialog').showModal();
   syncYoutubeSettings();
+  syncLanSettings();
   try {
     const [cfg, d] = await Promise.all([api('/api/settings'), state.dashboard ? state.dashboard : api('/api/dashboard')]);
     $('prefGpuExport').checked = (cfg.export?.encoder || 'auto') === 'auto';
@@ -27,6 +28,7 @@ $('settingsSave').onclick = async () => {
   try {
     await api('/api/settings', 'PUT', {export: {encoder: $('prefGpuExport').checked ? 'auto' : 'x264'}});
     await saveYoutubeKeys();
+    await saveLanPassword();
   } catch (e) { toast(e.message, true); }
   store.set('pref.mode', $('prefMode').value);
   store.set('pref.target', String(clamp(Number($('prefTarget').value) || 35, 10, 90)));
@@ -360,3 +362,30 @@ async function waitImport(id) {
   }
   throw Error('A importação continua em segundo plano. Consulte os projetos recentes em instantes.');
 }
+
+// Senha da rede: só se troca no próprio computador (o servidor recusa de outro aparelho).
+const LOCAL_HOST = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
+async function syncLanSettings() {
+  $('lanPassword').value = '';
+  $('lanPassword').disabled = !LOCAL_HOST;
+  try {
+    const on = !!(await api('/api/health')).lan_password;
+    $('lanStatus').textContent = !LOCAL_HOST ? 'A senha da rede só pode ser trocada no computador do AutoCortes.'
+      : on ? 'Senha ativa: outros aparelhos precisam dela para abrir o app.'
+        : 'Sem senha: qualquer aparelho no mesmo Wi-Fi consegue abrir o app quando o acesso pela rede está ligado.';
+    $('lanStatus').classList.toggle('warn', !on);
+    $('lanRemove').hidden = !on || !LOCAL_HOST;
+  } catch { $('lanStatus').textContent = 'Status da senha indisponível.'; }
+}
+async function saveLanPassword() {
+  const password = $('lanPassword').value;
+  if (!password || !LOCAL_HOST) return;
+  if (password.length < 6) throw Error('A senha da rede precisa de pelo menos 6 caracteres.');
+  await api('/api/settings/lan-password', 'PUT', {password});
+  $('lanPassword').value = '';
+  toast('Senha da rede definida.');
+}
+$('lanRemove').onclick = async () => {
+  try { await api('/api/settings/lan-password', 'DELETE'); syncLanSettings(); toast('Senha da rede removida.'); }
+  catch (e) { toast(e.message, true); }
+};

@@ -551,7 +551,8 @@ def run_export(ctx: JobContext) -> dict:
                                'intensity': plan['intensity'], 'settings': plan['settings'],
                                'actions': [a for a in plan['actions'] if a.get('enabled', True)]}
     record = {**result, 'created_at': time.time(), 'job_id': ctx.id, 'title': prm.get('title'),
-              'revision': prm.get('revision')}
+              'revision': prm.get('revision'),
+              'subtitle_position': (prm.get('subtitle_look') or {}).get('position')}   # a capa evita a legenda
     if preview:
         return _publish_preview(ctx, folder, prm, record)
     clips_dir = folder / 'clips'

@@ -682,6 +682,14 @@
     <label class="switch"><input id="prefGpuExport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Exportar pela placa de vídeo</strong><small>Usa a placa NVIDIA, quando houver, para exportar mais rápido com a mesma resolução. Se falhar, usa o processador.</small></span></label>
     <span class="eyebrow spaced">Escolha dos cortes</span>
     <button id="settingsSelection" type="button" class="btn ghost block">Escolha dos cortes com IA</button>
+    <span class="eyebrow spaced">Acesso pela rede</span>
+    <p id="lanStatus" class="hint"></p>
+    <label class="field" for="lanPassword">Senha para abrir pelo celular ou outro computador</label>
+    <div class="keyinput">
+      <input id="lanPassword" type="password" minlength="6" maxlength="128" autocomplete="new-password" placeholder="Nova senha (mínimo 6 caracteres)">
+      <button id="lanRemove" class="btn ghost danger" type="button" hidden>Remover senha</button>
+    </div>
+    <p class="hint">Neste computador o app abre sem senha. Nos outros aparelhos o navegador pede usuário e senha: o usuário pode ser qualquer nome. A senha é salva junto com o botão Salvar.</p>
     <span class="eyebrow spaced">YouTube</span>
     <p id="ytStatus" class="hint"></p>
     <div class="keyrow">
@@ -694,6 +702,7 @@
     <div class="keyinput">
       <button id="ytConnect" class="btn ghost" type="button">Conectar conta do YouTube</button>
       <button id="ytDisconnect" class="btn ghost danger" type="button" hidden>Desconectar</button>
+      <button id="ytResultsOpen" class="btn ghost" type="button" hidden>Ver resultados</button>
     </div>
     <span class="eyebrow spaced">Pastas</span>
     <dl id="settingsPaths" class="paths"></dl>
@@ -850,10 +859,18 @@
   <form id="ytForm">
     <div class="dialogbody selectionbody">
       <p id="ytClip" class="hint"></p>
-      <label class="field" for="ytVideoTitle">Título</label>
+      <div class="keyinput">
+        <label class="field" for="ytVideoTitle">Título</label>
+        <button id="ytSuggest" class="btn ghost" type="button">Escrever com IA</button>
+      </div>
       <input id="ytVideoTitle" maxlength="100" required autocomplete="off">
       <label class="field" for="ytDescription">Descrição</label>
       <textarea id="ytDescription" rows="5" maxlength="4900"></textarea>
+      <label class="field" for="ytPublishAt">Agendar publicação (opcional)</label>
+      <input id="ytPublishAt" type="datetime-local">
+      <p class="hint">Com data, o vídeo sobe privado e o YouTube publica sozinho no horário escolhido.</p>
+      <label class="switch"><input id="ytThumbOn" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="switchtext"><strong>Enviar capa automática</strong><small>Um quadro do corte com o título grande. O canal precisa ter a verificação por telefone no YouTube.</small></span></label>
+      <img id="ytThumb" class="ytthumb" alt="Capa automática do corte" hidden>
       <label class="field" for="ytPrivacy">Visibilidade</label>
       <select id="ytPrivacy"><option value="private">Privado</option><option value="unlisted">Não listado</option><option value="public">Público</option></select>
       <p class="hint">Enquanto o seu projeto no Google Cloud não for verificado pelo Google, todo envio pela API fica privado; depois de subir, mude a visibilidade no YouTube Studio.</p>
@@ -864,6 +881,17 @@
       <button id="ytSend" class="btn primary" type="submit">Enviar para o YouTube</button>
     </footer>
   </form>
+</dialog>
+
+<dialog id="ytResultsDialog" class="dialog wide" aria-labelledby="ytResultsTitle">
+  <header><h2 id="ytResultsTitle">Resultados no YouTube</h2><button class="iconbtn sm" data-close aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></header>
+  <div class="dialogbody">
+    <p id="ytResultsNote" class="hint">Carregando…</p>
+    <div class="tablewrap"><table id="ytResultsTable" class="results" hidden>
+      <thead><tr><th scope="col">Corte</th><th scope="col">Projeto</th><th scope="col" class="num">Visualizações</th><th scope="col" class="num">Curtidas</th><th scope="col" class="num">Comentários</th><th scope="col">Situação</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </div>
 </dialog>
 
 <dialog id="profileDialog" class="dialog narrow" aria-labelledby="profileDialogTitle">

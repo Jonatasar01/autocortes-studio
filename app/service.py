@@ -932,6 +932,27 @@ def export_all(project_id: str, options: dict) -> dict:
     return {'jobs': jobs, 'errors': errors}
 
 
+def youtube_results() -> dict:
+    """Cortes publicados no YouTube por este app, com visualizações, curtidas e comentários atuais."""
+    rows = []
+    for item in storage.list_projects():
+        with contextlib.suppress(AppError):
+            p = storage.read_project(item['id'])
+            for c in p.get('clips') or []:
+                for fmt, rec in (c.get('exports') or {}).items():
+                    yt = rec.get('youtube')
+                    if yt and yt.get('id'):
+                        rows.append({'project_id': p['id'], 'project': p.get('name'), 'clip_id': c['id'],
+                                     'format': fmt, 'title': yt.get('title') or c.get('title'), 'video_id': yt['id'],
+                                     'url': yt.get('url'), 'published_at': yt.get('at'),
+                                     'publish_at': yt.get('publish_at')})
+    numbers = youtube.stats([r['video_id'] for r in rows]) if rows else {}
+    for r in rows:
+        r.update(numbers.get(r['video_id']) or {'views': None, 'likes': None, 'comments': None, 'privacy': None})
+    rows.sort(key=lambda r: (-(r['views'] or 0), -(r['published_at'] or 0)))
+    return {'videos': rows}
+
+
 def get_settings() -> dict:
     return settings.public()
 
@@ -1050,6 +1071,7 @@ def health() -> dict:
             'ffmpeg': caps, 'transcription': transcription.available(),
             'whisper_model': config.WHISPER_MODEL if transcription.available() else None,
             'curation': curation.status(), 'twitch': community.status(), 'youtube': youtube.status(),
+            'lan_password': secrets_store.get('lan_password') != '',
             'face_tracking': reframe.available(),
             'automation': {'watch': watcher.status(), 'output_dir': str(config.OUTPUT_DIR),
                            'autopilot_default': settings.load()['autopilot']['enabled']},

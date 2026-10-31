@@ -203,7 +203,8 @@ def delete_export(project_id: str, clip_id: int, fmt: str) -> dict:
                 clip.pop('export_file', None)
                 clip.pop('export_metadata', None)
     freed = 0
-    for name in filter(None, (record.get('file'), record.get('srt_file'), record.get('package_file'))):
+    for name in filter(None, (record.get('file'), record.get('srt_file'), record.get('package_file'),
+                              record.get('thumbnail_file'))):
         path = folder / 'clips' / name
         if path.parent == folder / 'clips' and path.is_file():   # só nomes simples dentro de clips/
             with contextlib.suppress(OSError):

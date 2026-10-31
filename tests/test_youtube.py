@@ -106,5 +106,52 @@ class YoutubeTests(unittest.TestCase):
         self.assertFalse(youtube.status()['connected'])
 
 
+class ScheduleAndStatsTests(YoutubeTests):
+    def test_schedule_must_be_in_the_future_with_timezone(self):
+        import datetime as dt
+        later = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).replace(microsecond=0)
+        self.assertEqual(youtube._publish_time(later.isoformat()), later.strftime('%Y-%m-%dT%H:%M:%SZ'))
+        self.assertIsNone(youtube._publish_time(None))
+        for bad in ('amanhã', '2026-01-01T10:00:00', '2020-01-01T10:00:00Z'):
+            with self.subTest(bad=bad), self.assertRaises(AppError):
+                youtube._publish_time(bad)
+
+    def test_scheduled_upload_goes_up_private_with_publish_time(self):
+        youtube._access.update(value='acesso', expires=10 ** 12)
+        video = self.tmp / 'clip.mp4'
+        video.write_bytes(b'x' * 10)
+        sent = {}
+
+        def fake(req, timeout):
+            if req.get_method() == 'POST':
+                sent.update(json.loads(req.data))
+                return Reply(b'', 200, {'Location': 'https://www.googleapis.com/upload/youtube/v3/videos?upload_id=1'})
+            return Reply({'id': 'v1'}, 201)
+
+        with mock.patch('urllib.request.urlopen', fake):
+            youtube.upload(video, 't', 'd', [], 'public', publish_at='2030-01-01T12:00:00Z')
+        self.assertEqual(sent['status']['privacyStatus'], 'private')
+        self.assertEqual(sent['status']['publishAt'], '2030-01-01T12:00:00Z')
+
+    def test_results_need_the_new_read_permission(self):
+        youtube._access.update(value='acesso', expires=10 ** 12)
+
+        def ok(req, timeout):
+            return Reply({'items': [{'id': 'v1', 'statistics': {'viewCount': '1200', 'likeCount': '80'},
+                                     'status': {'privacyStatus': 'public'}}]})
+
+        with mock.patch('urllib.request.urlopen', ok):
+            self.assertEqual(youtube.stats(['v1', 'v1']),
+                             {'v1': {'views': 1200, 'likes': 80, 'comments': 0, 'privacy': 'public'}})
+
+        def denied(req, timeout):
+            body = b'{"error": {"errors": [{"reason": "insufficientPermissions"}]}}'
+            raise urllib.error.HTTPError(req.full_url, 403, 'x', {}, io.BytesIO(body))
+
+        with mock.patch('urllib.request.urlopen', denied), self.assertRaises(AppError) as err:
+            youtube.stats(['v1'])
+        self.assertEqual(err.exception.code, 'youtube_reconnect')
+
+
 if __name__ == '__main__':
     unittest.main()

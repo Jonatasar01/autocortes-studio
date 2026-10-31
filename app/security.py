@@ -54,6 +54,16 @@ class LocalSecurityMiddleware:
         headers = {k.decode('latin-1').lower(): v.decode('latin-1') for k, v in scope.get('headers', [])}
         if _hostname(headers.get('host', '')) not in self.hosts:
             return await self._reject(send, 400, 'Host não permitido. Acesse por http://127.0.0.1:8000.')
+        from . import lan_access   # senha da rede: de outro aparelho, só com a senha (app/lan_access.py)
+        if not lan_access.allowed((scope.get('client') or (None,))[0], headers.get('authorization')):
+            body = json.dumps({'detail': 'Digite a senha do AutoCortes para acessar pela rede.',
+                               'code': 'auth_required'}, ensure_ascii=False).encode('utf-8')
+            await send({'type': 'http.response.start', 'status': 401,
+                        'headers': [(b'content-type', b'application/json; charset=utf-8'),
+                                    (b'content-length', str(len(body)).encode()),
+                                    (b'www-authenticate', b'Basic realm="AutoCortes", charset="UTF-8"'),
+                                    (b'x-content-type-options', b'nosniff')]})
+            return await send({'type': 'http.response.body', 'body': body})
         if scope['method'] not in SAFE_METHODS:
             origin = headers.get('origin')
             if origin is not None:

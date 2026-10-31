@@ -22,8 +22,35 @@ async function openYoutube(clipId, format) {
   $('ytRights').checked = false;
   $('ytForm').dataset.clip = c.id;
   $('ytForm').dataset.format = format;
+  $('ytPublishAt').value = '';
+  $('ytThumb').hidden = true;
   $('ytDialog').showModal();
+  syncThumb();
 }
+// Capa automática: gerada no servidor a partir do vídeo exportado; a imagem é só a prévia.
+function syncThumb() {
+  const p = state.project, f = $('ytForm').dataset, img = $('ytThumb');
+  if (!$('ytThumbOn').checked || !p) { img.hidden = true; return; }
+  img.onload = () => { img.hidden = false; };
+  img.onerror = () => { img.hidden = true; };
+  img.src = '/api/projects/' + p.id + '/clips/' + f.clip + '/thumbnail?format=' + encodeURIComponent(f.format) +
+    '&t=' + Date.now();
+}
+$('ytThumbOn').addEventListener('change', syncThumb);
+$('ytSuggest').onclick = async () => {
+  const p = state.project, f = $('ytForm').dataset;
+  $('ytSuggest').disabled = true;
+  $('ytSuggest').textContent = 'Escrevendo…';
+  try {
+    const s = await api('/api/projects/' + p.id + '/clips/' + f.clip + '/suggest-text?format=' +
+      encodeURIComponent(f.format), 'POST');
+    $('ytVideoTitle').value = s.title;
+    $('ytDescription').value = [s.description, (s.hashtags || []).join(' ')].filter(Boolean).join('\n\n');
+    toast(s.warning || (s.provider ? 'Texto escrito pela IA (' + s.provider + '). Revise antes de enviar.'
+      : 'Sem IA disponível: sugestão feita pelas palavras do corte.'), !!s.warning);
+  } catch (e) { toast(e.message, true); }
+  finally { $('ytSuggest').disabled = false; $('ytSuggest').textContent = 'Escrever com IA'; }
+};
 $('ytForm').onsubmit = async (e) => {
   e.preventDefault();
   const p = state.project, f = $('ytForm').dataset;
@@ -32,7 +59,9 @@ $('ytForm').onsubmit = async (e) => {
   try {
     const job = await api('/api/projects/' + p.id + '/clips/' + f.clip + '/youtube', 'POST', {
       format: f.format, title: $('ytVideoTitle').value.trim(), description: $('ytDescription').value,
-      privacy: $('ytPrivacy').value, acknowledge_rights: $('ytRights').checked});
+      privacy: $('ytPrivacy').value, acknowledge_rights: $('ytRights').checked,
+      publish_at: $('ytPublishAt').value ? new Date($('ytPublishAt').value).toISOString() : null,
+      thumbnail: $('ytThumbOn').checked});
     $('ytDialog').close();
     p.jobs = [job, ...(p.jobs || []).filter((j) => j.id !== job.id)];
     renderExports();
@@ -47,6 +76,7 @@ async function syncYoutubeSettings() {
       : st.configured ? 'Cliente OAuth salvo' + (st.key_hint ? ' (ID termina em …' + st.key_hint + ')' : '') + '. Falta conectar a conta.'
         : 'Para publicar direto no YouTube, cole o ID e a chave do cliente OAuth e conecte a conta.';
     $('ytDisconnect').hidden = !st.connected;
+    $('ytResultsOpen').hidden = !st.connected;
     $('ytConnect').textContent = st.connected ? 'Conectar outra conta' : 'Conectar conta do YouTube';
   } catch { $('ytStatus').textContent = 'Status do YouTube indisponível.'; }
 }
@@ -70,6 +100,27 @@ $('ytConnect').onclick = async () => {
     };
     setTimeout(poll, 3000);
   } catch (e) { toast(e.message, true); }
+};
+$('ytResultsOpen').onclick = async () => {
+  const dlg = $('ytResultsDialog'), table = $('ytResultsTable');
+  $('ytResultsNote').textContent = 'Carregando os números do YouTube…';
+  table.hidden = true;
+  dlg.showModal();
+  try {
+    const {videos} = await api('/api/youtube/results');
+    const n = (v) => v === null || v === undefined ? '—' : v.toLocaleString('pt-BR');
+    const situation = (v) => v.publish_at && v.privacy === 'private'
+      ? 'Agendado para ' + new Date(v.publish_at).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'})
+      : ({public: 'Público', unlisted: 'Não listado', private: 'Privado'}[v.privacy] || 'Removido ou indisponível');
+    table.tBodies[0].innerHTML = videos.map((v) => '<tr><td><a href="' + escape(v.url) + '" target="_blank" rel="noopener">' +
+      escape(v.title || 'Corte ' + v.clip_id) + '</a></td><td>' + escape(v.project || '') + '</td><td class="num">' +
+      n(v.views) + '</td><td class="num">' + n(v.likes) + '</td><td class="num">' + n(v.comments) + '</td><td>' +
+      escape(situation(v)) + '</td></tr>').join('');
+    table.hidden = !videos.length;
+    $('ytResultsNote').textContent = videos.length
+      ? videos.length + ' corte(s) publicados pelo AutoCortes, do mais visto ao menos visto.'
+      : 'Nenhum corte publicado pelo AutoCortes ainda. Publique pelo botão de envio em Exportações.';
+  } catch (e) { $('ytResultsNote').textContent = e.message; }
 };
 $('ytDisconnect').onclick = async () => {
   try { await api('/api/youtube', 'DELETE'); syncYoutubeSettings(); toast('YouTube desconectado.'); }

@@ -254,6 +254,33 @@ class Reference(BaseModel):
     channel: Optional[str] = Field(default=None, max_length=60)
 
 
+class LanPassword(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    password: str = Field(default='', max_length=128)
+
+
+def _only_here(request: Request) -> None:
+    from . import lan_access
+    if (request.client.host if request.client else '') not in lan_access.LOOPBACK:
+        raise AppError('A senha da rede só pode ser trocada no próprio computador do AutoCortes.', 403, 'not_local')
+
+
+@app.put('/api/settings/lan-password')
+def set_lan_password(body: LanPassword, request: Request):
+    from . import lan_access
+    _only_here(request)
+    lan_access.set_password(body.password)
+    return {'enabled': lan_access.enabled()}
+
+
+@app.delete('/api/settings/lan-password')
+def delete_lan_password(request: Request):
+    from . import lan_access
+    _only_here(request)
+    lan_access.set_password('')
+    return {'enabled': False}
+
+
 @app.get('/api/youtube/status')
 def youtube_status():
     from . import youtube
@@ -297,12 +324,35 @@ class YoutubePublish(BaseModel):
     description: str = Field(default='', max_length=5000)
     privacy: Literal['private', 'unlisted', 'public'] = 'private'
     acknowledge_rights: bool = False
+    publish_at: Optional[str] = Field(default=None, max_length=40)
+    thumbnail: bool = False
 
 
 @app.post('/api/projects/{project_id}/clips/{clip_id}/youtube')
 def publish_youtube(project_id: str, clip_id: int, body: YoutubePublish):
     return service.publish_youtube(project_id, clip_id, body.format, body.title, body.description, body.privacy,
-                                   body.acknowledge_rights)
+                                   body.acknowledge_rights, body.publish_at, body.thumbnail)
+
+
+@app.get('/api/projects/{project_id}/clips/{clip_id}/thumbnail')
+def clip_thumbnail(project_id: str, clip_id: int, format: str = '9:16'):
+    """Capa automática da exportação (quadro do corte com o título por cima; app/thumbnails.py)."""
+    from . import thumbnails
+    path = thumbnails.make(project_id, clip_id, format)
+    return FileResponse(path, media_type='image/jpeg', headers={'Cache-Control': 'no-cache'})
+
+
+@app.get('/api/youtube/results')
+def youtube_results():
+    """Visualizações dos cortes publicados pelo app, de todos os projetos."""
+    return service.youtube_results()
+
+
+@app.post('/api/projects/{project_id}/clips/{clip_id}/suggest-text')
+def suggest_text(project_id: str, clip_id: int, format: str = '9:16'):
+    """Título, descrição e hashtags para publicar o corte, escritos pela IA (app/copywriting.py)."""
+    from . import copywriting
+    return copywriting.suggest(project_id, clip_id, format)
 
 
 @app.get('/api/projects/{project_id}/words')
